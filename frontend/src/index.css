@@ -1,115 +1,267 @@
+@import url("https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
+:root {
+    --bg-main: #050505;
+    --bg-sidebar: #0d0d0d;
+    --bg-surface: #1a1a1a;
+    --bg-dock: #0a0a0a;
+    --accent-pink: #ff2a6d;
+    --accent-yellow: #ffd700;
+    --accent-cyan: #05d9e8;
+    --border-default: #2a2a2a;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    height: 100%;
     margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
+}
+
+body {
+    background-color: var(--bg-main);
+    color: #ffffff;
+    font-family: "Outfit", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+.font-heading {
+    font-family: "Unbounded", sans-serif;
+    letter-spacing: -0.02em;
 }
 
-@layer base {
-    :root {
-        --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
-        --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
-        --destructive: 0 84.2% 60.2%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
-    }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
-    }
+.font-mono {
+    font-family: "JetBrains Mono", monospace;
 }
 
-@layer base {
-    * {
-        @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
-    }
+/* Neo-brutalist hard shadow utilities */
+.shadow-brutal-pink {
+    box-shadow: 6px 6px 0 0 #ff2a6d;
+}
+.shadow-brutal-yellow {
+    box-shadow: 6px 6px 0 0 #ffd700;
+}
+.shadow-brutal-cyan {
+    box-shadow: 6px 6px 0 0 #05d9e8;
+}
+.shadow-brutal-white {
+    box-shadow: 4px 4px 0 0 #ffffff;
 }
 
-@layer base {
-    [data-debug-wrapper="true"] {
-        display: contents !important;
-    }
+.btn-primary {
+    background: #ff2a6d;
+    color: #fff;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    border: 2px solid #fff;
+    padding: 0.75rem 1.25rem;
+    box-shadow: 4px 4px 0 0 #fff;
+    transition: all 0.15s ease;
+    cursor: pointer;
+}
+.btn-primary:hover {
+    background: #ffd700;
+    color: #000;
+    box-shadow: 6px 6px 0 0 #ff2a6d;
+    transform: translate(-2px, -2px);
+}
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 4px 4px 0 0 #fff;
+}
 
-    [data-debug-wrapper="true"] > * {
-        margin-left: inherit;
-        margin-right: inherit;
-        margin-top: inherit;
-        margin-bottom: inherit;
-        padding-left: inherit;
-        padding-right: inherit;
-        padding-top: inherit;
-        padding-bottom: inherit;
-        column-gap: inherit;
-        row-gap: inherit;
-        gap: inherit;
-        border-left-width: inherit;
-        border-right-width: inherit;
-        border-top-width: inherit;
-        border-bottom-width: inherit;
-        border-left-style: inherit;
-        border-right-style: inherit;
-        border-top-style: inherit;
-        border-bottom-style: inherit;
-        border-left-color: inherit;
-        border-right-color: inherit;
-        border-top-color: inherit;
-        border-bottom-color: inherit;
+.btn-ghost {
+    background: transparent;
+    color: #d4d4d4;
+    border: 2px solid transparent;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+}
+
+.input-brutal {
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    color: #fff;
+    padding: 0.75rem 1rem;
+    width: 100%;
+    transition: all 0.15s ease;
+    font-family: "Outfit", sans-serif;
+    outline: none;
+}
+.input-brutal::placeholder {
+    color: #666;
+}
+.input-brutal:focus {
+    border-color: #ffd700;
+    box-shadow: 4px 4px 0 0 #ff2a6d;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+    background: #2a2a2a;
+    border: 1px solid #444;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #ff2a6d;
+}
+
+/* Markdown styling */
+.md-body p {
+    margin: 0.5rem 0;
+    line-height: 1.65;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3 {
+    font-family: "Unbounded", sans-serif;
+    font-weight: 800;
+    margin: 1rem 0 0.5rem;
+    letter-spacing: -0.02em;
+}
+.md-body h1 {
+    font-size: 1.5rem;
+    color: #ffd700;
+}
+.md-body h2 {
+    font-size: 1.25rem;
+    color: #05d9e8;
+}
+.md-body h3 {
+    font-size: 1.1rem;
+}
+.md-body a {
+    color: #05d9e8;
+    text-decoration: underline;
+}
+.md-body a:hover {
+    color: #ff2a6d;
+}
+.md-body ul,
+.md-body ol {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+}
+.md-body li {
+    margin: 0.25rem 0;
+}
+.md-body code {
+    font-family: "JetBrains Mono", monospace;
+    background: #000;
+    color: #ffd700;
+    padding: 0.1rem 0.35rem;
+    border: 1px solid #333;
+    font-size: 0.9em;
+}
+.md-body pre {
+    background: #0a0a0a;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 0.75rem 0;
+    box-shadow: 4px 4px 0 0 rgba(5, 217, 232, 0.4);
+}
+.md-body pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #e6e6e6;
+}
+.md-body blockquote {
+    border-left: 4px solid #ff2a6d;
+    padding-left: 1rem;
+    margin: 0.75rem 0;
+    color: #b3b3b3;
+}
+.md-body table {
+    border-collapse: collapse;
+    margin: 0.75rem 0;
+}
+.md-body th,
+.md-body td {
+    border: 1px solid #333;
+    padding: 0.5rem 0.75rem;
+}
+.md-body th {
+    background: #1a1a1a;
+    color: #ffd700;
+}
+
+/* Animations */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+.fade-in-up {
+    animation: fadeInUp 0.25s ease-out;
+}
+
+@keyframes pulseGlow {
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+.pulse-glow {
+    animation: pulseGlow 1.2s ease-in-out infinite;
+}
+
+/* Loading dots */
+.typing-dots span {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: #ff2a6d;
+    margin: 0 2px;
+    animation: typingBounce 1s infinite;
+}
+.typing-dots span:nth-child(2) {
+    background: #ffd700;
+    animation-delay: 0.15s;
+}
+.typing-dots span:nth-child(3) {
+    background: #05d9e8;
+    animation-delay: 0.3s;
+}
+@keyframes typingBounce {
+    0%,
+    60%,
+    100% {
+        transform: translateY(0);
+    }
+    30% {
+        transform: translateY(-6px);
     }
 }
