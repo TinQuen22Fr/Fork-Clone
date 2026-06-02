@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import asyncio
 import base64
 import uuid
 import logging
@@ -20,21 +21,36 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-
 
 # ---------- Config ----------
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.environ["JWT_SECRET"]
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
-GEMINI_MODEL = "gemini-3.1-pro-preview"
-GEMINI_PROVIDER = "gemini"
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-pro-preview")
 
 SYSTEM_MESSAGE = (
     "You are 'Gemini3 Unchained Forge', a bold, raw, edgy AI assistant powered by Gemini 3 Pro. "
     "You speak with confidence, use vivid markdown when useful (code blocks, lists, headings). "
     "Be helpful, direct and never boring. You can analyze images the user uploads."
 )
+
+
+# ---------- Google GenAI client ----------
+# Lazy init: only fail at call-time if key is missing, so the API can still boot.
+_genai_client = None
+
+
+def get_genai_client():
+    global _genai_client
+    if not GOOGLE_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="GOOGLE_API_KEY is not configured. Add your key to /app/backend/.env and restart the backend.",
+        )
+    if _genai_client is None:
+        from google import genai  # local import so import never fails
+        _genai_client = genai.Client(api_key=GOOGLE_API_KEY)
+    return _genai_client
 
 
 # ---------- DB ----------
@@ -310,53 +326,63 @@ async def chat_send(
     }
     await db.messages.insert_one(user_msg_doc)
 
-    # Build chat with full history
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=conversation_id,
-        system_message=SYSTEM_MESSAGE,
-    ).with_model(GEMINI_PROVIDER, GEMINI_MODEL)
-
-    # Re-feed history (excluding the just-saved user message) so LlmChat has context
+    # Build chat history for Gemini (full multi-turn context)
     history = await db.messages.find(
         {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
         {"_id": 0}
     ).sort("created_at", 1).to_list(2000)
 
-    # The LlmChat library manages history internally via session_id+DB,
-    # but to be safe we re-send everything as a single combined context only on the LAST message.
-    # Easier: send each message in order, then send the new one.
-    # Actually simpler: replay prior messages quickly. To minimize API cost & latency,
-    # we'll just send the new message and rely on session_id for memory.
-    # NOTE: LlmChat session memory is in-memory per-instance, not persisted across requests.
-    # So we must replay. We'll concatenate prior turns into a single context block in system.
+    # Build native google-genai contents list
+    from google.genai import types as genai_types
 
-    # Compose a context-augmented message
-    if history:
-        history_text_lines = []
-        for h in history[-20:]:  # last 20 turns max
-            prefix = "User" if h["role"] == "user" else "Assistant"
-            history_text_lines.append(f"{prefix}: {h['content']}")
-        context_block = "\n".join(history_text_lines)
-        combined_text = (
-            f"[Previous conversation]\n{context_block}\n[End previous]\n\nUser: {text}"
-            if text else f"[Previous conversation]\n{context_block}\n[End previous]\n\nUser: (sent an image)"
+    contents = []
+    for h in history[-40:]:  # last 40 turns max
+        role = "user" if h["role"] == "user" else "model"
+        contents.append(
+            genai_types.Content(role=role, parts=[genai_types.Part(text=h["content"])])
         )
-    else:
-        combined_text = text or "Please describe this image."
 
-    # Build user message (with optional image)
+    # Current user message parts (text + optional image)
+    current_parts = []
+    if text:
+        current_parts.append(genai_types.Part(text=text))
     if image_b64:
-        um = UserMessage(text=combined_text, file_contents=[ImageContent(image_base64=image_b64)])
-    else:
-        um = UserMessage(text=combined_text)
+        mime = image.content_type or "image/png"
+        current_parts.append(
+            genai_types.Part(
+                inline_data=genai_types.Blob(
+                    mime_type=mime,
+                    data=base64.b64decode(image_b64),
+                )
+            )
+        )
+    if not current_parts:
+        current_parts.append(genai_types.Part(text="(empty)"))
+    contents.append(genai_types.Content(role="user", parts=current_parts))
 
+    client_g = get_genai_client()
     try:
-        ai_response = await chat.send_message(um)
-        if isinstance(ai_response, dict):
-            ai_response = ai_response.get("content") or str(ai_response)
+        result = await asyncio.to_thread(
+            client_g.models.generate_content,
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=SYSTEM_MESSAGE,
+            ),
+        )
+        ai_response = result.text or ""
+        if not ai_response and getattr(result, "candidates", None):
+            # Fallback: stitch parts manually
+            parts_out = []
+            for c in result.candidates:
+                for p in (c.content.parts or []):
+                    if getattr(p, "text", None):
+                        parts_out.append(p.text)
+            ai_response = "\n".join(parts_out) or "(empty response)"
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("LLM call failed")
+        logger.exception("Gemini API call failed")
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
 
     # Save AI message
