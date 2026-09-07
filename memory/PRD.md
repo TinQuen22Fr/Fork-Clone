@@ -37,7 +37,7 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
 ## Backlog
-- P1: UI de renommage de conversation (backend PATCH /api/conversations/{id} déjà prêt, pas câblé dans Chat.jsx).
-- P2: masquer le lien "Register" quand ALLOW_REGISTRATION=false.
+- FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
+- FAIT (2026-09-07): lien "Register" masqué (instance admin-only).
 - P2: "Share Conversation" (lien public read-only /share/{id}).
 - P2: sélecteur de modèle Claude dans l'UI + streaming (SSE).

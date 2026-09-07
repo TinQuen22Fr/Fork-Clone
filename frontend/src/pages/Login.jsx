@@ -160,36 +160,8 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-8 text-center text-sm text-gray-400">
-            {mode === "login" ? (
-              <>
-                No account?{" "}
-                <button
-                  className="text-[#ffd700] font-bold hover:text-[#ff2a6d] underline underline-offset-4"
-                  onClick={() => {
-                    setMode("register");
-                    setError("");
-                  }}
-                  data-testid="switch-to-register-btn"
-                >
-                  Register
-                </button>
-              </>
-            ) : (
-              <>
-                Already here?{" "}
-                <button
-                  className="text-[#ffd700] font-bold hover:text-[#ff2a6d] underline underline-offset-4"
-                  onClick={() => {
-                    setMode("login");
-                    setError("");
-                  }}
-                  data-testid="switch-to-login-btn"
-                >
-                  Sign in
-                </button>
-              </>
-            )}
+          <div className="mt-8 text-center text-xs uppercase tracking-[0.2em] text-gray-600 font-mono">
+            // access restricted — admin only
           </div>
         </div>
       </div>

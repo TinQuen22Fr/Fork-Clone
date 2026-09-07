@@ -13,6 +13,8 @@ import {
   X,
   MessageSquare,
   Menu,
+  Pencil,
+  Check,
 } from "lucide-react";
 
 export default function Chat() {
@@ -27,6 +29,8 @@ export default function Chat() {
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -107,6 +111,37 @@ export default function Chat() {
       }
     } catch (e) {
       setError(formatApiError(e));
+    }
+  };
+
+  const startRename = (c, e) => {
+    e?.stopPropagation();
+    setEditingId(c.id);
+    setEditingTitle(c.title || "");
+  };
+
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditingTitle("");
+  };
+
+  const submitRename = async (cid, e) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    const title = editingTitle.trim();
+    if (!title) {
+      cancelRename();
+      return;
+    }
+    setConversations((prev) =>
+      prev.map((c) => (c.id === cid ? { ...c, title } : c))
+    );
+    cancelRename();
+    try {
+      await api.patch(`/conversations/${cid}`, { title });
+    } catch (e2) {
+      setError(formatApiError(e2));
+      fetchConversations();
     }
   };
 
@@ -260,19 +295,57 @@ export default function Chat() {
               data-testid={`conv-item-${c.id}`}
             >
               <MessageSquare className="w-4 h-4 flex-shrink-0 text-gray-400" />
-              <div className="flex-1 truncate text-sm font-medium">
-                {c.title || "New Chat"}
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteConversation(c.id);
-                }}
-                className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-[#ff2a6d] transition-opacity"
-                data-testid={`delete-conv-${c.id}`}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {editingId === c.id ? (
+                <form
+                  onSubmit={(e) => submitRename(c.id, e)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex-1 flex items-center gap-1"
+                >
+                  <input
+                    autoFocus
+                    value={editingTitle}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") cancelRename();
+                    }}
+                    onBlur={() => submitRename(c.id)}
+                    className="flex-1 min-w-0 bg-black/60 border border-[#ffd700] text-sm px-1.5 py-1 outline-none text-white"
+                    data-testid={`rename-input-${c.id}`}
+                  />
+                  <button
+                    type="submit"
+                    className="text-[#ffd700] hover:text-white flex-shrink-0"
+                    data-testid={`rename-submit-${c.id}`}
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <div className="flex-1 truncate text-sm font-medium">
+                    {c.title || "New Chat"}
+                  </div>
+                  <button
+                    onClick={(e) => startRename(c, e)}
+                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-[#ffd700] transition-opacity"
+                    title="Rename"
+                    data-testid={`rename-conv-${c.id}`}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteConversation(c.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-[#ff2a6d] transition-opacity"
+                    title="Delete"
+                    data-testid={`delete-conv-${c.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </div>
