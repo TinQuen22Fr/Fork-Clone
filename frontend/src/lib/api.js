@@ -1,6 +1,9 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Vide par défaut : les appels partent en relatif sur /api (proxy Vite en dev,
+// Nginx en prod — même origine dans les deux cas). Ne renseigner
+// VITE_BACKEND_URL que si l'API vit sur un domaine séparé.
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 export const API = `${BACKEND_URL}/api`;
 
 const api = axios.create({

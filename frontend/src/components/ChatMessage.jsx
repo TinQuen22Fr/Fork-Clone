@@ -39,7 +39,7 @@ export default function ChatMessage({ message }) {
       />
       <div className="flex-1 max-w-[80%]">
         <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2">
-          // GEMINI 3 PRO
+          // CLAUDE
         </div>
         <div className="bg-transparent text-white border-2 border-white/20 p-4 rounded-bl-none shadow-[4px_4px_0_0_rgba(5,217,232,0.4)]">
           <div className="md-body">

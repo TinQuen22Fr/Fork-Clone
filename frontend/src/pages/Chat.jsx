@@ -64,8 +64,9 @@ export default function Chat() {
   const fetchConversations = async () => {
     try {
       const { data } = await api.get("/conversations");
-      setConversations(data);
-      if (data.length > 0 && !activeId) setActiveId(data[0].id);
+      const list = Array.isArray(data) ? data : (data?.conversations || []);
+      setConversations(list);
+      if (list.length > 0 && !activeId) setActiveId(list[0].id);
     } catch (e) {
       setError(formatApiError(e));
     }
@@ -194,7 +195,7 @@ export default function Chat() {
     }
   };
 
-  const activeConv = conversations.find((c) => c.id === activeId);
+  const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
 
   return (
     <div className="h-screen w-full flex bg-[#050505] text-white overflow-hidden">
@@ -213,7 +214,7 @@ export default function Chat() {
                 THE FORGE
               </div>
               <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-mono">
-                gemini 3 pro
+                claude
               </div>
             </div>
           </div>
@@ -320,7 +321,7 @@ export default function Chat() {
             </div>
           </div>
           <div className="text-xs font-mono text-gray-500 hidden md:block">
-            model: <span className="text-[#05d9e8]">gemini-3.1-pro-preview</span>
+            model: <span className="text-[#05d9e8]">claude-sonnet-5</span>
           </div>
         </header>
 
@@ -435,7 +436,7 @@ export default function Chat() {
               </button>
             </form>
             <div className="text-center text-[10px] uppercase tracking-[0.3em] text-gray-600 mt-3 font-mono">
-              gemini3_unchained_zerodollar_forge // raw output, verify before trusting
+              claude_unchained_zerodollar_forge // raw output, verify before trusting
             </div>
           </div>
         </div>
@@ -452,7 +453,7 @@ function EmptyState({ onStart }) {
         WELCOME TO <span className="text-[#ffd700]">THE FORGE</span>
       </h2>
       <p className="text-gray-400 max-w-md mb-8">
-        Start a new conversation to unleash Gemini 3 Pro.
+        Start a new conversation to unleash Claude.
       </p>
       <button
         onClick={onStart}

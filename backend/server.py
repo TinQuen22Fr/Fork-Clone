@@ -1,73 +1,265 @@
+"""
+Claude Unchained Forge — backend FastAPI.
+
+Points clés de cette version :
+- Configuration tolérante : aucune variable d'environnement n'est lue avec
+  os.environ[...] au niveau module, donc l'import ne casse jamais. La validation
+  se fait au démarrage (lifespan) avec des messages explicites.
+- CORS strict : origines listées explicitement, jamais "*" avec credentials.
+- Cookies configurables (secure / samesite / domain) selon le déploiement.
+- chat_send : la génération de réponse est isolée dans generate_ai_response(),
+  actuellement un mock. Il suffira de remplacer le corps de cette fonction.
+"""
+
 from dotenv import load_dotenv
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
 import os
-import asyncio
 import base64
 import uuid
 import logging
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Annotated
+from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+import httpx
+from fastapi import (
+    FastAPI,
+    APIRouter,
+    HTTPException,
+    Request,
+    Response,
+    Depends,
+    UploadFile,
+    File,
+    Form,
+)
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
 
-# ---------- Config ----------
-JWT_ALGORITHM = "HS256"
-JWT_SECRET = os.environ["JWT_SECRET"]
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "").strip()
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-pro-preview")
-
-SYSTEM_MESSAGE = (
-    "You are 'Gemini3 Unchained Forge', a bold, raw, edgy AI assistant powered by Gemini 3 Pro. "
-    "You speak with confidence, use vivid markdown when useful (code blocks, lists, headings). "
-    "Be helpful, direct and never boring. You can analyze images the user uploads."
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+logger = logging.getLogger("forge")
 
 
-# ---------- Google GenAI client ----------
-# Lazy init: only fail at call-time if key is missing, so the API can still boot.
-_genai_client = None
+# =========================================================================
+# Configuration
+# =========================================================================
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
 
 
-def get_genai_client():
-    global _genai_client
-    if not GOOGLE_API_KEY:
+def _env_bool(name: str, default: bool) -> bool:
+    raw = _env(name)
+    if not raw:
+        return default
+    return raw.lower() in ("1", "true", "yes", "on")
+
+
+class Settings:
+    """Lecture non bloquante de l'environnement. Validation au démarrage."""
+
+    def __init__(self) -> None:
+        # --- Sécurité / JWT ---
+        self.jwt_secret: str = _env("JWT_SECRET")
+        self.jwt_algorithm: str = "HS256"
+        self.jwt_expire_days: int = int(_env("JWT_EXPIRE_DAYS", "7"))
+
+        # --- Base de données ---
+        self.mongo_url: str = _env("MONGO_URL")
+        self.db_name: str = _env("DB_NAME", "forge")
+
+        # --- Frontend / CORS ---
+        # Accepte une ou plusieurs origines séparées par des virgules.
+        self.frontend_urls: list[str] = [
+            u.strip().rstrip("/")
+            for u in _env("FRONTEND_URL").split(",")
+            if u.strip()
+        ]
+
+        # --- Cookies ---
+        # En HTTPS derrière Nginx : secure=True. En HTTP local : secure=False.
+        self.cookie_secure: bool = _env_bool("COOKIE_SECURE", True)
+        # "lax" si front et back partagent le domaine, "none" si cross-site.
+        self.cookie_samesite: str = _env("COOKIE_SAMESITE", "lax").lower()
+        self.cookie_domain: Optional[str] = _env("COOKIE_DOMAIN") or None
+
+        # --- Compte admin initial ---
+        self.admin_email: str = _env("ADMIN_EMAIL", "admin@forge.dev").lower()
+        self.admin_password: str = _env("ADMIN_PASSWORD")
+
+        # --- Inscription publique ---
+        # Faux par défaut : une instance exposée sur Internet ne doit pas
+        # laisser n'importe qui se créer un compte. Passer à true seulement
+        # si l'ouverture est voulue.
+        self.allow_registration: bool = _env_bool("ALLOW_REGISTRATION", False)
+
+        # --- Divers ---
+        self.max_image_mb: int = int(_env("MAX_IMAGE_MB", "8"))
+        self.history_turns: int = int(_env("HISTORY_TURNS", "20"))
+
+        # --- Claude (abonnement Pro/Max via jeton OAuth Claude Code) ---
+        # AUCUNE API payante au token : on utilise le jeton d'abonnement généré
+        # par `claude setup-token` (commence par sk-ant-oat...). La conso est
+        # décomptée du forfait Claude Pro/Max, pas facturée à l'usage.
+        self.claude_token: str = _env("CLAUDE_CODE_OAUTH_TOKEN")
+        self.claude_model: str = _env("CLAUDE_MODEL", "claude-sonnet-4-6")
+        self.claude_max_tokens: int = int(_env("CLAUDE_MAX_TOKENS", "4096"))
+        self.claude_system_prompt: str = _env(
+            "CLAUDE_SYSTEM_PROMPT",
+            "Tu es Claude Unchained Forge, un assistant IA direct, franc et sans "
+            "langue de bois, propulse par Claude. Reponds avec clarte, en Markdown "
+            "quand c'est utile (blocs de code, listes, titres). Tu peux analyser "
+            "les images envoyees par l'utilisateur.",
+        )
+
+    def validate(self) -> list[str]:
+        """Retourne la liste des problèmes bloquants (vide si tout va bien)."""
+        problems: list[str] = []
+
+        if not self.mongo_url:
+            problems.append(
+                "MONGO_URL est absent : impossible de se connecter à MongoDB."
+            )
+        if not self.frontend_urls:
+            problems.append(
+                "FRONTEND_URL est absent : le CORS refusera toutes les requêtes "
+                "du navigateur. Renseignez l'URL exacte du frontend "
+                "(ex. https://forge.quentin-astro.fr)."
+            )
+        if self.cookie_samesite not in ("lax", "strict", "none"):
+            problems.append(
+                f"COOKIE_SAMESITE='{self.cookie_samesite}' invalide "
+                "(valeurs acceptées : lax, strict, none)."
+            )
+        if self.cookie_samesite == "none" and not self.cookie_secure:
+            problems.append(
+                "COOKIE_SAMESITE=none impose COOKIE_SECURE=true "
+                "(exigence des navigateurs)."
+            )
+        return problems
+
+
+settings = Settings()
+
+# JWT_SECRET manquant : on ne casse pas, mais on génère une clé éphémère et on
+# hurle dans les logs. Conséquence : tous les tokens sont invalidés à chaque
+# redémarrage. Acceptable en dev, jamais en production.
+if not settings.jwt_secret:
+    settings.jwt_secret = secrets.token_urlsafe(48)
+    logger.warning(
+        "JWT_SECRET absent — une clé éphémère a été générée. Les sessions "
+        "seront perdues à chaque redémarrage. Définissez JWT_SECRET dans .env."
+    )
+
+
+# =========================================================================
+# Base de données (initialisée dans le lifespan)
+# =========================================================================
+mongo_client: Optional[AsyncIOMotorClient] = None
+db = None
+
+
+def get_db():
+    if db is None:
         raise HTTPException(
             status_code=503,
-            detail="GOOGLE_API_KEY is not configured. Add your key to /app/backend/.env and restart the backend.",
+            detail="Base de données indisponible. Vérifiez MONGO_URL et les logs.",
         )
-    if _genai_client is None:
-        from google import genai  # local import so import never fails
-        _genai_client = genai.Client(api_key=GOOGLE_API_KEY)
-    return _genai_client
+    return db
 
 
-# ---------- DB ----------
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# =========================================================================
+# Cycle de vie
+# =========================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global mongo_client, db
+
+    problems = settings.validate()
+    for p in problems:
+        logger.error("CONFIG: %s", p)
+
+    if settings.mongo_url:
+        try:
+            mongo_client = AsyncIOMotorClient(
+                settings.mongo_url, serverSelectionTimeoutMS=5000
+            )
+            await mongo_client.admin.command("ping")
+            db = mongo_client[settings.db_name]
+            logger.info("MongoDB connecté (base : %s)", settings.db_name)
+        except Exception:
+            logger.exception(
+                "Connexion MongoDB impossible — l'API démarre en mode dégradé."
+            )
+            db = None
+
+    if db is not None:
+        await db.users.create_index("email", unique=True)
+        await db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
+        await db.messages.create_index([("conversation_id", 1), ("created_at", 1)])
+        await _seed_admin()
+
+    logger.info("Origines CORS autorisées : %s", settings.frontend_urls or "(aucune)")
+    logger.info(
+        "Inscription publique : %s",
+        "OUVERTE" if settings.allow_registration else "fermée",
+    )
+    logger.info(
+        "Cookies : secure=%s samesite=%s domain=%s",
+        settings.cookie_secure,
+        settings.cookie_samesite,
+        settings.cookie_domain or "(par défaut)",
+    )
+
+    yield
+
+    if mongo_client is not None:
+        mongo_client.close()
+        logger.info("Connexion MongoDB fermée.")
 
 
-# ---------- App ----------
-app = FastAPI()
+async def _seed_admin() -> None:
+    """Crée le compte admin s'il n'existe pas. Ne réécrit jamais un mot de passe
+    existant : un reset se fait explicitement, pas au redémarrage."""
+    if not settings.admin_password:
+        logger.info("ADMIN_PASSWORD absent — aucun compte admin créé.")
+        return
+
+    existing = await db.users.find_one({"email": settings.admin_email})
+    if existing is None:
+        await db.users.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "email": settings.admin_email,
+                "password_hash": hash_password(settings.admin_password),
+                "name": "Admin",
+                "role": "admin",
+                "created_at": now_iso(),
+            }
+        )
+        logger.info("Compte admin créé : %s", settings.admin_email)
+    else:
+        logger.info("Compte admin déjà présent : %s", settings.admin_email)
+
+
+app = FastAPI(title="Claude Unchained Forge API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
-
-# ---------- Models ----------
+# =========================================================================
+# Modèles
+# =========================================================================
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
@@ -79,28 +271,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class UserPublic(BaseModel):
-    id: str
-    email: str
-    name: Optional[str] = None
-    role: str = "user"
-
-
-class MessageOut(BaseModel):
-    id: str
-    role: str
-    content: str
-    has_image: bool = False
-    created_at: str
-
-
-class ConversationOut(BaseModel):
-    id: str
-    title: str
-    created_at: str
-    updated_at: str
-
-
 class CreateConversationRequest(BaseModel):
     title: Optional[str] = "New Chat"
 
@@ -109,7 +279,9 @@ class RenameRequest(BaseModel):
     title: str
 
 
-# ---------- Helpers ----------
+# =========================================================================
+# Helpers
+# =========================================================================
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -118,33 +290,45 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def create_access_token(user_id: str, email: str) -> str:
     payload = {
         "sub": user_id,
         "email": email,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "exp": datetime.now(timezone.utc) + timedelta(days=settings.jwt_expire_days),
         "type": "access",
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def set_auth_cookie(response: Response, token: str):
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=7 * 24 * 3600,
-        path="/",
-    )
+def set_auth_cookie(response: Response, token: str) -> None:
+    kwargs = {
+        "key": "access_token",
+        "value": token,
+        "httponly": True,
+        "secure": settings.cookie_secure,
+        "samesite": settings.cookie_samesite,
+        "max_age": settings.jwt_expire_days * 24 * 3600,
+        "path": "/",
+    }
+    if settings.cookie_domain:
+        kwargs["domain"] = settings.cookie_domain
+    response.set_cookie(**kwargs)
 
 
-def clear_auth_cookie(response: Response):
-    response.delete_cookie("access_token", path="/")
+def clear_auth_cookie(response: Response) -> None:
+    kwargs = {"key": "access_token", "path": "/"}
+    if settings.cookie_domain:
+        kwargs["domain"] = settings.cookie_domain
+    response.delete_cookie(**kwargs)
 
 
 async def get_current_user(request: Request) -> dict:
+    database = get_db()
+
     token = request.cookies.get("access_token")
     if not token:
         auth_header = request.headers.get("Authorization", "")
@@ -152,32 +336,160 @@ async def get_current_user(request: Request) -> dict:
             token = auth_header[7:]
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
+
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"id": payload["sub"]})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        user.pop("password_hash", None)
-        user.pop("_id", None)
-        return user
+        payload = jwt.decode(
+            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type")
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    user = await database.users.find_one({"id": payload["sub"]})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    user.pop("password_hash", None)
+    user.pop("_id", None)
+    return user
 
 
-# ---------- Auth Endpoints ----------
+# =========================================================================
+# Génération de la réponse IA  —  Claude via abonnement (jeton OAuth)
+# =========================================================================
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+
+# Identité exigée par Anthropic pour les jetons OAuth d'abonnement (Claude Code).
+# Le premier bloc system DOIT être exactement cette chaîne, sinon 400/401.
+CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+
+
+def _build_messages(history: list[dict], text: str,
+                    image_b64: Optional[str], image_mime: Optional[str]) -> list[dict]:
+    """Construit le tableau `messages` au format Anthropic à partir de l'historique."""
+    messages: list[dict] = []
+    for h in history:
+        role = "user" if h.get("role") == "user" else "assistant"
+        content = (h.get("content") or "").strip()
+        if not content:
+            continue
+        messages.append({"role": role, "content": [{"type": "text", "text": content}]})
+
+    # Message courant (texte + image éventuelle)
+    current: list[dict] = []
+    if image_b64:
+        current.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image_mime or "image/png",
+                "data": image_b64,
+            },
+        })
+    current.append({"type": "text", "text": text or "(image)"})
+    messages.append({"role": "user", "content": current})
+    return messages
+
+
+async def generate_ai_response(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str],
+    image_mime: Optional[str],
+) -> str:
+    """
+    Appelle Claude en utilisant le jeton OAuth d'ABONNEMENT (Claude Pro/Max),
+    jamais une clé API facturée au token.
+
+    Le jeton est généré par l'utilisateur via `claude setup-token` puis placé
+    dans CLAUDE_CODE_OAUTH_TOKEN. On parle directement à l'endpoint Messages
+    d'Anthropic en respectant les exigences des jetons OAuth :
+      - Authorization: Bearer <token>
+      - header beta oauth-2025-04-20
+      - premier bloc system = identité Claude Code obligatoire
+    """
+    if not settings.claude_token:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "CLAUDE_CODE_OAUTH_TOKEN absent. Genere un jeton avec "
+                "`claude setup-token` (compte Claude Pro/Max) puis colle-le dans "
+                "backend/.env. Aucune API payante n'est utilisee."
+            ),
+        )
+
+    payload = {
+        "model": settings.claude_model,
+        "max_tokens": settings.claude_max_tokens,
+        # system en TABLEAU : 1er bloc = identité obligatoire, 2e = vrai prompt.
+        "system": [
+            {"type": "text", "text": CLAUDE_CODE_IDENTITY},
+            {"type": "text", "text": settings.claude_system_prompt},
+        ],
+        "messages": _build_messages(history, text, image_b64, image_mime),
+    }
+
+    headers = {
+        "authorization": f"Bearer {settings.claude_token}",
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/1.0.0 (external, cli)",
+        "x-app": "cli",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as http:
+            resp = await http.post(ANTHROPIC_URL, headers=headers, json=payload)
+    except httpx.HTTPError as e:
+        logger.exception("Appel Anthropic impossible")
+        raise HTTPException(status_code=502, detail=f"Claude injoignable: {e}")
+
+    if resp.status_code == 401:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Jeton d'abonnement Claude refuse (401). Il a peut-etre expire : "
+                "regenere-le avec `claude setup-token`."
+            ),
+        )
+    if resp.status_code >= 400:
+        detail = resp.text
+        try:
+            detail = resp.json().get("error", {}).get("message", detail)
+        except Exception:
+            pass
+        logger.error("Anthropic %s: %s", resp.status_code, detail)
+        raise HTTPException(status_code=502, detail=f"Erreur Claude: {detail}")
+
+    data = resp.json()
+    parts = [
+        block.get("text", "")
+        for block in data.get("content", [])
+        if block.get("type") == "text"
+    ]
+    answer = "\n".join(p for p in parts if p).strip()
+    return answer or "(reponse vide)"
+
+
+# =========================================================================
+# Auth
+# =========================================================================
 @api_router.post("/auth/register")
 async def register(payload: RegisterRequest, response: Response):
+    if not settings.allow_registration:
+        raise HTTPException(
+            status_code=403, detail="Registration is disabled on this instance."
+        )
+
+    database = get_db()
     email = payload.email.lower().strip()
-    existing = await db.users.find_one({"email": email})
-    if existing:
+
+    if await database.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user_id = str(uuid.uuid4())
@@ -189,7 +501,8 @@ async def register(payload: RegisterRequest, response: Response):
         "role": "user",
         "created_at": now_iso(),
     }
-    await db.users.insert_one(doc)
+    await database.users.insert_one(doc)
+
     token = create_access_token(user_id, email)
     set_auth_cookie(response, token)
     return {
@@ -203,10 +516,13 @@ async def register(payload: RegisterRequest, response: Response):
 
 @api_router.post("/auth/login")
 async def login(payload: LoginRequest, response: Response):
+    database = get_db()
     email = payload.email.lower().strip()
-    user = await db.users.find_one({"email": email})
+
+    user = await database.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
     token = create_access_token(user["id"], email)
     set_auth_cookie(response, token)
     return {
@@ -234,46 +550,65 @@ async def me(current_user: dict = Depends(get_current_user)):
     }
 
 
-# ---------- Conversations ----------
+# =========================================================================
+# Conversations
+# =========================================================================
 @api_router.get("/conversations")
 async def list_conversations(current_user: dict = Depends(get_current_user)):
-    convs = await db.conversations.find(
-        {"user_id": current_user["id"]}, {"_id": 0}
-    ).sort("updated_at", -1).to_list(500)
-    return convs
+    database = get_db()
+    return (
+        await database.conversations.find(
+            {"user_id": current_user["id"]}, {"_id": 0}
+        )
+        .sort("updated_at", -1)
+        .to_list(500)
+    )
 
 
 @api_router.post("/conversations")
-async def create_conversation(payload: CreateConversationRequest, current_user: dict = Depends(get_current_user)):
-    conv_id = str(uuid.uuid4())
+async def create_conversation(
+    payload: CreateConversationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    database = get_db()
     doc = {
-        "id": conv_id,
+        "id": str(uuid.uuid4()),
         "user_id": current_user["id"],
         "title": payload.title or "New Chat",
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    await db.conversations.insert_one(doc)
+    await database.conversations.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
 @api_router.get("/conversations/{conv_id}/messages")
 async def get_messages(conv_id: str, current_user: dict = Depends(get_current_user)):
-    conv = await db.conversations.find_one({"id": conv_id, "user_id": current_user["id"]})
+    database = get_db()
+    conv = await database.conversations.find_one(
+        {"id": conv_id, "user_id": current_user["id"]}
+    )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    msgs = await db.messages.find(
-        {"conversation_id": conv_id}, {"_id": 0}
-    ).sort("created_at", 1).to_list(2000)
-    return msgs
+
+    return (
+        await database.messages.find({"conversation_id": conv_id}, {"_id": 0})
+        .sort("created_at", 1)
+        .to_list(2000)
+    )
 
 
 @api_router.patch("/conversations/{conv_id}")
-async def rename_conversation(conv_id: str, payload: RenameRequest, current_user: dict = Depends(get_current_user)):
-    res = await db.conversations.update_one(
+async def rename_conversation(
+    conv_id: str,
+    payload: RenameRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    database = get_db()
+    res = await database.conversations.update_one(
         {"id": conv_id, "user_id": current_user["id"]},
-        {"$set": {"title": payload.title, "updated_at": now_iso()}}
+        {"$set": {"title": payload.title, "updated_at": now_iso()}},
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -281,39 +616,55 @@ async def rename_conversation(conv_id: str, payload: RenameRequest, current_user
 
 
 @api_router.delete("/conversations/{conv_id}")
-async def delete_conversation(conv_id: str, current_user: dict = Depends(get_current_user)):
-    res = await db.conversations.delete_one({"id": conv_id, "user_id": current_user["id"]})
+async def delete_conversation(
+    conv_id: str, current_user: dict = Depends(get_current_user)
+):
+    database = get_db()
+    res = await database.conversations.delete_one(
+        {"id": conv_id, "user_id": current_user["id"]}
+    )
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    await db.messages.delete_many({"conversation_id": conv_id})
+    await database.messages.delete_many({"conversation_id": conv_id})
     return {"ok": True}
 
 
-# ---------- Chat ----------
+# =========================================================================
+# Chat
+# =========================================================================
 @api_router.post("/chat/send")
 async def chat_send(
-    request: Request,
     conversation_id: str = Form(...),
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
 ):
-    conv = await db.conversations.find_one({"id": conversation_id, "user_id": current_user["id"]})
+    database = get_db()
+
+    conv = await database.conversations.find_one(
+        {"id": conversation_id, "user_id": current_user["id"]}
+    )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    if not text and not image:
+    text = (text or "").strip()
+    if not text and image is None:
         raise HTTPException(status_code=400, detail="Empty message")
 
-    # Handle image
+    # --- Image eventuelle ---
     image_b64 = None
+    image_mime = None
     if image is not None:
         image_bytes = await image.read()
-        if len(image_bytes) > 8 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Image too large (max 8MB)")
+        if len(image_bytes) > settings.max_image_mb * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image too large (max {settings.max_image_mb}MB)",
+            )
+        image_mime = image.content_type or "image/png"
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    # Save user message
+    # --- Message utilisateur ---
     user_msg_id = str(uuid.uuid4())
     user_msg_doc = {
         "id": user_msg_id,
@@ -324,86 +675,54 @@ async def chat_send(
         "image_b64": image_b64,
         "created_at": now_iso(),
     }
-    await db.messages.insert_one(user_msg_doc)
+    await database.messages.insert_one(user_msg_doc)
 
-    # Build chat history for Gemini (full multi-turn context)
-    history = await db.messages.find(
-        {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
-        {"_id": 0}
-    ).sort("created_at", 1).to_list(2000)
-
-    # Build native google-genai contents list
-    from google.genai import types as genai_types
-
-    contents = []
-    for h in history[-40:]:  # last 40 turns max
-        role = "user" if h["role"] == "user" else "model"
-        contents.append(
-            genai_types.Content(role=role, parts=[genai_types.Part(text=h["content"])])
+    # --- Historique (hors message courant) ---
+    history = (
+        await database.messages.find(
+            {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
+            {"_id": 0, "image_b64": 0},
         )
+        .sort("created_at", 1)
+        .to_list(2000)
+    )
+    history = history[-settings.history_turns :]
 
-    # Current user message parts (text + optional image)
-    current_parts = []
-    if text:
-        current_parts.append(genai_types.Part(text=text))
-    if image_b64:
-        mime = image.content_type or "image/png"
-        current_parts.append(
-            genai_types.Part(
-                inline_data=genai_types.Blob(
-                    mime_type=mime,
-                    data=base64.b64decode(image_b64),
-                )
-            )
-        )
-    if not current_parts:
-        current_parts.append(genai_types.Part(text="(empty)"))
-    contents.append(genai_types.Content(role="user", parts=current_parts))
-
-    client_g = get_genai_client()
+    # --- Generation ---
     try:
-        result = await asyncio.to_thread(
-            client_g.models.generate_content,
-            model=GEMINI_MODEL,
-            contents=contents,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=SYSTEM_MESSAGE,
-            ),
+        ai_response = await generate_ai_response(
+            history=history,
+            text=text,
+            image_b64=image_b64,
+            image_mime=image_mime,
         )
-        ai_response = result.text or ""
-        if not ai_response and getattr(result, "candidates", None):
-            # Fallback: stitch parts manually
-            parts_out = []
-            for c in result.candidates:
-                for p in (c.content.parts or []):
-                    if getattr(p, "text", None):
-                        parts_out.append(p.text)
-            ai_response = "\n".join(parts_out) or "(empty response)"
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Gemini API call failed")
-        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
+        logger.exception("Echec de la generation de reponse")
+        raise HTTPException(status_code=500, detail=f"AI error: {e}")
 
-    # Save AI message
-    ai_msg_id = str(uuid.uuid4())
+    # --- Message assistant ---
     ai_msg_doc = {
-        "id": ai_msg_id,
+        "id": str(uuid.uuid4()),
         "conversation_id": conversation_id,
         "role": "assistant",
         "content": ai_response,
         "has_image": False,
         "created_at": now_iso(),
     }
-    await db.messages.insert_one(ai_msg_doc)
+    await database.messages.insert_one(ai_msg_doc)
 
-    # Auto-title if first exchange
-    msg_count = await db.messages.count_documents({"conversation_id": conversation_id})
+    # --- Titre automatique au premier echange ---
+    msg_count = await database.messages.count_documents(
+        {"conversation_id": conversation_id}
+    )
     update_fields = {"updated_at": now_iso()}
-    if msg_count <= 2 and (conv.get("title") in (None, "", "New Chat")):
-        title_src = (text or "Image chat")[:50]
-        update_fields["title"] = title_src
-    await db.conversations.update_one({"id": conversation_id}, {"$set": update_fields})
+    if msg_count <= 2 and conv.get("title") in (None, "", "New Chat"):
+        update_fields["title"] = (text or "Image chat")[:50]
+    await database.conversations.update_one(
+        {"id": conversation_id}, {"$set": update_fields}
+    )
 
     user_msg_doc.pop("image_b64", None)
     user_msg_doc.pop("_id", None)
@@ -411,53 +730,53 @@ async def chat_send(
     return {"user_message": user_msg_doc, "ai_message": ai_msg_doc}
 
 
+# =========================================================================
+# Sante
+# =========================================================================
 @api_router.get("/")
 async def root():
-    return {"message": "Gemini3 Unchained Forge API", "model": GEMINI_MODEL}
+    return {
+        "message": "Claude Unchained Forge API",
+        "engine": "claude" if settings.claude_token else "claude (jeton absent)",
+        "model": settings.claude_model,
+        "db": "up" if db is not None else "down",
+        "registration_open": settings.allow_registration,
+    }
 
 
-# ---------- Startup ----------
-@app.on_event("startup")
-async def on_startup():
-    await db.users.create_index("email", unique=True)
-    await db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
-    await db.messages.create_index([("conversation_id", 1), ("created_at", 1)])
-
-    # Seed admin
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@forge.dev").lower()
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
-    if existing is None:
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()),
-            "email": admin_email,
-            "password_hash": hash_password(admin_password),
-            "name": "Admin",
-            "role": "admin",
-            "created_at": now_iso(),
-        })
-        logger.info(f"Seeded admin: {admin_email}")
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one(
-            {"email": admin_email},
-            {"$set": {"password_hash": hash_password(admin_password)}}
-        )
-        logger.info(f"Updated admin password: {admin_email}")
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+@api_router.get("/health")
+async def health():
+    checks = {"db": False}
+    if db is not None:
+        try:
+            await mongo_client.admin.command("ping")
+            checks["db"] = True
+        except Exception:
+            checks["db"] = False
+    status = "ok" if all(checks.values()) else "degraded"
+    return {"status": status, "checks": checks}
 
 
 app.include_router(api_router)
 
-# CORS - need credentials with specific origins
-frontend_url = os.environ.get("FRONTEND_URL", "*")
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=[frontend_url] if frontend_url != "*" else ["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+# =========================================================================
+# CORS
+# =========================================================================
+# allow_credentials=True est incompatible avec allow_origins=["*"] : les
+# navigateurs rejettent toute reponse credentialed portant une origine joker.
+# On liste donc les origines explicitement. Si FRONTEND_URL est absent, on
+# n'autorise rien plutot que de servir une configuration silencieusement cassee.
+if settings.frontend_urls:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.frontend_urls,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+else:
+    logger.error(
+        "CORS non configure (FRONTEND_URL vide) : les appels navigateur "
+        "echoueront. Renseignez FRONTEND_URL dans .env."
+    )
