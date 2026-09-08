@@ -36,6 +36,12 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - Backend curl: chat texte + vision → vraies réponses Claude (abonnement, 0 API payante).
 - Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
+## Déploiement Dedibox — pièges résolus (2026-09-08)
+- Repo complet requis à la racine : install.sh, deploy/, README (sinon `./install.sh: No such file`).
+- requirements.txt : NE JAMAIS faire `pip freeze` du venv du pod (pollue avec litellm/google/openai...). Garder la liste propre + httpx.
+- npm 11 strict → conflit peer-deps (date-fns@4 vs react-day-picker@8). Fix : `frontend/.npmrc` avec `legacy-peer-deps=true`.
+- Vite build.outDir = "build". Nginx DOIT avoir `root /var/www/forge/frontend/build;` (la config live avait divergé vers /var/www/forge/build → ancien bundle servi, crayon absent). Corrigé.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).
