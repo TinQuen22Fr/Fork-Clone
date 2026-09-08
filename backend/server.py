@@ -1,3 +1,4 @@
+from fastapi.staticfiles import StaticFiles
 """
 Claude Unchained Forge — backend FastAPI.
 
@@ -30,6 +31,8 @@ from typing import Optional
 import bcrypt
 import jwt
 import httpx
+from google import genai
+from google.genai import types as genai_types
 from fastapi import (
     FastAPI,
     APIRouter,
@@ -99,6 +102,9 @@ class Settings:
         self.admin_email: str = _env("ADMIN_EMAIL", "admin@forge.dev").lower()
         self.admin_password: str = _env("ADMIN_PASSWORD")
 
+        # --- Git (automatisation commit/push) ---
+        self.github_pat: str = _env("GITHUB_PAT")
+
         # --- Inscription publique ---
         # Faux par défaut : une instance exposée sur Internet ne doit pas
         # laisser n'importe qui se créer un compte. Passer à true seulement
@@ -124,6 +130,10 @@ class Settings:
             "quand c'est utile (blocs de code, listes, titres). Tu peux analyser "
             "les images envoyees par l'utilisateur.",
         )
+
+        # --- Gemini (alternative gratuite via clé API Google AI Studio) ---
+        self.gemini_api_key: str = _env("GEMINI_API_KEY")
+        self.gemini_model: str = _env("GEMINI_MODEL", "gemini-3.6-flash")
 
     def validate(self) -> list[str]:
         """Retourne la liste des problèmes bloquants (vide si tout va bien)."""
@@ -256,6 +266,10 @@ async def _seed_admin() -> None:
 
 
 app = FastAPI(title="Claude Unchained Forge API", lifespan=lifespan)
+
+# Dossier screenshots
+os.makedirs('/var/www/forge/screenshots', exist_ok=True)
+app.mount("/screenshots", StaticFiles(directory="/var/www/forge/screenshots"), name="screenshots")
 api_router = APIRouter(prefix="/api")
 
 
@@ -283,6 +297,7 @@ class RenameRequest(BaseModel):
 
 class RegenerateRequest(BaseModel):
     conversation_id: str
+    provider: str = "claude"
 
 
 class FeedbackRequest(BaseModel):
@@ -378,7 +393,14 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 # --- Tool Calling (capacités agentiques) ---------------------------------
-MAX_TOOL_ITERS = 10  # garde-fou contre les boucles d'outils infinies
+MAX_TOOL_ITERS = 25  # garde-fou contre les boucles d'outils infinies
+
+# Racine autorisée en écriture pour l'outil write_file.
+WORKSPACE_ROOT = Path("/var/www/forge/workspace").resolve()
+# Repo git ciblé par git_commit_push (nom du dépôt cloné dans le workspace).
+GIT_REPO_PATH = WORKSPACE_ROOT / "Fork-Clone"
+GIT_ALLOWED_BRANCH = "claude-ai"
+
 
 TOOLS = [
     {
@@ -414,6 +436,51 @@ TOOLS = [
                 }
             },
             "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": (
+            "Crée ou modifie un fichier texte. Restreint au dossier "
+            "/var/www/forge/workspace (et ses sous-dossiers) pour des raisons "
+            "de sécurité."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Chemin du fichier (absolu ou relatif à workspace/).",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Contenu complet à écrire dans le fichier.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["overwrite", "append"],
+                    "description": "overwrite (défaut) ou append.",
+                },
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "git_commit_push",
+        "description": (
+            "Ajoute (git add -A), commit et pousse (git push) les changements "
+            "du dépôt cloné dans /var/www/forge/workspace/Fork-Clone, "
+            "uniquement sur la branche 'claude-ai'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Message de commit.",
+                }
+            },
+            "required": ["message"],
         },
     },
 ]
@@ -458,11 +525,123 @@ def _tool_read_file(path: str) -> str:
         return f"Erreur de lecture: {e}"
 
 
+def _tool_write_file(path: str, content: str, mode: str = "overwrite") -> str:
+    if not path:
+        return "Erreur: chemin vide."
+    if content is None:
+        return "Erreur: contenu manquant."
+    if len(content) > 1_000_000:
+        return "Erreur: contenu trop volumineux (max 1 Mo)."
+    try:
+        raw = Path(path).expanduser()
+        target = raw if raw.is_absolute() else (WORKSPACE_ROOT / raw)
+        target = target.resolve()
+        # Garde-fou: interdit toute écriture hors de WORKSPACE_ROOT.
+        if WORKSPACE_ROOT != target and WORKSPACE_ROOT not in target.parents:
+            return (
+                f"Erreur: écriture refusée hors de {WORKSPACE_ROOT} "
+                f"(chemin résolu: {target})."
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existed = target.is_file()
+        if mode == "append":
+            with target.open("a", encoding="utf-8") as f:
+                f.write(content)
+        else:
+            target.write_text(content, encoding="utf-8")
+        action = "modifié" if existed else "créé"
+        return f"OK: fichier {action} ({len(content)} caractères écrits) -> {target}"
+    except Exception as e:  # noqa: BLE001
+        return f"Erreur d'écriture: {e}"
+
+
+def _tool_git_commit_push(message: str) -> str:
+    if not message or not message.strip():
+        return "Erreur: message de commit vide."
+    if not GIT_REPO_PATH.is_dir():
+        return f"Erreur: dépôt introuvable: {GIT_REPO_PATH}"
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            args,
+            cwd=str(GIT_REPO_PATH),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    try:
+        branch_res = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        current_branch = (branch_res.stdout or "").strip()
+        if current_branch != GIT_ALLOWED_BRANCH:
+            return (
+                f"Erreur: branche courante '{current_branch}' != "
+                f"'{GIT_ALLOWED_BRANCH}'. Push refusé par garde-fou."
+            )
+
+        add_res = _run(["git", "add", "-A"])
+        if add_res.returncode != 0:
+            return f"Erreur 'git add': {add_res.stderr}"
+
+        diff_res = _run(["git", "diff", "--cached", "--quiet"])
+        if diff_res.returncode == 0:
+            return "Rien à committer (aucun changement détecté)."
+
+        commit_res = _run([
+            "git", "-c", "user.email=bot@forge.local",
+            "-c", "user.name=Claude Forge Bot",
+            "commit", "-m", message,
+        ])
+        if commit_res.returncode != 0:
+            return f"Erreur 'git commit': {commit_res.stderr}"
+
+        github_pat = settings.github_pat
+        push_args = ["git", "push", "origin", GIT_ALLOWED_BRANCH]
+        env = None
+        if github_pat:
+            remote_res = _run(["git", "remote", "get-url", "origin"])
+            remote_url = (remote_res.stdout or "").strip()
+            if remote_url.startswith("https://") and "@" not in remote_url.split("//", 1)[-1].split("/", 1)[0]:
+                auth_url = remote_url.replace(
+                    "https://", f"https://x-access-token:{github_pat}@", 1
+                )
+                push_res = subprocess.run(
+                    ["git", "push", auth_url, GIT_ALLOWED_BRANCH],
+                    cwd=str(GIT_REPO_PATH),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            else:
+                push_res = _run(push_args)
+        else:
+            push_res = _run(push_args)
+
+        if push_res.returncode != 0:
+            safe_stderr = (push_res.stderr or "").replace(github_pat, "***") if github_pat else push_res.stderr
+            return f"Commit OK mais 'git push' a échoué: {safe_stderr}"
+
+        log_res = _run(["git", "log", "-1", "--format=%H %s"])
+        return f"OK: commit + push réussis sur '{GIT_ALLOWED_BRANCH}'.\n{log_res.stdout.strip()}"
+    except subprocess.TimeoutExpired:
+        return "Erreur: timeout de 30 secondes dépassé."
+    except Exception as e:  # noqa: BLE001
+        return f"Erreur git: {e}"
+
+
 def _run_tool(name: str, tool_input: dict) -> str:
     if name == "bash":
         return _tool_bash(tool_input.get("command", ""))
     if name == "read_file":
         return _tool_read_file(tool_input.get("path", ""))
+    if name == "write_file":
+        return _tool_write_file(
+            tool_input.get("path", ""),
+            tool_input.get("content", ""),
+            tool_input.get("mode", "overwrite"),
+        )
+    if name == "git_commit_push":
+        return _tool_git_commit_push(tool_input.get("message", ""))
     return f"Erreur: outil inconnu '{name}'."
 
 
@@ -493,7 +672,51 @@ def _build_messages(history: list[dict], text: str,
     return messages
 
 
+def _tools_to_gemini(tools: list[dict]) -> list[genai_types.FunctionDeclaration]:
+    """Convertit le schéma TOOLS (format Anthropic input_schema) vers le format
+    FunctionDeclaration attendu par le SDK google-genai (parameters)."""
+    declarations = []
+    for t in tools:
+        declarations.append(
+            genai_types.FunctionDeclaration(
+                name=t["name"],
+                description=t.get("description", ""),
+                parameters=t.get("input_schema", {"type": "object", "properties": {}}),
+            )
+        )
+    return declarations
+
+
+
+async def tool_capture_screen(url: str = "https://forge.quentin-astro.fr") -> str:
+    """Prend une capture d'écran de l'interface et retourne le lien Markdown pour l'afficher."""
+    from capture_ui import capture
+    import os
+    import time
+    filename = f"ui_{int(time.time())}.png"
+    await capture(target_url=url, filename=filename)
+    return f"![Capture UI](/screenshots/{filename})"
+
+
 async def generate_ai_response(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str],
+    image_mime: Optional[str],
+    provider: str = "claude",
+) -> tuple[str, list[dict]]:
+    """Dispatcher multi-provider : route vers Claude (défaut, abonnement OAuth)
+    ou Gemini (clé API Google AI Studio, gratuite) selon `provider`.
+
+    Le contrat de sortie est identique quel que soit le provider :
+    (texte_final, tool_steps) où tool_steps liste les outils exécutés.
+    """
+    if provider == "gemini":
+        return await _generate_gemini(history, text, image_b64, image_mime)
+    return await _generate_claude(history, text, image_b64, image_mime)
+
+
+async def _generate_claude(
     history: list[dict],
     text: str,
     image_b64: Optional[str],
@@ -559,6 +782,107 @@ async def generate_ai_response(
             if b.get("type") == "text"
         ]
         answer = "\n".join(p for p in parts if p).strip()
+        return (answer or "(reponse vide)", tool_steps)
+
+    return (
+        "(Boucle d'outils interrompue : trop d'itérations. Réponse partielle.)",
+        tool_steps,
+    )
+
+
+async def _generate_gemini(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str],
+    image_mime: Optional[str],
+) -> tuple[str, list[dict]]:
+    """Génère une réponse via Google Gemini (clé API gratuite Google AI Studio),
+    avec support du tool calling et boucle agentique équivalente à Claude."""
+    if not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GEMINI_API_KEY absent. Récupère une clé gratuite sur "
+                "Google AI Studio (aistudio.google.com) puis colle-la dans "
+                "backend/.env."
+            ),
+        )
+
+    client = genai.Client(api_key=settings.gemini_api_key)
+
+    # Construction des contents au format Gemini : rôle "model" (pas "assistant")
+    contents: list[genai_types.Content] = []
+    for h in history:
+        role = "user" if h.get("role") == "user" else "model"
+        content = (h.get("content") or "").strip()
+        if not content:
+            continue
+        contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=content)]))
+
+    current_parts: list[genai_types.Part] = []
+    if image_b64:
+        current_parts.append(
+            genai_types.Part.from_bytes(
+                data=base64.b64decode(image_b64),
+                mime_type=image_mime or "image/png",
+            )
+        )
+    current_parts.append(genai_types.Part(text=text or "(image)"))
+    contents.append(genai_types.Content(role="user", parts=current_parts))
+
+    tool_steps: list[dict] = []
+    gemini_tools = None
+    if settings.enable_tools:
+        gemini_tools = [genai_types.Tool(function_declarations=_tools_to_gemini(TOOLS))]
+
+    config = genai_types.GenerateContentConfig(
+        system_instruction=settings.claude_system_prompt,
+        tools=gemini_tools,
+        max_output_tokens=settings.claude_max_tokens,
+    )
+
+    for _ in range(MAX_TOOL_ITERS):
+        try:
+            response = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:  # google.genai.errors.APIError et autres
+            raise HTTPException(status_code=502, detail=f"Erreur Gemini: {exc}") from exc
+
+        candidate = response.candidates[0] if response.candidates else None
+        parts = candidate.content.parts if candidate and candidate.content else []
+
+        function_calls = [p for p in parts if getattr(p, "function_call", None)]
+
+        if function_calls and settings.enable_tools:
+            # Réinjecter le tour "model" complet (avec les function_call)
+            contents.append(genai_types.Content(role="model", parts=parts))
+
+            response_parts: list[genai_types.Part] = []
+            for p in function_calls:
+                fc = p.function_call
+                name = fc.name or ""
+                tinput = dict(fc.args) if fc.args else {}
+                output = _run_tool(name, tinput)
+                tool_steps.append({
+                    "tool": name,
+                    "input": tinput,
+                    "output": output[:4000],
+                })
+                response_parts.append(
+                    genai_types.Part.from_function_response(
+                        name=name,
+                        response={"result": output or "(vide)"},
+                    )
+                )
+            contents.append(genai_types.Content(role="user", parts=response_parts))
+            continue
+
+        # Réponse finale (texte)
+        text_parts = [p.text for p in parts if getattr(p, "text", None)]
+        answer = "\n".join(t for t in text_parts if t).strip()
         return (answer or "(reponse vide)", tool_steps)
 
     return (
@@ -778,6 +1102,9 @@ async def chat_send(
     conversation_id: str = Form(...),
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
+    provider: str = Form("claude"),
+    file: Optional[UploadFile] = File(None),
+
     current_user: dict = Depends(get_current_user),
 ):
     database = get_db()
@@ -791,6 +1118,20 @@ async def chat_send(
     text = (text or "").strip()
     if not text and image is None:
         raise HTTPException(status_code=400, detail="Empty message")
+
+    if provider not in ("claude", "gemini"):
+        raise HTTPException(
+            status_code=400, detail="provider invalide (attendu: 'claude' ou 'gemini')"
+        )
+
+    # --- Fichier eventuel ---
+    full_prompt = text
+    file_name = None
+    if file is not None:
+        file_name = file.filename
+        file_content = (await file.read()).decode("utf-8", errors="replace")
+        file_block = f"\n\n--- Fichier: {file_name} ---\n{file_content}"
+        full_prompt = f"{text}{file_block}" if text else file_block.strip()
 
     # --- Image eventuelle ---
     image_b64 = None
@@ -811,7 +1152,7 @@ async def chat_send(
         "id": user_msg_id,
         "conversation_id": conversation_id,
         "role": "user",
-        "content": text or "(image)",
+        "content": (f"{text} [📎 {file_name}]" if file_name and text else (f"[📎 {file_name}]" if file_name else text)) or "(image)",
         "has_image": image_b64 is not None,
         "image_b64": image_b64,
         "image_mime": image_mime,
@@ -834,9 +1175,10 @@ async def chat_send(
     try:
         ai_response, tool_steps = await generate_ai_response(
             history=history,
-            text=text,
+            text=full_prompt,
             image_b64=image_b64,
             image_mime=image_mime,
+            provider=provider,
         )
     except HTTPException:
         raise
@@ -914,9 +1256,10 @@ async def chat_regenerate(
     try:
         ai_response, tool_steps = await generate_ai_response(
             history=history,
-            text=text,
+            text=full_prompt,
             image_b64=image_b64,
             image_mime=image_mime,
+            provider=getattr(payload, "provider", "claude"),
         )
     except HTTPException:
         raise

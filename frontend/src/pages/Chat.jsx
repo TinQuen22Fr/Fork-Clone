@@ -15,6 +15,9 @@ import {
   Menu,
   Pencil,
   Check,
+  Cpu,
+  Square,
+  Paperclip,
 } from "lucide-react";
 
 export default function Chat() {
@@ -24,6 +27,7 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [imageFile, setImageFile] = useState(null);
+    const [attachedFile, setAttachedFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
@@ -32,9 +36,13 @@ export default function Chat() {
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [regenerating, setRegenerating] = useState(false);
+  const [provider, setProvider] = useState(
+    () => localStorage.getItem("forge_provider") || "claude"
+  );
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   // Initial load - fetch conversations
   useEffect(() => {
@@ -180,22 +188,33 @@ export default function Chat() {
     }
   };
 
-  const onPickImage = (e) => {
+  const TEXT_FILE_EXT = [
+    ".txt", ".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".md",
+    ".csv", ".html", ".css", ".yaml", ".yml", ".sh", ".java",
+    ".c", ".cpp", ".go", ".rs", ".rb", ".php", ".sql", ".xml",
+  ];
+
+  const onPickFile = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 8 * 1024 * 1024) {
-      setError("Image must be under 8MB.");
+    if (f.size > 10 * 1024 * 1024) {
+      setError("Le fichier ne doit pas dépasser 10 Mo.");
       return;
     }
-    setImageFile(f);
-    const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target.result);
-    reader.readAsDataURL(f);
+    if (f.type.startsWith("image/")) {
+      setImageFile(f);
+      const reader = new FileReader();
+      reader.onload = (ev) => setImagePreview(ev.target.result);
+      reader.readAsDataURL(f);
+    } else {
+      setAttachedFile(f);
+    }
   };
 
   const clearImage = () => {
-    setImageFile(null);
+    setImageFile(null); setAttachedFile(null);
     setImagePreview(null);
+    setAttachedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -203,7 +222,7 @@ export default function Chat() {
     e?.preventDefault();
     if (sending) return;
     const trimmed = text.trim();
-    if (!trimmed && !imageFile) return;
+    if (!trimmed && !imageFile && !attachedFile) return;
     setError("");
 
     let convId = activeId;
@@ -231,17 +250,23 @@ export default function Chat() {
     setMessages((prev) => [...prev, optimisticUser]);
     const sentText = trimmed;
     const sentImage = imageFile;
+    const sentAttached = attachedFile;
     setText("");
     clearImage();
     setSending(true);
+
+    abortControllerRef.current = new AbortController();
 
     try {
       const form = new FormData();
       form.append("conversation_id", convId);
       form.append("text", sentText);
       if (sentImage) form.append("image", sentImage);
+      if (sentAttached) form.append("file", sentAttached);
+      form.append("provider", provider);
       const { data } = await api.post("/chat/send", form, {
         headers: { "Content-Type": "multipart/form-data" },
+        signal: abortControllerRef.current.signal,
       });
       setMessages((prev) => {
         const without = prev.filter((m) => m.id !== optimisticUser.id);
@@ -250,12 +275,29 @@ export default function Chat() {
       // refresh conv list for updated title/order
       fetchConversations();
     } catch (err) {
-      setError(formatApiError(err));
+      const aborted =
+        err.code === "ERR_CANCELED" ||
+        err.name === "CanceledError" ||
+        err.message === "canceled";
+      if (!aborted) {
+        setError(formatApiError(err));
+      }
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
     } finally {
       setSending(false);
+      abortControllerRef.current = null;
       textareaRef.current?.focus();
     }
+  };
+
+  const stopGeneration = () => {
+    abortControllerRef.current?.abort();
+  };
+
+  const handleProviderChange = (e) => {
+    const value = e.target.value;
+    setProvider(value);
+    localStorage.setItem("forge_provider", value);
   };
 
   const onKeyDown = (e) => {
@@ -490,6 +532,21 @@ export default function Chat() {
         {/* Input dock */}
         <div className="px-4 md:px-8 pb-6 pt-2">
           <div className="max-w-4xl mx-auto">
+            {attachedFile && (
+              <div className="mb-3 inline-flex items-center gap-3 border-2 border-[#05d9e8] p-2 bg-black/40">
+                <div className="text-xs font-mono text-[#05d9e8] flex items-center gap-2">
+                  <span>[Piece jointe] {attachedFile.name}</span>
+                  <span className="text-gray-400 text-[10px]">({(attachedFile.size / 1024).toFixed(1)} Ko)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearImage}
+                  className="btn-ghost text-gray-400 hover:text-[#ff2a6d]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {imagePreview && (
               <div className="mb-3 inline-flex items-center gap-3 border-2 border-[#ffd700] p-2 bg-black/40">
                 <img
@@ -516,20 +573,39 @@ export default function Chat() {
             >
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,.txt,.py,.js,.jsx,.ts,.tsx,.json,.md,.csv,.html,.css,.yaml,.yml,.sh,text/*"
                 ref={fileInputRef}
-                onChange={onPickImage}
+                onChange={onPickFile}
                 className="hidden"
-                data-testid="image-file-input"
+                data-testid="attach-file-input"
               />
+              <div
+                className="flex items-center gap-1 flex-shrink-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
+                title="Choisir le modèle IA"
+              >
+                <Cpu className="w-4 h-4 text-gray-500" />
+                <select
+                  value={provider}
+                  onChange={handleProviderChange}
+                  className="bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
+                  data-testid="provider-select"
+                >
+                  <option value="claude" className="bg-[#0a0a0a] text-white">
+                    Claude
+                  </option>
+                  <option value="gemini" className="bg-[#0a0a0a] text-white">
+                    Gemini
+                  </option>
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] flex-shrink-0"
-                title="Attach image"
+                title="Attach image or text/code file"
                 data-testid="attach-image-btn"
               >
-                <ImagePlus className="w-5 h-5" />
+                <Paperclip className="w-5 h-5" />
               </button>
               <textarea
                 ref={textareaRef}
@@ -542,15 +618,28 @@ export default function Chat() {
                 style={{ minHeight: "2.5rem" }}
                 data-testid="chat-text-input"
               />
-              <button
-                type="submit"
-                disabled={sending || (!text.trim() && !imageFile)}
-                className="btn-primary flex-shrink-0 flex items-center gap-2"
-                data-testid="send-message-btn"
-              >
-                <Send className="w-4 h-4" />
-                <span className="hidden sm:inline">Send</span>
-              </button>
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={stopGeneration}
+                  className="flex-shrink-0 flex items-center gap-2 border-2 border-[#ff2a6d] bg-[#ff2a6d]/20 hover:bg-[#ff2a6d]/40 text-[#ff2a6d] px-3 py-2 font-mono uppercase text-xs tracking-wider transition-colors"
+                  data-testid="stop-message-btn"
+                  title="Stop generation"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span className="hidden sm:inline">Stop</span>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!text.trim() && !imageFile}
+                  className="btn-primary flex-shrink-0 flex items-center gap-2"
+                  data-testid="send-message-btn"
+                >
+                  <Send className="w-4 h-4" />
+                  <span className="hidden sm:inline">Send</span>
+                </button>
+              )}
             </form>
             <div className="text-center text-[10px] uppercase tracking-[0.3em] text-gray-600 mt-3 font-mono">
               claude_unchained_zerodollar_forge // raw output, verify before trusting

@@ -86,3 +86,7 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+*.bak*
+backend/update_server.py
+screenshots/
+workspace/
