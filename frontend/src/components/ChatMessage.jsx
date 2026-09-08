@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/fr";
-import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw } from "lucide-react";
+import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal } from "lucide-react";
 
 dayjs.extend(relativeTime);
 dayjs.locale("fr");
@@ -116,6 +116,31 @@ export default function ChatMessage({
         <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2">
           // CLAUDE
         </div>
+
+        {Array.isArray(message.tool_steps) && message.tool_steps.length > 0 && (
+          <details
+            className="mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
+            data-testid={`tool-steps-${message.id}`}
+          >
+            <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 text-[#ffd700] font-mono text-xs uppercase tracking-wider">
+              <Terminal className="w-4 h-4" />
+              {message.tool_steps.length} outil(s) utilisé(s)
+            </summary>
+            <div className="px-3 pb-3 space-y-3">
+              {message.tool_steps.map((s, i) => (
+                <div key={i} className="border-l-2 border-[#05d9e8]/50 pl-3">
+                  <div className="text-[#05d9e8] font-mono text-xs mb-1">
+                    → {s.tool}({s.input && (s.input.command || s.input.path || JSON.stringify(s.input))})
+                  </div>
+                  <pre className="bg-black/50 p-2 text-[11px] text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    {s.output}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
         <div className="bg-transparent text-white border-2 border-white/20 p-4 rounded-bl-none shadow-[4px_4px_0_0_rgba(5,217,232,0.4)]">
           <div className="md-body">
             <ReactMarkdown>{message.content}</ReactMarkdown>

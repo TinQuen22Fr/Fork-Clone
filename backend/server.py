@@ -19,6 +19,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import base64
+import subprocess
 import uuid
 import logging
 import secrets
@@ -115,6 +116,7 @@ class Settings:
         self.claude_token: str = _env("CLAUDE_CODE_OAUTH_TOKEN")
         self.claude_model: str = _env("CLAUDE_MODEL", "claude-sonnet-4-6")
         self.claude_max_tokens: int = int(_env("CLAUDE_MAX_TOKENS", "4096"))
+        self.enable_tools: bool = _env_bool("ENABLE_TOOLS", True)
         self.claude_system_prompt: str = _env(
             "CLAUDE_SYSTEM_PROMPT",
             "Tu es Claude Unchained Forge, un assistant IA direct, franc et sans "
@@ -375,6 +377,94 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 # Le premier bloc system DOIT être exactement cette chaîne, sinon 400/401.
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
+# --- Tool Calling (capacités agentiques) ---------------------------------
+MAX_TOOL_ITERS = 10  # garde-fou contre les boucles d'outils infinies
+
+TOOLS = [
+    {
+        "name": "bash",
+        "description": (
+            "Exécute une commande shell sur le serveur et renvoie le code de "
+            "sortie, stdout et stderr. Timeout de sécurité de 30 secondes. "
+            "Utilise cet outil pour lister des fichiers, inspecter le système, "
+            "lancer des scripts, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "La commande shell complète à exécuter.",
+                }
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": (
+            "Lit et renvoie le contenu texte d'un fichier local sur le serveur."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Chemin absolu ou relatif du fichier à lire.",
+                }
+            },
+            "required": ["path"],
+        },
+    },
+]
+
+
+def _tool_bash(command: str) -> str:
+    if not command:
+        return "Erreur: commande vide."
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        out = (result.stdout or "")[:8000]
+        err = (result.stderr or "")[:4000]
+        return (
+            f"exit_code: {result.returncode}\n"
+            f"--- stdout ---\n{out}\n"
+            f"--- stderr ---\n{err}"
+        ).strip()
+    except subprocess.TimeoutExpired:
+        return "Erreur: timeout de 30 secondes dépassé."
+    except Exception as e:  # noqa: BLE001
+        return f"Erreur d'exécution: {e}"
+
+
+def _tool_read_file(path: str) -> str:
+    if not path:
+        return "Erreur: chemin vide."
+    try:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            return f"Erreur: fichier introuvable: {path}"
+        data = p.read_text(errors="replace")
+        if len(data) > 100_000:
+            data = data[:100_000] + "\n... (contenu tronqué)"
+        return data
+    except Exception as e:  # noqa: BLE001
+        return f"Erreur de lecture: {e}"
+
+
+def _run_tool(name: str, tool_input: dict) -> str:
+    if name == "bash":
+        return _tool_bash(tool_input.get("command", ""))
+    if name == "read_file":
+        return _tool_read_file(tool_input.get("path", ""))
+    return f"Erreur: outil inconnu '{name}'."
+
 
 def _build_messages(history: list[dict], text: str,
                     image_b64: Optional[str], image_mime: Optional[str]) -> list[dict]:
@@ -408,17 +498,17 @@ async def generate_ai_response(
     text: str,
     image_b64: Optional[str],
     image_mime: Optional[str],
-) -> str:
+) -> tuple[str, list[dict]]:
     """
-    Appelle Claude en utilisant le jeton OAuth d'ABONNEMENT (Claude Pro/Max),
-    jamais une clé API facturée au token.
+    Appelle Claude via le jeton OAuth d'ABONNEMENT (Claude Pro/Max), avec
+    support du TOOL CALLING (bash + read_file) et boucle agentique.
 
-    Le jeton est généré par l'utilisateur via `claude setup-token` puis placé
-    dans CLAUDE_CODE_OAUTH_TOKEN. On parle directement à l'endpoint Messages
-    d'Anthropic en respectant les exigences des jetons OAuth :
-      - Authorization: Bearer <token>
-      - header beta oauth-2025-04-20
-      - premier bloc system = identité Claude Code obligatoire
+    Retourne (texte_final, tool_steps) où tool_steps liste les outils exécutés
+    pour transparence côté frontend.
+
+    Le jeton est généré par l'utilisateur via `claude setup-token`. On parle
+    directement à l'endpoint Messages d'Anthropic en respectant les exigences
+    des jetons OAuth (Authorization: Bearer + beta oauth + identité system).
     """
     if not settings.claude_token:
         raise HTTPException(
@@ -430,16 +520,66 @@ async def generate_ai_response(
             ),
         )
 
+    messages = _build_messages(history, text, image_b64, image_mime)
+    tool_steps: list[dict] = []
+
+    for _ in range(MAX_TOOL_ITERS):
+        data = await _call_anthropic(messages)
+        stop = data.get("stop_reason")
+        content_blocks = data.get("content", [])
+
+        if stop == "tool_use" and settings.enable_tools:
+            # Réinjecter le tour assistant complet (avec les blocs tool_use)
+            messages.append({"role": "assistant", "content": content_blocks})
+            tool_results = []
+            for block in content_blocks:
+                if block.get("type") != "tool_use":
+                    continue
+                name = block.get("name", "")
+                tinput = block.get("input", {}) or {}
+                tool_id = block.get("id", "")
+                output = _run_tool(name, tinput)
+                tool_steps.append({
+                    "tool": name,
+                    "input": tinput,
+                    "output": output[:4000],
+                })
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": output or "(vide)",
+                })
+            messages.append({"role": "user", "content": tool_results})
+            continue
+
+        # Réponse finale (texte)
+        parts = [
+            b.get("text", "")
+            for b in content_blocks
+            if b.get("type") == "text"
+        ]
+        answer = "\n".join(p for p in parts if p).strip()
+        return (answer or "(reponse vide)", tool_steps)
+
+    return (
+        "(Boucle d'outils interrompue : trop d'itérations. Réponse partielle.)",
+        tool_steps,
+    )
+
+
+async def _call_anthropic(messages: list[dict]) -> dict:
+    """Un appel à l'API Messages d'Anthropic (avec outils si activés)."""
     payload = {
         "model": settings.claude_model,
         "max_tokens": settings.claude_max_tokens,
-        # system en TABLEAU : 1er bloc = identité obligatoire, 2e = vrai prompt.
         "system": [
             {"type": "text", "text": CLAUDE_CODE_IDENTITY},
             {"type": "text", "text": settings.claude_system_prompt},
         ],
-        "messages": _build_messages(history, text, image_b64, image_mime),
+        "messages": messages,
     }
+    if settings.enable_tools:
+        payload["tools"] = TOOLS
 
     headers = {
         "authorization": f"Bearer {settings.claude_token}",
@@ -451,7 +591,7 @@ async def generate_ai_response(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=120.0) as http:
+        async with httpx.AsyncClient(timeout=180.0) as http:
             resp = await http.post(ANTHROPIC_URL, headers=headers, json=payload)
     except httpx.HTTPError as e:
         logger.exception("Appel Anthropic impossible")
@@ -474,14 +614,7 @@ async def generate_ai_response(
         logger.error("Anthropic %s: %s", resp.status_code, detail)
         raise HTTPException(status_code=502, detail=f"Erreur Claude: {detail}")
 
-    data = resp.json()
-    parts = [
-        block.get("text", "")
-        for block in data.get("content", [])
-        if block.get("type") == "text"
-    ]
-    answer = "\n".join(p for p in parts if p).strip()
-    return answer or "(reponse vide)"
+    return resp.json()
 
 
 # =========================================================================
@@ -699,7 +832,7 @@ async def chat_send(
 
     # --- Generation ---
     try:
-        ai_response = await generate_ai_response(
+        ai_response, tool_steps = await generate_ai_response(
             history=history,
             text=text,
             image_b64=image_b64,
@@ -718,6 +851,7 @@ async def chat_send(
         "role": "assistant",
         "content": ai_response,
         "has_image": False,
+        "tool_steps": tool_steps,
         "created_at": now_iso(),
     }
     await database.messages.insert_one(ai_msg_doc)
@@ -778,7 +912,7 @@ async def chat_regenerate(
     image_mime = prompt_msg.get("image_mime") or "image/png"
 
     try:
-        ai_response = await generate_ai_response(
+        ai_response, tool_steps = await generate_ai_response(
             history=history,
             text=text,
             image_b64=image_b64,
@@ -796,6 +930,7 @@ async def chat_regenerate(
         "role": "assistant",
         "content": ai_response,
         "has_image": False,
+        "tool_steps": tool_steps,
         "created_at": now_iso(),
     }
     await database.messages.delete_one({"id": old_assistant["id"]})

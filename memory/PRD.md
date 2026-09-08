@@ -36,6 +36,13 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - Backend curl: chat texte + vision → vraies réponses Claude (abonnement, 0 API payante).
 - Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
+## Implémenté (2026-09-08) — Tool Calling agentique
+- Backend: outils `bash` (subprocess, timeout 30s, capture stdout/stderr) et `read_file`. Boucle agent dans generate_ai_response (détecte stop_reason=='tool_use', exécute, réinjecte tool_result, relance; garde-fou MAX_TOOL_ITERS=10). Helper _call_anthropic. Flag ENABLE_TOOLS (défaut true).
+- generate_ai_response retourne (text, tool_steps); chat_send + regenerate stockent tool_steps sur le message.
+- Frontend: ChatMessage.jsx affiche un panneau repliable <details data-testid=tool-steps-{id}> avec chaque appel d'outil + sortie.
+- Vérifié E2E (iteration_6): bash + read_file OK, panneau UI OK, aucune régression.
+- ⚠️ SÉCURITÉ: bash exécute des commandes arbitraires avec les droits du backend. Réservé à l'instance perso. Désactivable via ENABLE_TOOLS=false.
+
 ## Implémenté (2026-09-08) — Barre d'actions type claude.ai
 - Sous chaque réponse Claude: Copier (presse-papier), Lecture audio (Web Speech API navigateur, gratuit), Pouce haut/bas (persistés), Régénérer (dernière réponse uniquement), heure relative FR (dayjs).
 - Backend: POST /api/chat/regenerate, PATCH /api/messages/{id}/feedback. user_msg stocke image_mime.
