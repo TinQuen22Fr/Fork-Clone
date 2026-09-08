@@ -67,7 +67,7 @@ fi
 # 3. Frontend — dépendances + build
 # ---------------------------------------------------------------------------
 c_info "Frontend : installation des dépendances (npm)..."
-(cd "$FRONTEND_DIR" && npm install --silent)
+(cd "$FRONTEND_DIR" && npm install)
 c_ok "Dépendances Node installées."
 
 if [ ! -f "$FRONTEND_DIR/.env" ] && [ -f "$FRONTEND_DIR/.env.example" ]; then
@@ -76,7 +76,7 @@ if [ ! -f "$FRONTEND_DIR/.env" ] && [ -f "$FRONTEND_DIR/.env.example" ]; then
 fi
 
 c_info "Frontend : build de production..."
-(cd "$FRONTEND_DIR" && npm run build --silent)
+(cd "$FRONTEND_DIR" && npm run build)
 c_ok "Build généré dans $FRONTEND_DIR/build/"
 
 # ---------------------------------------------------------------------------
