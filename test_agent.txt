@@ -1,6 +1,0 @@
-Test de validation de l'agent Claude Forge.
-
-Ce fichier a été créé automatiquement via l'outil write_file
-pour valider le pipeline complet : write_file -> git_commit_push -> GitHub (branche claude-ai).
-
-Horodatage logique du test : suite à l'intégration des outils write_file et git_commit_push dans backend/server.py.
