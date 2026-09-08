@@ -15,7 +15,6 @@ import {
   Menu,
   Pencil,
   Check,
-  Cpu,
 } from "lucide-react";
 
 export default function Chat() {
@@ -33,9 +32,6 @@ export default function Chat() {
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [regenerating, setRegenerating] = useState(false);
-  const [provider, setProvider] = useState(
-    () => localStorage.getItem("forge_provider") || "claude"
-  );
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -244,7 +240,6 @@ export default function Chat() {
       form.append("conversation_id", convId);
       form.append("text", sentText);
       if (sentImage) form.append("image", sentImage);
-      form.append("provider", provider);
       const { data } = await api.post("/chat/send", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -261,12 +256,6 @@ export default function Chat() {
       setSending(false);
       textareaRef.current?.focus();
     }
-  };
-
-  const handleProviderChange = (e) => {
-    const value = e.target.value;
-    setProvider(value);
-    localStorage.setItem("forge_provider", value);
   };
 
   const onKeyDown = (e) => {
@@ -533,25 +522,6 @@ export default function Chat() {
                 className="hidden"
                 data-testid="image-file-input"
               />
-              <div
-                className="flex items-center gap-1 flex-shrink-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
-                title="Choisir le modèle IA"
-              >
-                <Cpu className="w-4 h-4 text-gray-500" />
-                <select
-                  value={provider}
-                  onChange={handleProviderChange}
-                  className="bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
-                  data-testid="provider-select"
-                >
-                  <option value="claude" className="bg-[#0a0a0a] text-white">
-                    Claude
-                  </option>
-                  <option value="gemini" className="bg-[#0a0a0a] text-white">
-                    Gemini
-                  </option>
-                </select>
-              </div>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
