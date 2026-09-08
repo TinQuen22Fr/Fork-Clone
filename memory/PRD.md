@@ -36,6 +36,12 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - Backend curl: chat texte + vision → vraies réponses Claude (abonnement, 0 API payante).
 - Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
+## Implémenté (2026-09-08) — Barre d'actions type claude.ai
+- Sous chaque réponse Claude: Copier (presse-papier), Lecture audio (Web Speech API navigateur, gratuit), Pouce haut/bas (persistés), Régénérer (dernière réponse uniquement), heure relative FR (dayjs).
+- Backend: POST /api/chat/regenerate, PATCH /api/messages/{id}/feedback. user_msg stocke image_mime.
+- Frontend: ChatMessage.jsx (barre d'actions), Chat.jsx (handlers regenerate/submitFeedback, isLast).
+- Vérifié E2E (iteration_5): 100% front + backend curl. Aucune régression (rename, chat OK).
+
 ## Déploiement Dedibox — pièges résolus (2026-09-08)
 - Repo complet requis à la racine : install.sh, deploy/, README (sinon `./install.sh: No such file`).
 - requirements.txt : NE JAMAIS faire `pip freeze` du venv du pod (pollue avec litellm/google/openai...). Garder la liste propre + httpx.

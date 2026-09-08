@@ -279,6 +279,14 @@ class RenameRequest(BaseModel):
     title: str
 
 
+class RegenerateRequest(BaseModel):
+    conversation_id: str
+
+
+class FeedbackRequest(BaseModel):
+    feedback: Optional[str] = None  # "up" | "down" | None
+
+
 # =========================================================================
 # Helpers
 # =========================================================================
@@ -673,6 +681,7 @@ async def chat_send(
         "content": text or "(image)",
         "has_image": image_b64 is not None,
         "image_b64": image_b64,
+        "image_mime": image_mime,
         "created_at": now_iso(),
     }
     await database.messages.insert_one(user_msg_doc)
@@ -728,6 +737,100 @@ async def chat_send(
     user_msg_doc.pop("_id", None)
     ai_msg_doc.pop("_id", None)
     return {"user_message": user_msg_doc, "ai_message": ai_msg_doc}
+
+
+@api_router.post("/chat/regenerate")
+async def chat_regenerate(
+    payload: RegenerateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Regénère la DERNIÈRE réponse de l'assistant avec le même prompt utilisateur."""
+    database = get_db()
+
+    conv = await database.conversations.find_one(
+        {"id": payload.conversation_id, "user_id": current_user["id"]}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    msgs = (
+        await database.messages.find({"conversation_id": payload.conversation_id})
+        .sort("created_at", 1)
+        .to_list(2000)
+    )
+    if not msgs or msgs[-1].get("role") != "assistant":
+        raise HTTPException(
+            status_code=400, detail="Aucune réponse assistant à régénérer."
+        )
+
+    old_assistant = msgs[-1]
+    prior = msgs[:-1]
+    if not prior or prior[-1].get("role") != "user":
+        raise HTTPException(
+            status_code=400, detail="Aucun message utilisateur à régénérer."
+        )
+
+    prompt_msg = prior[-1]
+    history = prior[:-1][-settings.history_turns :]
+    raw_text = prompt_msg.get("content", "") or ""
+    text = "" if raw_text == "(image)" else raw_text
+    image_b64 = prompt_msg.get("image_b64")
+    image_mime = prompt_msg.get("image_mime") or "image/png"
+
+    try:
+        ai_response = await generate_ai_response(
+            history=history,
+            text=text,
+            image_b64=image_b64,
+            image_mime=image_mime,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Echec de la regeneration")
+        raise HTTPException(status_code=500, detail=f"AI error: {e}")
+
+    new_doc = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": payload.conversation_id,
+        "role": "assistant",
+        "content": ai_response,
+        "has_image": False,
+        "created_at": now_iso(),
+    }
+    await database.messages.delete_one({"id": old_assistant["id"]})
+    await database.messages.insert_one(new_doc)
+    await database.conversations.update_one(
+        {"id": payload.conversation_id}, {"$set": {"updated_at": now_iso()}}
+    )
+    new_doc.pop("_id", None)
+    return {"ai_message": new_doc}
+
+
+@api_router.patch("/messages/{message_id}/feedback")
+async def set_feedback(
+    message_id: str,
+    payload: FeedbackRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Enregistre un feedback (pouce haut/bas) sur un message assistant."""
+    database = get_db()
+    if payload.feedback not in (None, "up", "down"):
+        raise HTTPException(status_code=400, detail="Invalid feedback value")
+
+    msg = await database.messages.find_one({"id": message_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    conv = await database.conversations.find_one(
+        {"id": msg["conversation_id"], "user_id": current_user["id"]}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    await database.messages.update_one(
+        {"id": message_id}, {"$set": {"feedback": payload.feedback}}
+    )
+    return {"ok": True, "feedback": payload.feedback}
 
 
 # =========================================================================

@@ -31,6 +31,7 @@ export default function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -145,6 +146,40 @@ export default function Chat() {
     }
   };
 
+  const regenerate = async (message) => {
+    if (regenerating || sending) return;
+    setRegenerating(true);
+    setError("");
+    try {
+      const { data } = await api.post("/chat/regenerate", {
+        conversation_id: activeId,
+      });
+      setMessages((prev) => {
+        const copy = [...prev];
+        const idx = copy.findIndex((m) => m.id === message.id);
+        if (idx !== -1) copy[idx] = data.ai_message;
+        else copy.push(data.ai_message);
+        return copy;
+      });
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  const submitFeedback = async (message, value) => {
+    const newVal = message.feedback === value ? null : value;
+    setMessages((prev) =>
+      prev.map((m) => (m.id === message.id ? { ...m, feedback: newVal } : m))
+    );
+    try {
+      await api.patch(`/messages/${message.id}/feedback`, { feedback: newVal });
+    } catch (e) {
+      setError(formatApiError(e));
+    }
+  };
+
   const onPickImage = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -231,6 +266,8 @@ export default function Chat() {
   };
 
   const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
+  const lastMsg = messages[messages.length - 1];
+  const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
 
   return (
     <div className="h-screen w-full flex bg-[#050505] text-white overflow-hidden">
@@ -408,7 +445,14 @@ export default function Chat() {
               <EmptyChat />
             )}
             {messages.map((m) => (
-              <ChatMessage key={m.id} message={m} />
+              <ChatMessage
+                key={m.id}
+                message={m}
+                isLast={m.id === lastAssistantId}
+                onRegenerate={regenerate}
+                onFeedback={submitFeedback}
+                regenerating={regenerating}
+              />
             ))}
             {sending && (
               <div className="flex gap-4 mb-6">
