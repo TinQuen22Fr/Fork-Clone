@@ -15,6 +15,7 @@ import {
   Menu,
   Pencil,
   Check,
+  Cpu,
 } from "lucide-react";
 
 export default function Chat() {
@@ -32,13 +33,20 @@ export default function Chat() {
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [regenerating, setRegenerating] = useState(false);
+  const [provider, setProvider] = useState(
+    () => localStorage.getItem("forge_provider") || "claude"
+  );
+  const [models, setModels] = useState([]);
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
   // Initial load - fetch conversations
   useEffect(() => {
-    if (user && user !== false && user !== null) fetchConversations();
+    if (user && user !== false && user !== null) {
+      fetchConversations();
+      api.get("/models").then(({ data }) => setModels(data.providers || [])).catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -153,6 +161,7 @@ export default function Chat() {
     try {
       const { data } = await api.post("/chat/regenerate", {
         conversation_id: activeId,
+        provider,
       });
       setMessages((prev) => {
         const copy = [...prev];
@@ -240,6 +249,7 @@ export default function Chat() {
       form.append("conversation_id", convId);
       form.append("text", sentText);
       if (sentImage) form.append("image", sentImage);
+      form.append("provider", provider);
       const { data } = await api.post("/chat/send", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -258,6 +268,12 @@ export default function Chat() {
     }
   };
 
+  const handleProviderChange = (e) => {
+    const value = e.target.value;
+    setProvider(value);
+    localStorage.setItem("forge_provider", value);
+  };
+
   const onKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -268,6 +284,7 @@ export default function Chat() {
   const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
+  const activeModel = models.find((m) => m.id === provider);
 
   return (
     <div className="h-screen w-full flex bg-[#050505] text-white overflow-hidden">
@@ -430,8 +447,12 @@ export default function Chat() {
               </div>
             </div>
           </div>
-          <div className="text-xs font-mono text-gray-500 hidden md:block">
-            model: <span className="text-[#05d9e8]">claude-sonnet-5</span>
+          <div className="text-xs font-mono text-gray-500 hidden md:block" data-testid="active-model-label">
+            {activeModel?.label || provider}:{" "}
+            <span className="text-[#05d9e8]">{activeModel?.model || "…"}</span>
+            {activeModel && activeModel.available === false && (
+              <span className="text-[#ff2a6d]"> (non configuré)</span>
+            )}
           </div>
         </header>
 
@@ -522,6 +543,28 @@ export default function Chat() {
                 className="hidden"
                 data-testid="image-file-input"
               />
+              <div
+                className="flex items-center gap-1 flex-shrink-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
+                title="Choisir le modèle IA"
+              >
+                <Cpu className="w-4 h-4 text-gray-500" />
+                <select
+                  value={provider}
+                  onChange={handleProviderChange}
+                  className="bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
+                  data-testid="provider-select"
+                >
+                  <option value="claude" className="bg-[#0a0a0a] text-white">
+                    Claude
+                  </option>
+                  <option value="gemini" className="bg-[#0a0a0a] text-white">
+                    Gemini
+                  </option>
+                  <option value="ollama" className="bg-[#0a0a0a] text-white">
+                    Ollama (Local)
+                  </option>
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}

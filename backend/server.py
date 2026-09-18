@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import asyncio
 import base64
 import subprocess
 import uuid
@@ -124,6 +125,14 @@ class Settings:
             "quand c'est utile (blocs de code, listes, titres). Tu peux analyser "
             "les images envoyees par l'utilisateur.",
         )
+
+        # --- Gemini (Google, via SDK google-genai) ---
+        self.gemini_api_key: str = _env("GEMINI_API_KEY")
+        self.gemini_model: str = _env("GEMINI_MODEL", "gemini-2.5-flash")
+
+        # --- Ollama (moteur local, gratuit, pas de cle API) ---
+        self.ollama_url: str = _env("OLLAMA_URL", "http://localhost:11434")
+        self.ollama_model: str = _env("OLLAMA_MODEL", "llama3.2:1b")
 
     def validate(self) -> list[str]:
         """Retourne la liste des problèmes bloquants (vide si tout va bien)."""
@@ -283,6 +292,7 @@ class RenameRequest(BaseModel):
 
 class RegenerateRequest(BaseModel):
     conversation_id: str
+    provider: str = "claude"
 
 
 class FeedbackRequest(BaseModel):
@@ -378,7 +388,7 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 # --- Tool Calling (capacités agentiques) ---------------------------------
-MAX_TOOL_ITERS = 10  # garde-fou contre les boucles d'outils infinies
+MAX_TOOL_ITERS = 25  # garde-fou contre les boucles d'outils infinies
 
 TOOLS = [
     {
@@ -493,7 +503,67 @@ def _build_messages(history: list[dict], text: str,
     return messages
 
 
-async def generate_ai_response(
+async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[dict]]:
+    """Génération via Ollama local (ex: qwen2.5-coder:3b)."""
+    messages = []
+    for h in history:
+        r = "user" if h.get("role") == "user" else "assistant"
+        c = (h.get("content") or "").strip()
+        if c:
+            messages.append({"role": r, "content": c})
+    messages.append({"role": "user", "content": text or "(vide)"})
+
+    payload = {
+        "model": settings.ollama_model,
+        "messages": messages,
+        "stream": False,
+        "keep_alive": "5m",
+        "options": {
+            "num_ctx": 4096,
+            "num_predict": 1024,
+        },
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=5.0)) as http:
+        try:
+            logger.info(
+                "Appel Ollama sur %s (modele %s)...",
+                settings.ollama_url, settings.ollama_model,
+            )
+            resp = await http.post(f"{settings.ollama_url}/api/chat", json=payload)
+        except httpx.ConnectError:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Ollama injoignable sur {settings.ollama_url}. Vérifie qu'il "
+                    "tourne (`ollama serve`) et que OLLAMA_URL est correct."
+                ),
+            )
+        except httpx.HTTPError as e:
+            logger.exception("Erreur réseau Ollama")
+            raise HTTPException(status_code=502, detail=f"Erreur réseau Ollama: {e}")
+
+        if resp.status_code == 404:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Modèle Ollama '{settings.ollama_model}' introuvable. "
+                    f"Lance d'abord : ollama pull {settings.ollama_model}"
+                ),
+            )
+        if resp.status_code >= 400:
+            detail = resp.text
+            try:
+                detail = resp.json().get("error", detail)
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail=f"Erreur Ollama: {detail}")
+
+        data = resp.json()
+        answer = (data.get("message", {}).get("content", "") or "").strip()
+        return answer or "(reponse vide)", []
+
+
+async def _generate_claude(
     history: list[dict],
     text: str,
     image_b64: Optional[str],
@@ -561,13 +631,104 @@ async def generate_ai_response(
         answer = "\n".join(p for p in parts if p).strip()
         return (answer or "(reponse vide)", tool_steps)
 
-    return (
-        "(Boucle d'outils interrompue : trop d'itérations. Réponse partielle.)",
-        tool_steps,
-    )
+    # Boucle épuisée : on force une réponse texte SANS outils pour ne jamais
+    # perdre le travail effectué (l'utilisateur voit les tool_steps + un résumé).
+    try:
+        data = await _call_anthropic(messages, use_tools=False)
+        parts = [
+            b.get("text", "")
+            for b in data.get("content", [])
+            if b.get("type") == "text"
+        ]
+        final = "\n".join(p for p in parts if p).strip()
+    except HTTPException:
+        final = ""
+    if not final:
+        final = (
+            "⚠️ La tâche a nécessité beaucoup d'étapes d'outils et n'a pas pu "
+            "être finalisée automatiquement. Consulte les étapes ci-dessus ; "
+            "tu peux me demander de continuer."
+        )
+    return (final, tool_steps)
 
 
-async def _call_anthropic(messages: list[dict]) -> dict:
+async def generate_ai_response(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
+    provider: str = "claude",
+) -> tuple[str, list[dict]]:
+    if provider == "ollama":
+        return await _generate_ollama(history, text)
+    if provider == "gemini":
+        return await _generate_gemini(history, text, image_b64, image_mime)
+    return await _generate_claude(history, text, image_b64, image_mime)
+
+
+def _gemini_contents(history, text, image_b64, image_mime):
+    from google.genai import types
+    contents = []
+    for h in history:
+        role = "user" if h.get("role") == "user" else "model"
+        c = (h.get("content") or "").strip()
+        if c:
+            contents.append(types.Content(role=role, parts=[types.Part(text=c)]))
+    parts = []
+    if image_b64:
+        parts.append(types.Part(
+            inline_data=types.Blob(
+                mime_type=image_mime or "image/png",
+                data=base64.b64decode(image_b64),
+            )
+        ))
+    parts.append(types.Part(text=text or "(image)"))
+    contents.append(types.Content(role="user", parts=parts))
+    return contents
+
+
+async def _generate_gemini(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str],
+    image_mime: Optional[str],
+) -> tuple[str, list[dict]]:
+    """Génération via Google Gemini (clé API GEMINI_API_KEY, SDK google-genai)."""
+    if not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GEMINI_API_KEY absent. Ajoute ta clé Google AI Studio dans "
+                "backend/.env (GEMINI_API_KEY=...)."
+            ),
+        )
+    from google import genai
+    from google.genai import types as gtypes
+
+    client = genai.Client(api_key=settings.gemini_api_key)
+    contents = _gemini_contents(history, text, image_b64, image_mime)
+
+    def _call():
+        return client.models.generate_content(
+            model=settings.gemini_model,
+            contents=contents,
+            config=gtypes.GenerateContentConfig(
+                system_instruction=settings.claude_system_prompt,
+                max_output_tokens=settings.claude_max_tokens,
+            ),
+        )
+
+    try:
+        resp = await asyncio.to_thread(_call)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Erreur Gemini")
+        raise HTTPException(status_code=502, detail=f"Erreur Gemini: {e}")
+
+    answer = (getattr(resp, "text", None) or "").strip()
+    return (answer or "(reponse vide)", [])
+
+
+async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
     """Un appel à l'API Messages d'Anthropic (avec outils si activés)."""
     payload = {
         "model": settings.claude_model,
@@ -578,7 +739,7 @@ async def _call_anthropic(messages: list[dict]) -> dict:
         ],
         "messages": messages,
     }
-    if settings.enable_tools:
+    if settings.enable_tools and use_tools:
         payload["tools"] = TOOLS
 
     headers = {
@@ -778,6 +939,7 @@ async def chat_send(
     conversation_id: str = Form(...),
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
+    provider: str = Form("claude"),
     current_user: dict = Depends(get_current_user),
 ):
     database = get_db()
@@ -787,6 +949,9 @@ async def chat_send(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if provider not in ("claude", "gemini", "ollama"):
+        raise HTTPException(status_code=400, detail="provider invalide")
 
     text = (text or "").strip()
     if not text and image is None:
@@ -837,6 +1002,7 @@ async def chat_send(
             text=text,
             image_b64=image_b64,
             image_mime=image_mime,
+            provider=provider,
         )
     except HTTPException:
         raise
@@ -917,6 +1083,7 @@ async def chat_regenerate(
             text=text,
             image_b64=image_b64,
             image_mime=image_mime,
+            provider=payload.provider,
         )
     except HTTPException:
         raise
@@ -971,6 +1138,34 @@ async def set_feedback(
 # =========================================================================
 # Sante
 # =========================================================================
+@api_router.get("/models")
+async def list_models(current_user: dict = Depends(get_current_user)):
+    """Renvoie les providers configurés + le vrai nom de modèle de chacun."""
+    return {
+        "providers": [
+            {
+                "id": "claude",
+                "label": "Claude",
+                "model": settings.claude_model,
+                "available": bool(settings.claude_token),
+            },
+            {
+                "id": "gemini",
+                "label": "Gemini",
+                "model": settings.gemini_model,
+                "available": bool(settings.gemini_api_key),
+            },
+            {
+                "id": "ollama",
+                "label": "Ollama (Local)",
+                "model": settings.ollama_model,
+                "available": True,
+            },
+        ],
+        "enable_tools": settings.enable_tools,
+    }
+
+
 @api_router.get("/")
 async def root():
     return {

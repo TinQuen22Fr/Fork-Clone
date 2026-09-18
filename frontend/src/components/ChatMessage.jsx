@@ -54,13 +54,23 @@ export default function ChatMessage({
   const [copied, setCopied] = useState(false);
   const [speaking, setSpeaking] = useState(false);
 
+  const copyUser = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (_) {
+      // ignore
+    }
+  };
+
   if (isUser) {
     return (
       <div
-        className="flex justify-end mb-6 fade-in-up"
+        className="flex justify-end mb-6 fade-in-up group"
         data-testid="chat-message-user"
       >
-        <div className="max-w-[80%]">
+        <div className="max-w-[80%] flex flex-col items-end">
           {message.has_image && (
             <div className="mb-2 text-xs font-mono text-[#ffd700] text-right">
               [image attached]
@@ -69,6 +79,16 @@ export default function ChatMessage({
           <div className="bg-[#ffd700] text-black border-2 border-black p-4 font-medium rounded-br-none shadow-[4px_4px_0_0_#ff2a6d] whitespace-pre-wrap break-words">
             {message.content}
           </div>
+          <button
+            type="button"
+            onClick={copyUser}
+            title={copied ? "Copié" : "Copier"}
+            aria-label={copied ? "Copié" : "Copier"}
+            data-testid={`copy-user-msg-${message.id}`}
+            className="mt-1 p-1 text-gray-600 hover:text-[#ffd700] opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
         </div>
       </div>
     );
@@ -143,7 +163,21 @@ export default function ChatMessage({
 
         <div className="bg-transparent text-white border-2 border-white/20 p-4 rounded-bl-none shadow-[4px_4px_0_0_rgba(5,217,232,0.4)]">
           <div className="md-body">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown
+              components={{
+                img: ({ node, ...props }) => (
+                  <a href={props.src} target="_blank" rel="noopener noreferrer" className="block my-3">
+                    <img
+                      {...props}
+                      className="max-w-full rounded border-2 border-[#05d9e8]/60 shadow-[3px_3px_0_0_#ff2a6d] hover:opacity-90 transition-opacity"
+                      loading="lazy"
+                    />
+                  </a>
+                )
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
         </div>
 
