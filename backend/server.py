@@ -133,6 +133,12 @@ class Settings:
         # --- Ollama (moteur local, gratuit, pas de cle API) ---
         self.ollama_url: str = _env("OLLAMA_URL", "http://localhost:11434")
         self.ollama_model: str = _env("OLLAMA_MODEL", "llama3.2:1b")
+        # Réglages perf Ollama (tunables pour CPU faible sans AVX2).
+        self.ollama_num_ctx: int = int(_env("OLLAMA_NUM_CTX", "4096"))
+        self.ollama_num_predict: int = int(_env("OLLAMA_NUM_PREDICT", "768"))
+        self.ollama_num_thread: int = int(_env("OLLAMA_NUM_THREAD", "2"))
+        self.ollama_keep_alive: str = _env("OLLAMA_KEEP_ALIVE", "10m")
+        self.ollama_timeout: float = float(_env("OLLAMA_TIMEOUT", "600"))
 
     def validate(self) -> list[str]:
         """Retourne la liste des problèmes bloquants (vide si tout va bien)."""
@@ -517,13 +523,16 @@ async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[di
         "model": settings.ollama_model,
         "messages": messages,
         "stream": False,
-        "keep_alive": "5m",
+        "keep_alive": settings.ollama_keep_alive,
         "options": {
-            "num_ctx": 4096,
-            "num_predict": 1024,
+            "num_ctx": settings.ollama_num_ctx,
+            "num_predict": settings.ollama_num_predict,
+            "num_thread": settings.ollama_num_thread,
         },
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=5.0)) as http:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.ollama_timeout, connect=5.0)
+    ) as http:
         try:
             logger.info(
                 "Appel Ollama sur %s (modele %s)...",

@@ -36,6 +36,13 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - Backend curl: chat texte + vision → vraies réponses Claude (abonnement, 0 API payante).
 - Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
+## Ollama sur CPU faible (2026-09-18)
+- Cible serveur user: Atom C2338, 2 cœurs @1.74GHz, SANS AVX/AVX2, 4 Go RAM, swap 1 Go (à augmenter).
+- Réglages Ollama rendus tunables via .env: OLLAMA_NUM_CTX(4096), OLLAMA_NUM_PREDICT(768), OLLAMA_NUM_THREAD(2), OLLAMA_KEEP_ALIVE(10m), OLLAMA_TIMEOUT(600).
+- Reco modèle code pour ce matériel: qwen2.5-coder:1.5b (ou 0.5b). 3B+ = lent, RAM limite.
+- Réalité: sans AVX2, inférence lente (dizaines de sec à plusieurs min/réponse). Ollama = fallback de secours, pas rapide.
+- Gemini: clé renseignée côté serveur user → fonctionnel après deploy (google-genai dans requirements).
+
 ## Implémenté (2026-09-18) — Multi-providers + corrections
 - Providers: Claude (OAuth, tools), Gemini (google-genai, GEMINI_API_KEY), Ollama (local, OLLAMA_URL/MODEL). Route dans generate_ai_response.
 - Correction "réponses coupées": MAX_TOOL_ITERS 10→25 + appel final SANS outils pour forcer une réponse/résumé (plus de perte du travail). _call_anthropic(use_tools).
