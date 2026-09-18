@@ -134,7 +134,7 @@ export default function ChatMessage({
       />
       <div className="flex-1 max-w-[80%]">
         <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2">
-          // CLAUDE
+          // {({ claude: "CLAUDE", gemini: "GEMINI", ollama: "OLLAMA (LOCAL)" })[message.provider] || "CLAUDE"}
         </div>
 
         {Array.isArray(message.tool_steps) && message.tool_steps.length > 0 && (

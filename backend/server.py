@@ -1018,6 +1018,7 @@ async def chat_send(
         "content": ai_response,
         "has_image": False,
         "tool_steps": tool_steps,
+        "provider": provider,
         "created_at": now_iso(),
     }
     await database.messages.insert_one(ai_msg_doc)
@@ -1098,6 +1099,7 @@ async def chat_regenerate(
         "content": ai_response,
         "has_image": False,
         "tool_steps": tool_steps,
+        "provider": payload.provider,
         "created_at": now_iso(),
     }
     await database.messages.delete_one({"id": old_assistant["id"]})

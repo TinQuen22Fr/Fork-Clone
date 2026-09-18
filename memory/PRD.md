@@ -36,6 +36,16 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - Backend curl: chat texte + vision → vraies réponses Claude (abonnement, 0 API payante).
 - Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
+## Implémenté (2026-09-18) — Multi-providers + corrections
+- Providers: Claude (OAuth, tools), Gemini (google-genai, GEMINI_API_KEY), Ollama (local, OLLAMA_URL/MODEL). Route dans generate_ai_response.
+- Correction "réponses coupées": MAX_TOOL_ITERS 10→25 + appel final SANS outils pour forcer une réponse/résumé (plus de perte du travail). _call_anthropic(use_tools).
+- Nom de modèle DYNAMIQUE: GET /api/models + header active-model-label + tag par message (message.provider) au lieu de "// CLAUDE" figé.
+- Ollama robuste: num_ctx 4096/num_predict 1024, timeout 300s, erreurs claires (injoignable / modèle absent 404). Testé sandbox: llama3.2:1b OK (~8s 1er appel).
+- Bug corrigé: chat_regenerate utilisait `provider` non défini → `payload.provider`.
+- requirements.txt: +google-genai. .env/env.example: GEMINI_API_KEY, GEMINI_MODEL, OLLAMA_URL, OLLAMA_MODEL.
+- Vérifié E2E (iteration_7, 100%): sélection provider met à jour le nom, Claude+tools, Ollama réel, Gemini erreur propre sans clé, régressions OK.
+- EN ATTENTE: GEMINI_API_KEY fournie par l'utilisateur pour activer/tester Gemini. Ollama nécessite le service actif + modèle pull côté serveur.
+
 ## Implémenté (2026-09-08) — Tool Calling agentique
 - Backend: outils `bash` (subprocess, timeout 30s, capture stdout/stderr) et `read_file`. Boucle agent dans generate_ai_response (détecte stop_reason=='tool_use', exécute, réinjecte tool_result, relance; garde-fou MAX_TOOL_ITERS=10). Helper _call_anthropic. Flag ENABLE_TOOLS (défaut true).
 - generate_ai_response retourne (text, tool_steps); chat_send + regenerate stockent tool_steps sur le message.
