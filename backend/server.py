@@ -128,7 +128,8 @@ class Settings:
 
         # --- Gemini (Google, via SDK google-genai) ---
         self.gemini_api_key: str = _env("GEMINI_API_KEY")
-        self.gemini_model: str = _env("GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_model: str = _env("GEMINI_MODEL", "gemini-3.6-flash")
+        self.gemini_fallback_model: str = _env("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")
 
         # --- Ollama (moteur local, gratuit, pas de cle API) ---
         self.ollama_url: str = _env("OLLAMA_URL", "http://localhost:11434")
@@ -139,6 +140,42 @@ class Settings:
         self.ollama_num_thread: int = int(_env("OLLAMA_NUM_THREAD", "2"))
         self.ollama_keep_alive: str = _env("OLLAMA_KEEP_ALIVE", "10m")
         self.ollama_timeout: float = float(_env("OLLAMA_TIMEOUT", "600"))
+
+        # --- Ollama Cloud (moteur distant, cle API) ---
+        self.ollama_cloud_url: str = _env(
+            "OLLAMA_CLOUD_URL", "https://ollama.com/api"
+        ).rstrip("/")
+        self.ollama_cloud_api_key: str = _env("OLLAMA_CLOUD_API_KEY")
+        self.ollama_cloud_model: str = _env(
+            "OLLAMA_CLOUD_MODEL", "deepseek-v4-pro:0813"
+        )
+        # Modele de secours interne au meme provider (utile si le principal
+        # n'est pas inclus dans l'offre gratuite du compte).
+        self.ollama_cloud_fallback_model: str = _env(
+            "OLLAMA_CLOUD_FALLBACK_MODEL", "gpt-oss:120b"
+        )
+        self.ollama_cloud_timeout: float = float(_env("OLLAMA_CLOUD_TIMEOUT", "180"))
+
+        # --- OpenCode Zen / Go (passerelle compatible OpenAI) ---
+        self.opencode_base_url: str = _env(
+            "OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1"
+        ).rstrip("/")
+        self.opencode_api_key: str = _env("OPENCODE_API_KEY")
+        self.opencode_model: str = _env("OPENCODE_MODEL", "deepseek-v4-flash")
+        self.opencode_fallback_model: str = _env("OPENCODE_FALLBACK_MODEL", "")
+        self.opencode_timeout: float = float(_env("OPENCODE_TIMEOUT", "180"))
+
+        # --- Routeur / cascade de bascule ---
+        # Ordre de priorite pour le mode auto et pour la cascade. Le provider
+        # local `ollama` est TOUJOURS repousse en dernier recours.
+        self.provider_priority: list[str] = [
+            p.strip()
+            for p in _env(
+                "PROVIDER_PRIORITY", "claude,gemini,ollama_cloud,opencode,ollama"
+            ).split(",")
+            if p.strip()
+        ]
+        self.enable_fallback: bool = _env_bool("ENABLE_FALLBACK", True)
 
     def validate(self) -> list[str]:
         """Retourne la liste des problèmes bloquants (vide si tout va bien)."""
@@ -661,18 +698,201 @@ async def _generate_claude(
     return (final, tool_steps)
 
 
+# =========================================================================
+# Routeur de providers + cascade de bascule automatique
+# =========================================================================
+PROVIDER_IDS = ("claude", "gemini", "ollama_cloud", "opencode", "ollama")
+
+PROVIDER_LABELS = {
+    "claude": "Claude",
+    "gemini": "Gemini",
+    "ollama_cloud": "Ollama Cloud",
+    "opencode": "OpenCode Zen",
+    "ollama": "Ollama (Local)",
+}
+
+
+def _provider_model(pid: str) -> str:
+    return {
+        "claude": settings.claude_model,
+        "gemini": settings.gemini_model,
+        "ollama_cloud": settings.ollama_cloud_model,
+        "opencode": settings.opencode_model,
+        "ollama": settings.ollama_model,
+    }.get(pid, pid)
+
+
+def _provider_available(pid: str) -> bool:
+    """Detection dynamique : un provider sans cle configuree est ignore."""
+    if pid == "claude":
+        return bool(settings.claude_token)
+    if pid == "gemini":
+        return bool(settings.gemini_api_key)
+    if pid == "ollama_cloud":
+        return bool(settings.ollama_cloud_api_key and settings.ollama_cloud_url)
+    if pid == "opencode":
+        return bool(settings.opencode_api_key and settings.opencode_base_url)
+    if pid == "ollama":
+        return bool(settings.ollama_url)
+    return False
+
+
+def _classify_error(msg: str) -> str:
+    """Categorise une erreur provider pour le log de bascule."""
+    low = (msg or "").lower()
+    if any(k in low for k in ("payment method", "usage credits", "add credits",
+                              "creditserror", "insufficient")):
+        return "credits"
+    if any(k in low for k in ("regionerror", "only available hosted in",
+                              "requires explicit opt in")):
+        return "region"
+    if any(k in low for k in ("free usage", "free tier", "not included in your")):
+        return "freetier"
+    if any(k in low for k in ("quota", "429", "resource_exhausted", "rate limit")):
+        return "quota"
+    if any(k in low for k in ("401", "403", "api key", "unauthenticated",
+                              "permission_denied", "invalid_api_key", "unauthorized")):
+        return "auth"
+    if any(k in low for k in ("timeout", "timed out", "read timeout")):
+        return "timeout"
+    if any(k in low for k in ("connect", "dns", "network", "injoignable",
+                              "unreachable")):
+        return "network"
+    if any(k in low for k in ("not found", "introuvable", "model", "404",
+                              "unsupported")):
+        return "model"
+    if any(k in low for k in ("503", "unavailable", "overloaded", "high demand",
+                              "500", "502", "internal")):
+        return "unavailable"
+    return "unknown"
+
+
+def _build_chain(requested: str) -> list[str]:
+    """Chaine de providers a essayer, Ollama local toujours en dernier recours."""
+    priority = [p for p in settings.provider_priority if p in PROVIDER_IDS]
+    for p in PROVIDER_IDS:
+        if p not in priority:
+            priority.append(p)
+
+    if requested == "auto":
+        chain = list(priority)
+    else:
+        chain = [requested] + [p for p in priority if p != requested]
+
+    if not settings.enable_fallback:
+        chain = chain[:1]
+
+    # Le moteur local est lent : jamais avant un cloud, sauf s'il est demande.
+    if "ollama" in chain[1:]:
+        chain = [p for p in chain if p != "ollama"] + ["ollama"]
+    return chain
+
+
+async def _dispatch_provider(
+    pid: str,
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str],
+    image_mime: Optional[str],
+) -> tuple[str, list[dict], str]:
+    """Retourne (texte, tool_steps, modele_reellement_utilise)."""
+    if pid == "claude":
+        answer, steps = await _generate_claude(history, text, image_b64, image_mime)
+        return answer, steps, settings.claude_model
+    if pid == "gemini":
+        return await _generate_gemini(history, text, image_b64, image_mime)
+    if pid == "ollama_cloud":
+        return await _generate_ollama_cloud(history, text, image_b64, image_mime)
+    if pid == "opencode":
+        return await _generate_opencode(history, text, image_b64, image_mime)
+    if pid == "ollama":
+        answer, steps = await _generate_ollama(history, text)
+        return answer, steps, settings.ollama_model
+    raise HTTPException(status_code=400, detail=f"provider inconnu: {pid}")
+
+
 async def generate_ai_response(
     history: list[dict],
     text: str,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
     provider: str = "claude",
-) -> tuple[str, list[dict]]:
-    if provider == "ollama":
-        return await _generate_ollama(history, text)
-    if provider == "gemini":
-        return await _generate_gemini(history, text, image_b64, image_mime)
-    return await _generate_claude(history, text, image_b64, image_mime)
+) -> tuple[str, list[dict], dict]:
+    """
+    Route la generation vers le provider demande (ou le meilleur disponible en
+    mode `auto`), avec bascule automatique sur le suivant en cas d'echec.
+
+    Retourne (texte, tool_steps, meta) ou meta trace le provider/modele ayant
+    reellement repondu et l'historique des tentatives.
+    """
+    requested = provider if provider in PROVIDER_IDS or provider == "auto" else "claude"
+    chain = _build_chain(requested)
+    attempts: list[dict] = []
+
+    for pid in chain:
+        if not _provider_available(pid):
+            attempts.append({
+                "provider": pid,
+                "model": _provider_model(pid),
+                "kind": "unconfigured",
+                "error": "cle / configuration absente",
+            })
+            logger.info("Routeur: %s ignore (non configure)", pid)
+            continue
+
+        try:
+            answer, steps, used_model = await _dispatch_provider(
+                pid, history, text, image_b64, image_mime
+            )
+        except HTTPException as e:
+            detail = str(e.detail)
+            kind = _classify_error(detail)
+            attempts.append({
+                "provider": pid, "model": _provider_model(pid),
+                "kind": kind, "error": detail[:400],
+            })
+            logger.warning(
+                "Routeur: bascule — %s (%s) a echoue [%s]: %s",
+                pid, _provider_model(pid), kind, detail[:200],
+            )
+            continue
+        except Exception as e:  # noqa: BLE001
+            kind = _classify_error(str(e))
+            attempts.append({
+                "provider": pid, "model": _provider_model(pid),
+                "kind": kind, "error": str(e)[:400],
+            })
+            logger.warning(
+                "Routeur: bascule — %s a leve une exception [%s]: %s",
+                pid, kind, str(e)[:200],
+            )
+            continue
+
+        meta = {
+            "requested_provider": requested,
+            "provider": pid,
+            "model": used_model,
+            "fallback_used": bool(attempts),
+            "attempts": attempts,
+        }
+        if attempts:
+            logger.info(
+                "Routeur: reponse servie par %s (%s) apres %d bascule(s)",
+                pid, used_model, len(attempts),
+            )
+        return answer, steps, meta
+
+    tried = ", ".join(
+        f"{a['provider']}({a['kind']})" for a in attempts
+    ) or "aucun"
+    logger.error("Routeur: tous les providers ont echoue. Tentatives: %s", tried)
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Aucun moteur IA n'a pu repondre. Tentatives : " + tried + ". "
+            "Verifie tes cles dans backend/.env ou lance Ollama en local."
+        ),
+    )
 
 
 def _gemini_contents(history, text, image_b64, image_mime):
@@ -701,8 +921,8 @@ async def _generate_gemini(
     text: str,
     image_b64: Optional[str],
     image_mime: Optional[str],
-) -> tuple[str, list[dict]]:
-    """Génération via Google Gemini (clé API GEMINI_API_KEY, SDK google-genai)."""
+) -> tuple[str, list[dict], str]:
+    """Generation via Google Gemini (cle API GEMINI_API_KEY, SDK google-genai)."""
     if not settings.gemini_api_key:
         raise HTTPException(
             status_code=503,
@@ -716,25 +936,274 @@ async def _generate_gemini(
 
     client = genai.Client(api_key=settings.gemini_api_key)
     contents = _gemini_contents(history, text, image_b64, image_mime)
+    config = gtypes.GenerateContentConfig(
+        system_instruction=settings.claude_system_prompt,
+        max_output_tokens=settings.claude_max_tokens,
+    )
 
-    def _call():
-        return client.models.generate_content(
-            model=settings.gemini_model,
-            contents=contents,
-            config=gtypes.GenerateContentConfig(
-                system_instruction=settings.claude_system_prompt,
-                max_output_tokens=settings.claude_max_tokens,
+    # Modèle principal + fallback (utile quand un modèle est saturé).
+    model_candidates = [settings.gemini_model]
+    if settings.gemini_fallback_model and settings.gemini_fallback_model != settings.gemini_model:
+        model_candidates.append(settings.gemini_fallback_model)
+
+    last_err: Optional[Exception] = None
+    for model_name in model_candidates:
+        def _call(m=model_name):
+            return client.models.generate_content(
+                model=m, contents=contents, config=config
+            )
+        # Retry avec backoff sur erreurs transitoires (503 / surcharge / 429).
+        for attempt in range(4):
+            try:
+                resp = await asyncio.to_thread(_call)
+                answer = (getattr(resp, "text", None) or "").strip()
+                return (answer or "(reponse vide)", [], model_name)
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                msg = str(e)
+                transient = any(
+                    k in msg
+                    for k in ("503", "UNAVAILABLE", "overloaded", "high demand",
+                              "RESOURCE_EXHAUSTED", "429", "500", "INTERNAL")
+                )
+                if transient and attempt < 3:
+                    await asyncio.sleep(2 ** attempt)  # 1s, 2s, 4s
+                    continue
+                break  # non transitoire, ou retries épuisés -> modèle suivant
+
+    # Échec après retries : message clair selon le type d'erreur.
+    msg = str(last_err or "")
+    logger.error("Gemini indisponible: %s", msg)
+    if any(k in msg for k in ("503", "UNAVAILABLE", "overloaded", "high demand")):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Gemini est temporairement surchargé côté Google (503 high demand). "
+                "Ta clé n'est PAS en cause. Réessaie dans un instant, ou bascule sur "
+                "Claude/Ollama."
+            ),
+        )
+    if any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "quota")):
+        raise HTTPException(
+            status_code=429,
+            detail="Quota Gemini atteint (429). Réessaie plus tard ou change de provider.",
+        )
+    if any(
+        k in msg
+        for k in ("API key not valid", "API_KEY_INVALID", "PERMISSION_DENIED",
+                  "401", "403", "invalid", "Unauthenticated")
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Clé Gemini invalide ou non autorisée. Vérifie GEMINI_API_KEY.",
+        )
+    raise HTTPException(status_code=502, detail=f"Erreur Gemini: {msg}")
+
+
+def _plain_messages(history: list[dict], text: str) -> list[dict]:
+    """Historique au format texte simple (OpenAI / Ollama)."""
+    msgs: list[dict] = []
+    for h in history:
+        role = "user" if h.get("role") == "user" else "assistant"
+        content = (h.get("content") or "").strip()
+        if content:
+            msgs.append({"role": role, "content": content})
+    msgs.append({"role": "user", "content": text or "(vide)"})
+    return msgs
+
+
+def _http_error_detail(resp) -> str:
+    """Extrait un message lisible d'une reponse HTTP en erreur."""
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return (resp.text or "")[:500]
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            return str(err.get("message") or err.get("type") or err)[:500]
+        if isinstance(err, str):
+            return err[:500]
+        if data.get("message"):
+            return str(data["message"])[:500]
+    return str(data)[:500]
+
+
+async def _generate_ollama_cloud(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
+) -> tuple[str, list[dict], str]:
+    """
+    Generation via Ollama Cloud (https://ollama.com/api), auth Bearer.
+    Essaie le modele principal puis le modele de secours du meme provider.
+    """
+    if not settings.ollama_cloud_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OLLAMA_CLOUD_API_KEY absent. Ajoute ta cle Ollama Cloud dans "
+                "backend/.env."
             ),
         )
 
-    try:
-        resp = await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("Erreur Gemini")
-        raise HTTPException(status_code=502, detail=f"Erreur Gemini: {e}")
+    messages = _plain_messages(history, text)
+    if image_b64:
+        messages[-1]["images"] = [image_b64]
+    if settings.claude_system_prompt:
+        messages = [
+            {"role": "system", "content": settings.claude_system_prompt}
+        ] + messages
 
-    answer = (getattr(resp, "text", None) or "").strip()
-    return (answer or "(reponse vide)", [])
+    candidates = [settings.ollama_cloud_model]
+    if (
+        settings.ollama_cloud_fallback_model
+        and settings.ollama_cloud_fallback_model != settings.ollama_cloud_model
+    ):
+        candidates.append(settings.ollama_cloud_fallback_model)
+
+    last_detail = ""
+    headers = {
+        "Authorization": f"Bearer {settings.ollama_cloud_api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.ollama_cloud_timeout, connect=10.0)
+    ) as http:
+        for model_name in candidates:
+            payload = {"model": model_name, "messages": messages, "stream": False}
+            try:
+                logger.info("Appel Ollama Cloud (modele %s)...", model_name)
+                resp = await http.post(
+                    f"{settings.ollama_cloud_url}/chat",
+                    json=payload,
+                    headers=headers,
+                )
+            except httpx.HTTPError as e:
+                last_detail = f"reseau: {e}"
+                continue
+
+            if resp.status_code >= 400:
+                last_detail = _http_error_detail(resp)
+                logger.warning(
+                    "Ollama Cloud %s -> HTTP %s: %s",
+                    model_name, resp.status_code, last_detail[:200],
+                )
+                continue
+
+            data = resp.json()
+            # L'API renvoie parfois une erreur applicative avec un HTTP 200.
+            if isinstance(data, dict) and data.get("error"):
+                last_detail = str(data["error"])[:500]
+                logger.warning(
+                    "Ollama Cloud %s -> erreur applicative: %s",
+                    model_name, last_detail[:200],
+                )
+                continue
+
+            answer = (
+                (data.get("message") or {}).get("content", "") or ""
+            ).strip()
+            return (answer or "(reponse vide)", [], model_name)
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Erreur Ollama Cloud: {last_detail or 'echec inconnu'}",
+    )
+
+
+async def _generate_opencode(
+    history: list[dict],
+    text: str,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
+) -> tuple[str, list[dict], str]:
+    """Generation via OpenCode Zen / Go (passerelle compatible OpenAI)."""
+    if not settings.opencode_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OPENCODE_API_KEY absent. Ajoute ta cle OpenCode dans "
+                "backend/.env."
+            ),
+        )
+
+    messages = _plain_messages(history, text)
+    if image_b64:
+        messages[-1]["content"] = [
+            {"type": "text", "text": text or "(image)"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image_mime or 'image/png'};base64,{image_b64}"
+                },
+            },
+        ]
+    if settings.claude_system_prompt:
+        messages = [
+            {"role": "system", "content": settings.claude_system_prompt}
+        ] + messages
+
+    candidates = [settings.opencode_model]
+    if (
+        settings.opencode_fallback_model
+        and settings.opencode_fallback_model != settings.opencode_model
+    ):
+        candidates.append(settings.opencode_fallback_model)
+
+    last_detail = ""
+    headers = {
+        "Authorization": f"Bearer {settings.opencode_api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
+    ) as http:
+        for model_name in candidates:
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": settings.claude_max_tokens,
+            }
+            try:
+                logger.info("Appel OpenCode (modele %s)...", model_name)
+                resp = await http.post(
+                    f"{settings.opencode_base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+            except httpx.HTTPError as e:
+                last_detail = f"reseau: {e}"
+                continue
+
+            if resp.status_code >= 400:
+                last_detail = _http_error_detail(resp)
+                logger.warning(
+                    "OpenCode %s -> HTTP %s: %s",
+                    model_name, resp.status_code, last_detail[:200],
+                )
+                continue
+
+            data = resp.json()
+            if isinstance(data, dict) and data.get("error"):
+                last_detail = _http_error_detail(resp)
+                logger.warning(
+                    "OpenCode %s -> erreur applicative: %s",
+                    model_name, last_detail[:200],
+                )
+                continue
+
+            choices = data.get("choices") or []
+            answer = ""
+            if choices:
+                answer = ((choices[0].get("message") or {}).get("content") or "").strip()
+            return (answer or "(reponse vide)", [], model_name)
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Erreur OpenCode: {last_detail or 'echec inconnu'}",
+    )
 
 
 async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
@@ -959,7 +1428,7 @@ async def chat_send(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    if provider not in ("claude", "gemini", "ollama"):
+    if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
 
     text = (text or "").strip()
@@ -1006,7 +1475,7 @@ async def chat_send(
 
     # --- Generation ---
     try:
-        ai_response, tool_steps = await generate_ai_response(
+        ai_response, tool_steps, meta = await generate_ai_response(
             history=history,
             text=text,
             image_b64=image_b64,
@@ -1027,7 +1496,11 @@ async def chat_send(
         "content": ai_response,
         "has_image": False,
         "tool_steps": tool_steps,
-        "provider": provider,
+        "provider": meta["provider"],
+        "model": meta["model"],
+        "requested_provider": meta["requested_provider"],
+        "fallback_used": meta["fallback_used"],
+        "routing": meta["attempts"],
         "created_at": now_iso(),
     }
     await database.messages.insert_one(ai_msg_doc)
@@ -1088,7 +1561,7 @@ async def chat_regenerate(
     image_mime = prompt_msg.get("image_mime") or "image/png"
 
     try:
-        ai_response, tool_steps = await generate_ai_response(
+        ai_response, tool_steps, meta = await generate_ai_response(
             history=history,
             text=text,
             image_b64=image_b64,
@@ -1108,7 +1581,11 @@ async def chat_regenerate(
         "content": ai_response,
         "has_image": False,
         "tool_steps": tool_steps,
-        "provider": payload.provider,
+        "provider": meta["provider"],
+        "model": meta["model"],
+        "requested_provider": meta["requested_provider"],
+        "fallback_used": meta["fallback_used"],
+        "routing": meta["attempts"],
         "created_at": now_iso(),
     }
     await database.messages.delete_one({"id": old_assistant["id"]})
@@ -1151,28 +1628,28 @@ async def set_feedback(
 # =========================================================================
 @api_router.get("/models")
 async def list_models(current_user: dict = Depends(get_current_user)):
-    """Renvoie les providers configurés + le vrai nom de modèle de chacun."""
+    """Providers detectes dynamiquement + modele reel de chacun."""
+    providers = [
+        {
+            "id": pid,
+            "label": PROVIDER_LABELS[pid],
+            "model": _provider_model(pid),
+            "available": _provider_available(pid),
+            "local": pid == "ollama",
+        }
+        for pid in PROVIDER_IDS
+    ]
+    chain = [p for p in _build_chain("auto") if _provider_available(p)]
     return {
-        "providers": [
-            {
-                "id": "claude",
-                "label": "Claude",
-                "model": settings.claude_model,
-                "available": bool(settings.claude_token),
-            },
-            {
-                "id": "gemini",
-                "label": "Gemini",
-                "model": settings.gemini_model,
-                "available": bool(settings.gemini_api_key),
-            },
-            {
-                "id": "ollama",
-                "label": "Ollama (Local)",
-                "model": settings.ollama_model,
-                "available": True,
-            },
-        ],
+        "providers": providers,
+        "auto": {
+            "id": "auto",
+            "label": "Auto (meilleur dispo)",
+            "chain": chain,
+            "available": bool(chain),
+        },
+        "priority": settings.provider_priority,
+        "enable_fallback": settings.enable_fallback,
         "enable_tools": settings.enable_tools,
     }
 

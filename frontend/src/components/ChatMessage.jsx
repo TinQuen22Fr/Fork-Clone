@@ -133,8 +133,30 @@ export default function ChatMessage({
         className="w-10 h-10 border-2 border-white/30 object-cover flex-shrink-0"
       />
       <div className="flex-1 max-w-[80%]">
-        <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2">
-          // {({ claude: "CLAUDE", gemini: "GEMINI", ollama: "OLLAMA (LOCAL)" })[message.provider] || "CLAUDE"}
+        <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2 flex items-center gap-2 flex-wrap">
+          <span data-testid={`msg-provider-${message.id}`}>
+            // {(message.provider || "claude").toUpperCase().replace("_", " ")}
+            {message.model ? ` · ${message.model}` : ""}
+          </span>
+          {message.fallback_used && (
+            <span
+              className="text-[#ffd700] border border-[#ffd700]/50 px-1.5 py-0.5 text-[9px] tracking-normal normal-case"
+              title={
+                Array.isArray(message.routing)
+                  ? message.routing
+                      .map((r) => `${r.provider} (${r.kind})`)
+                      .join(" → ")
+                  : "Bascule automatique"
+              }
+              data-testid={`fallback-badge-${message.id}`}
+            >
+              bascule auto
+              {message.requested_provider &&
+              message.requested_provider !== "auto"
+                ? ` depuis ${message.requested_provider}`
+                : ""}
+            </span>
+          )}
         </div>
 
         {Array.isArray(message.tool_steps) && message.tool_steps.length > 0 && (

@@ -72,6 +72,42 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - npm 11 strict → conflit peer-deps (date-fns@4 vs react-day-picker@8). Fix : `frontend/.npmrc` avec `legacy-peer-deps=true`.
 - Vite build.outDir = "build". Nginx DOIT avoir `root /var/www/forge/frontend/build;` (la config live avait divergé vers /var/www/forge/build → ancien bundle servi, crayon absent). Corrigé.
 
+## Implémenté (2026-06) — Routeur multi-providers + cascade de bascule
+Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
+`frontend/src/pages/Chat.jsx`, `frontend/src/components/ChatMessage.jsx`.
+
+- Nouveaux providers: `ollama_cloud` (https://ollama.com/api, Bearer, `_generate_ollama_cloud`)
+  et `opencode` (passerelle compatible OpenAI, `_generate_opencode`).
+- Détection dynamique des clés: `_provider_available()` — un provider sans clé est ignoré
+  sans bloquer les autres. Exposé par `GET /api/models` (+ chaîne du mode auto).
+- Routeur `generate_ai_response()`: `_build_chain()` (Ollama local toujours dernier recours),
+  `_classify_error()` (credits/region/freetier/quota/auth/timeout/network/model/unavailable),
+  bascule silencieuse sur le provider suivant, log de chaque bascule.
+  Retourne (texte, tool_steps, meta{provider, model réel, fallback_used, attempts}).
+- Secours intra-provider: OLLAMA_CLOUD_FALLBACK_MODEL, OPENCODE_FALLBACK_MODEL, GEMINI_FALLBACK_MODEL.
+- Messages assistant persistent `model`, `requested_provider`, `fallback_used`, `routing`.
+- Frontend: option "Auto (meilleur dispo)" + liste providers dynamique, en-tête montrant la
+  chaîne auto, badge "bascule auto" sur le message (tooltip = providers échoués + motif).
+- ENV ajoutés: OLLAMA_CLOUD_URL/API_KEY/MODEL/FALLBACK_MODEL/TIMEOUT,
+  OPENCODE_BASE_URL/API_KEY/MODEL/FALLBACK_MODEL/TIMEOUT, PROVIDER_PRIORITY, ENABLE_FALLBACK.
+
+### Constats réels sur les comptes de l'utilisateur (testés en direct)
+- Ollama Cloud: clé valide. `deepseek-v4-pro` ET `deepseek-v4-pro:0813` → "this model is not
+  included in your free usage, add usage credits". Gratuits constatés: `gpt-oss:120b`,
+  `nemotron-3-nano:30b`. Config: modèle par défaut = deepseek-v4-pro:0813, secours gpt-oss:120b.
+- OpenCode Zen/Go: clé valide mais AUCUN modèle utilisable → `CreditsError: No payment method`;
+  les `deepseek-v4-*` renvoient en plus `RegionError` (opt-in Chine requis sur le workspace).
+  Infra implémentée et prête, le routeur le saute automatiquement.
+- Google AI Studio: clé valide. `gemini-2.5-flash` et `gemini-2.0-flash` RETIRÉS (404
+  "no longer available to new users"). Basculé sur `gemini-3.6-flash` (+ secours `gemini-3.5-flash`) — OK.
+
+### Tests E2E (curl + navigateur, 2026-06)
+- provider=ollama_cloud → 200, bascule interne gpt-oss:120b, model remonté correctement.
+- provider=opencode → échec region → bascule auto sur claude, badge + routing corrects.
+- provider=gemini → 200 gemini-3.6-flash. provider=auto → claude. provider=claude → 200.
+- /api/chat/regenerate OK avec le nouveau meta. provider inconnu → 400.
+- UI: sélecteur = Auto + 5 providers; en-tête affiche la chaîne de bascule.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).

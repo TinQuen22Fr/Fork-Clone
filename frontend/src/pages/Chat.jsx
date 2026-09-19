@@ -37,6 +37,7 @@ export default function Chat() {
     () => localStorage.getItem("forge_provider") || "claude"
   );
   const [models, setModels] = useState([]);
+  const [autoChain, setAutoChain] = useState([]);
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -45,7 +46,13 @@ export default function Chat() {
   useEffect(() => {
     if (user && user !== false && user !== null) {
       fetchConversations();
-      api.get("/models").then(({ data }) => setModels(data.providers || [])).catch(() => {});
+      api
+        .get("/models")
+        .then(({ data }) => {
+          setModels(data.providers || []);
+          setAutoChain(data.auto?.chain || []);
+        })
+        .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -285,7 +292,6 @@ export default function Chat() {
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
   const activeModel = models.find((m) => m.id === provider);
-
   return (
     <div className="h-screen w-full flex bg-[#050505] text-white overflow-hidden">
       {/* Sidebar */}
@@ -448,10 +454,30 @@ export default function Chat() {
             </div>
           </div>
           <div className="text-xs font-mono text-gray-500 hidden md:block" data-testid="active-model-label">
-            {activeModel?.label || provider}:{" "}
-            <span className="text-[#05d9e8]">{activeModel?.model || "…"}</span>
-            {activeModel && activeModel.available === false && (
-              <span className="text-[#ff2a6d]"> (non configuré)</span>
+            {provider === "auto" ? (
+              <>
+                AUTO:{" "}
+                <span className="text-[#05d9e8]">
+                  {autoChain.length
+                    ? models.find((m) => m.id === autoChain[0])?.model ||
+                      autoChain[0]
+                    : "aucun provider configuré"}
+                </span>
+                {autoChain.length > 1 && (
+                  <span className="text-gray-600">
+                    {" "}
+                    → {autoChain.slice(1).join(" → ")}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                {activeModel?.label || provider}:{" "}
+                <span className="text-[#05d9e8]">{activeModel?.model || "…"}</span>
+                {activeModel && activeModel.available === false && (
+                  <span className="text-[#ff2a6d]"> (non configuré)</span>
+                )}
+              </>
             )}
           </div>
         </header>
@@ -554,15 +580,19 @@ export default function Chat() {
                   className="bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
                   data-testid="provider-select"
                 >
-                  <option value="claude" className="bg-[#0a0a0a] text-white">
-                    Claude
+                  <option value="auto" className="bg-[#0a0a0a] text-white">
+                    Auto (meilleur dispo)
                   </option>
-                  <option value="gemini" className="bg-[#0a0a0a] text-white">
-                    Gemini
-                  </option>
-                  <option value="ollama" className="bg-[#0a0a0a] text-white">
-                    Ollama (Local)
-                  </option>
+                  {models.map((m) => (
+                    <option
+                      key={m.id}
+                      value={m.id}
+                      className="bg-[#0a0a0a] text-white"
+                    >
+                      {m.label}
+                      {m.available === false ? " (non configuré)" : ""}
+                    </option>
+                  ))}
                 </select>
               </div>
               <button
