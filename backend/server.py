@@ -162,8 +162,14 @@ class Settings:
         ).rstrip("/")
         self.opencode_api_key: str = _env("OPENCODE_API_KEY")
         self.opencode_model: str = _env("OPENCODE_MODEL", "deepseek-v4-flash")
-        self.opencode_fallback_model: str = _env("OPENCODE_FALLBACK_MODEL", "")
+        self.opencode_fallback_model: str = _env(
+            "OPENCODE_FALLBACK_MODEL", "glm-5.3-flash"
+        )
         self.opencode_timeout: float = float(_env("OPENCODE_TIMEOUT", "180"))
+        # OpenCode Go exige un User-Agent identifiable (pas un nom de lib HTTP).
+        self.opencode_user_agent: str = _env(
+            "OPENCODE_USER_AGENT", "claude-unchained-forge/1.0"
+        )
 
         # --- Routeur / cascade de bascule ---
         # Ordre de priorite pour le mode auto et pour la cascade. Le provider
@@ -746,6 +752,8 @@ def _classify_error(msg: str) -> str:
     if any(k in low for k in ("regionerror", "only available hosted in",
                               "requires explicit opt in")):
         return "region"
+    if any(k in low for k in ("missingsessionid", "x-opencode-session")):
+        return "session"
     if any(k in low for k in ("free usage", "free tier", "not included in your")):
         return "freetier"
     if any(k in low for k in ("quota", "429", "resource_exhausted", "rate limit")):
@@ -794,6 +802,7 @@ async def _dispatch_provider(
     text: str,
     image_b64: Optional[str],
     image_mime: Optional[str],
+    session_id: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """Retourne (texte, tool_steps, modele_reellement_utilise)."""
     if pid == "claude":
@@ -804,7 +813,9 @@ async def _dispatch_provider(
     if pid == "ollama_cloud":
         return await _generate_ollama_cloud(history, text, image_b64, image_mime)
     if pid == "opencode":
-        return await _generate_opencode(history, text, image_b64, image_mime)
+        return await _generate_opencode(
+            history, text, image_b64, image_mime, session_id
+        )
     if pid == "ollama":
         answer, steps = await _generate_ollama(history, text)
         return answer, steps, settings.ollama_model
@@ -817,6 +828,7 @@ async def generate_ai_response(
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
     provider: str = "claude",
+    session_id: Optional[str] = None,
 ) -> tuple[str, list[dict], dict]:
     """
     Route la generation vers le provider demande (ou le meilleur disponible en
@@ -842,7 +854,7 @@ async def generate_ai_response(
 
         try:
             answer, steps, used_model = await _dispatch_provider(
-                pid, history, text, image_b64, image_mime
+                pid, history, text, image_b64, image_mime, session_id
             )
         except HTTPException as e:
             detail = str(e.detail)
@@ -1118,8 +1130,16 @@ async def _generate_opencode(
     text: str,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
-    """Generation via OpenCode Zen / Go (passerelle compatible OpenAI)."""
+    """
+    Generation via OpenCode Zen / Go (passerelle compatible OpenAI).
+
+    OpenCode Go impose deux choses depuis l'abonnement :
+    - un User-Agent identifiable (pas un nom de lib HTTP) ;
+    - un identifiant de session stable par conversation dans
+      `x-opencode-session` (sinon erreur MissingSessionID).
+    """
     if not settings.opencode_api_key:
         raise HTTPException(
             status_code=503,
@@ -1156,6 +1176,9 @@ async def _generate_opencode(
     headers = {
         "Authorization": f"Bearer {settings.opencode_api_key}",
         "Content-Type": "application/json",
+        "User-Agent": settings.opencode_user_agent,
+        # Session stable = id de conversation, pour le routage et le cache prompt.
+        "x-opencode-session": f"ses_forge_{session_id or uuid.uuid4().hex}",
     }
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
@@ -1481,6 +1504,7 @@ async def chat_send(
             image_b64=image_b64,
             image_mime=image_mime,
             provider=provider,
+            session_id=conversation_id,
         )
     except HTTPException:
         raise
@@ -1567,6 +1591,7 @@ async def chat_regenerate(
             image_b64=image_b64,
             image_mime=image_mime,
             provider=payload.provider,
+            session_id=payload.conversation_id,
         )
     except HTTPException:
         raise

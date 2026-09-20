@@ -108,6 +108,23 @@ Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
 - /api/chat/regenerate OK avec le nouveau meta. provider inconnu → 400.
 - UI: sélecteur = Auto + 5 providers; en-tête affiche la chaîne de bascule.
 
+## Adaptation (2026-06) — Abonnement OpenCode Go activé
+Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`.
+
+- L'abonnement Go lève le `CreditsError`, mais la passerelle impose alors :
+  - un **User-Agent identifiable** (`OPENCODE_USER_AGENT=claude-unchained-forge/1.0`) ;
+  - un **`x-opencode-session` stable par conversation**, sinon `MissingSessionID`.
+  → `generate_ai_response()` / `_dispatch_provider()` / `_generate_opencode()` prennent
+  un `session_id` ; `chat_send` et `chat_regenerate` passent le `conversation_id`
+  (header envoyé : `ses_forge_<conversation_id>`). Nouveau kind d'erreur `session`.
+- `OPENCODE_FALLBACK_MODEL=glm-5.3-flash` (les `deepseek-v4-*` renvoient encore
+  `RegionError` : opt-in Chine à cocher dans le workspace Go).
+- ⚠️ Notre implémentation parle à `/chat/completions`. Les modèles servis par
+  `/messages` (qwen3.*, minimax-*) ou `/responses` (grok-4.6, gpt-5.6-luna,
+  muse-spark-*) ne sont PAS compatibles — documenté dans env.example.
+- Testé : `provider=opencode` → 200 via `glm-5.3-flash`. Modèles validés en direct :
+  glm-5.3-flash, mimo-v2.5, kimi-k2.7-code, hy3.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).
