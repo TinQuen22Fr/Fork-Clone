@@ -6,7 +6,9 @@ import ChatMessage from "@/components/ChatMessage";
 import {
   Plus,
   Send,
-  ImagePlus,
+  Paperclip,
+  FileText,
+  Square,
   Trash2,
   LogOut,
   Flame,
@@ -42,6 +44,7 @@ export default function Chat() {
     () => localStorage.getItem("forge_model_override") || ""
   );
   const fileInputRef = useRef(null);
+  const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -200,23 +203,33 @@ export default function Chat() {
     }
   };
 
-  const onPickImage = (e) => {
+  const onPickFile = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 8 * 1024 * 1024) {
-      setError("Image must be under 8MB.");
+    if (f.size > 16 * 1024 * 1024) {
+      setError("Fichier trop lourd (max 16 Mo).");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
     setImageFile(f);
-    const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target.result);
-    reader.readAsDataURL(f);
+    if (f.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (ev) => setImagePreview(ev.target.result);
+      reader.readAsDataURL(f);
+    } else {
+      setImagePreview(null);
+    }
   };
 
   const clearImage = () => {
     setImageFile(null);
     setImagePreview(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const abortRequest = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
   };
 
   const sendMessage = async (e) => {
@@ -244,8 +257,10 @@ export default function Chat() {
       id: `tmp-${Date.now()}`,
       conversation_id: convId,
       role: "user",
-      content: trimmed || "(image)",
-      has_image: !!imageFile,
+      content:
+        trimmed || (imageFile ? `(fichier : ${imageFile.name})` : "(image)"),
+      has_image: !!imageFile && imageFile.type.startsWith("image/"),
+      file_name: imageFile ? imageFile.name : null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -255,15 +270,18 @@ export default function Chat() {
     clearImage();
     setSending(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const form = new FormData();
       form.append("conversation_id", convId);
       form.append("text", sentText);
-      if (sentImage) form.append("image", sentImage);
+      if (sentImage) form.append("file", sentImage);
       form.append("provider", provider);
       if (modelOverride) form.append("model", modelOverride);
       const { data } = await api.post("/chat/send", form, {
         headers: { "Content-Type": "multipart/form-data" },
+        signal: controller.signal,
       });
       setMessages((prev) => {
         const without = prev.filter((m) => m.id !== optimisticUser.id);
@@ -272,9 +290,18 @@ export default function Chat() {
       // refresh conv list for updated title/order
       fetchConversations();
     } catch (err) {
-      setError(formatApiError(err));
+      const aborted =
+        err?.code === "ERR_CANCELED" || err?.name === "CanceledError";
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+      if (aborted) {
+        setError("Requête annulée.");
+        // La réponse a peut-être été enregistrée côté serveur : on resynchronise.
+        loadMessages(convId);
+      } else {
+        setError(formatApiError(err));
+      }
     } finally {
+      abortRef.current = null;
       setSending(false);
       textareaRef.current?.focus();
     }
@@ -527,12 +554,20 @@ export default function Chat() {
                 <div className="w-10 h-10 border-2 border-white/30 bg-[#0a0a0a] flex items-center justify-center flex-shrink-0">
                   <Flame className="w-5 h-5 text-[#ff2a6d] pulse-glow" />
                 </div>
-                <div className="border-2 border-white/20 p-4 shadow-[4px_4px_0_0_rgba(5,217,232,0.4)]">
+                <div className="border-2 border-white/20 p-4 shadow-[4px_4px_0_0_rgba(5,217,232,0.4)] flex items-center gap-4">
                   <div className="typing-dots">
                     <span></span>
                     <span></span>
                     <span></span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={abortRequest}
+                    className="text-[11px] font-mono uppercase tracking-wider text-gray-500 hover:text-[#ff2a6d] border border-white/20 hover:border-[#ff2a6d] px-2 py-1 transition-colors"
+                    data-testid="stop-generation-btn"
+                  >
+                    annuler
+                  </button>
                 </div>
               </div>
             )}
@@ -558,15 +593,28 @@ export default function Chat() {
         {/* Input dock */}
         <div className="px-4 md:px-8 pb-6 pt-2">
           <div className="max-w-4xl mx-auto">
-            {imagePreview && (
+            {imageFile && (
               <div className="mb-3 inline-flex items-center gap-3 border-2 border-[#ffd700] p-2 bg-black/40">
-                <img
-                  src={imagePreview}
-                  alt="preview"
-                  className="w-16 h-16 object-cover"
-                />
-                <div className="text-xs font-mono text-[#ffd700]">
-                  {imageFile?.name}
+                {imagePreview ? (
+                  <img
+                    src={imagePreview}
+                    alt="preview"
+                    className="w-16 h-16 object-cover"
+                  />
+                ) : (
+                  <div className="w-16 h-16 flex items-center justify-center bg-[#ffd700]/10 border border-[#ffd700]/40">
+                    <FileText className="w-7 h-7 text-[#ffd700]" />
+                  </div>
+                )}
+                <div className="text-xs font-mono text-[#ffd700] max-w-[240px]">
+                  <div className="truncate" data-testid="attachment-name">
+                    {imageFile.name}
+                  </div>
+                  <div className="text-gray-500">
+                    {imageFile.size < 1024
+                      ? `${imageFile.size} o`
+                      : `${(imageFile.size / 1024).toFixed(1)} Ko`}
+                  </div>
                 </div>
                 <button
                   onClick={clearImage}
@@ -584,9 +632,8 @@ export default function Chat() {
             >
               <input
                 type="file"
-                accept="image/*"
                 ref={fileInputRef}
-                onChange={onPickImage}
+                onChange={onPickFile}
                 className="hidden"
                 data-testid="image-file-input"
               />
@@ -642,10 +689,10 @@ export default function Chat() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] flex-shrink-0"
-                title="Attach image"
+                title="Joindre un fichier (image, PDF, texte, code...)"
                 data-testid="attach-image-btn"
               >
-                <ImagePlus className="w-5 h-5" />
+                <Paperclip className="w-5 h-5" />
               </button>
               <textarea
                 ref={textareaRef}
@@ -658,15 +705,28 @@ export default function Chat() {
                 style={{ minHeight: "2.5rem" }}
                 data-testid="chat-text-input"
               />
-              <button
-                type="submit"
-                disabled={sending || (!text.trim() && !imageFile)}
-                className="btn-primary flex-shrink-0 flex items-center gap-2"
-                data-testid="send-message-btn"
-              >
-                <Send className="w-4 h-4" />
-                <span className="hidden sm:inline">Send</span>
-              </button>
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={abortRequest}
+                  className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-2 border-black bg-[#ff2a6d] text-white font-heading font-black uppercase tracking-wider shadow-[4px_4px_0_0_#000] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0_0_#000] transition-all"
+                  title="Arrêter la génération"
+                  data-testid="stop-message-btn"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span className="hidden sm:inline">Stop</span>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!text.trim() && !imageFile}
+                  className="btn-primary flex-shrink-0 flex items-center gap-2"
+                  data-testid="send-message-btn"
+                >
+                  <Send className="w-4 h-4" />
+                  <span className="hidden sm:inline">Send</span>
+                </button>
+              )}
             </form>
             <div className="text-center text-[10px] uppercase tracking-[0.3em] text-gray-600 mt-3 font-mono">
               claude_unchained_zerodollar_forge // raw output, verify before trusting

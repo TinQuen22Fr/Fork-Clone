@@ -156,6 +156,42 @@ Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
 - ollama_cloud override nemotron-3-nano:30b OK.
 - UI : 37 modèles listés dans le sélecteur OpenCode, sélection appliquée à l'envoi.
 
+## Implémenté (2026-06) — Bouton Stop + pièces jointes universelles
+Fichiers modifiés: `backend/server.py`, `backend/requirements.txt` (+pypdf),
+`backend/env.example`, `frontend/src/pages/Chat.jsx`,
+`frontend/src/components/ChatMessage.jsx`.
+
+### Stop / annuler
+- `AbortController` (`abortRef`) sur `POST /chat/send` + `signal` passé à axios.
+- Pendant la génération, le bouton SEND devient **STOP** (`data-testid=stop-message-btn`)
+  et un lien « annuler » apparaît dans la bulle de chargement (`stop-generation-btn`).
+- À l'annulation : message optimiste retiré, bandeau « Requête annulée. », puis
+  `loadMessages()` pour resynchroniser (le message utilisateur est déjà persisté côté serveur).
+- ⚠️ La requête HTTP est coupée ; si le serveur avait déjà fini d'écrire la réponse,
+  elle réapparaît au resync. Pas de streaming, donc pas d'arrêt à mi-génération côté modèle.
+
+### Pièces jointes (plus seulement des images)
+- Backend : `parse_attachment()` classe le fichier —
+  `image/*` → chemin vision existant ; PDF → **extraction texte via pypdf** ;
+  tout fichier texte/code (≈60 extensions + `text/*`, json, xml, yaml...) → décodé UTF-8/latin-1.
+  Type non géré → HTTP 400 avec un message explicite (conseille PDF/CSV/texte pour docx/xlsx).
+- `build_attachment_prompt()` injecte le contenu dans le prompt en bloc de code balisé
+  (langage déduit de l'extension), tronqué à `MAX_FILE_CHARS` avec mention explicite.
+  → fonctionne avec **TOUS les providers**, même sans vision ni support document.
+- `POST /chat/send` accepte le champ `file` (l'ancien `image` reste accepté).
+  Nouvelles limites : `MAX_UPLOAD_MB=16`, `MAX_FILE_CHARS=40000`.
+- Message utilisateur : `file_name`, `file_kind`, `file_size`, `file_text` (exclu des GET).
+  `chat_regenerate` réinjecte `file_text` pour régénérer à l'identique.
+- Frontend : input sans `accept`, icône trombone, carte d'aperçu (vignette image ou icône fichier
+  + nom + taille), puce de pièce jointe sur le message (`attachment-chip-{id}`).
+
+### Tests E2E (curl + navigateur, 2026-06)
+- `.py` via gemini → le modèle retrouve le marqueur du fichier. `.pdf` via gemini → marqueur extrait.
+- `.csv` via opencode/deepseek-v4-flash → bonne valeur lue dans le CSV.
+- Binaire `.bin` → 400 avec message clair.
+- Navigateur : carte d'aperçu OK, STOP + « annuler » visibles pendant la génération,
+  annulation → bandeau « Requête annulée. » et retour du bouton SEND.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).

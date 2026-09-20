@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import io
 import time
 import asyncio
 import base64
@@ -109,6 +110,9 @@ class Settings:
 
         # --- Divers ---
         self.max_image_mb: int = int(_env("MAX_IMAGE_MB", "8"))
+        self.max_upload_mb: int = int(_env("MAX_UPLOAD_MB", "16"))
+        # Nb max de caracteres extraits d'un fichier texte/PDF injecte au prompt.
+        self.max_file_chars: int = int(_env("MAX_FILE_CHARS", "40000"))
         self.history_turns: int = int(_env("HISTORY_TURNS", "20"))
 
         # --- Claude (abonnement Pro/Max via jeton OAuth Claude Code) ---
@@ -1024,6 +1028,126 @@ async def _generate_gemini(
     raise HTTPException(status_code=502, detail=f"Erreur Gemini: {msg}")
 
 
+# =========================================================================
+# Pieces jointes (images, texte, code, PDF)
+# =========================================================================
+_TEXT_EXTS = {
+    ".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json",
+    ".jsonl", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env",
+    ".xml", ".html", ".htm", ".css", ".scss", ".js", ".jsx", ".ts", ".tsx",
+    ".py", ".rb", ".go", ".rs", ".java", ".kt", ".c", ".h", ".cpp", ".hpp",
+    ".cs", ".php", ".sh", ".bash", ".zsh", ".fish", ".sql", ".graphql",
+    ".vue", ".svelte", ".swift", ".lua", ".pl", ".r", ".jl", ".dart",
+    ".dockerfile", ".gitignore", ".patch", ".diff", ".srt", ".vtt", ".tex",
+}
+
+_LANG_BY_EXT = {
+    ".py": "python", ".js": "javascript", ".jsx": "jsx", ".ts": "typescript",
+    ".tsx": "tsx", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
+    ".sh": "bash", ".bash": "bash", ".sql": "sql", ".html": "html",
+    ".css": "css", ".go": "go", ".rs": "rust", ".java": "java",
+    ".c": "c", ".cpp": "cpp", ".rb": "ruby", ".php": "php", ".md": "markdown",
+    ".xml": "xml", ".toml": "toml", ".csv": "csv",
+}
+
+
+def _pdf_to_text(data: bytes) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(data))
+    pages = []
+    for i, page in enumerate(reader.pages, 1):
+        try:
+            content = (page.extract_text() or "").strip()
+        except Exception:  # noqa: BLE001
+            content = ""
+        if content:
+            pages.append(f"--- page {i} ---\n{content}")
+    return "\n\n".join(pages)
+
+
+def parse_attachment(filename: str, content_type: str, data: bytes) -> dict:
+    """
+    Classe une piece jointe et en extrait ce qui est exploitable.
+
+    Retourne {kind, name, mime, size, image_b64?, text?} avec
+    kind = "image" (envoye tel quel aux modeles vision) ou "text"
+    (contenu extrait puis injecte dans le prompt, compatible tous providers).
+    """
+    name = (filename or "fichier").strip()
+    mime = (content_type or "").split(";")[0].strip().lower()
+    ext = os.path.splitext(name)[1].lower()
+    base = {"name": name, "mime": mime, "size": len(data)}
+
+    if mime.startswith("image/"):
+        if len(data) > settings.max_image_mb * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image trop lourde (max {settings.max_image_mb} Mo).",
+            )
+        return {
+            **base,
+            "kind": "image",
+            "image_b64": base64.b64encode(data).decode("utf-8"),
+        }
+
+    if mime == "application/pdf" or ext == ".pdf":
+        extracted = _pdf_to_text(data)
+        if not extracted:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Aucun texte extractible de '{name}'. C'est probablement un "
+                    "PDF scanne (image). Envoie une capture d'ecran a la place."
+                ),
+            )
+        return {**base, "kind": "text", "text": extracted}
+
+    is_texty = (
+        ext in _TEXT_EXTS
+        or mime.startswith("text/")
+        or mime in ("application/json", "application/xml",
+                    "application/javascript", "application/x-yaml",
+                    "application/x-sh", "application/sql")
+    )
+    if is_texty or not mime:
+        try:
+            decoded = data.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                decoded = data.decode("latin-1")
+            except Exception:  # noqa: BLE001
+                decoded = ""
+        if decoded.strip():
+            return {**base, "kind": "text", "text": decoded}
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Type de fichier non gere : '{name}' ({mime or 'inconnu'}). "
+            "Sont acceptes : images, PDF (texte), et tout fichier texte ou code "
+            "(txt, md, csv, json, yaml, py, js, sql, log...). Pour un .docx ou "
+            ".xlsx, exporte-le en PDF, CSV ou texte."
+        ),
+    )
+
+
+def build_attachment_prompt(text: str, att: dict) -> str:
+    """Injecte le contenu d'un fichier texte dans le prompt utilisateur."""
+    content = att.get("text") or ""
+    truncated = len(content) > settings.max_file_chars
+    if truncated:
+        content = content[: settings.max_file_chars]
+    lang = _LANG_BY_EXT.get(os.path.splitext(att["name"])[1].lower(), "")
+    note = (
+        f"\n\n[... tronque : le fichier depasse {settings.max_file_chars} "
+        "caracteres ...]" if truncated else ""
+    )
+    header = f"Fichier joint : {att['name']} ({att['size']} octets)"
+    block = f"{header}\n```{lang}\n{content}{note}\n```"
+    return f"{block}\n\n{text}".strip() if text else block
+
+
 def _plain_messages(history: list[dict], text: str) -> list[dict]:
     """Historique au format texte simple (OpenAI / Ollama)."""
     msgs: list[dict] = []
@@ -1560,7 +1684,10 @@ async def get_messages(conv_id: str, current_user: dict = Depends(get_current_us
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     return (
-        await database.messages.find({"conversation_id": conv_id}, {"_id": 0})
+        await database.messages.find(
+            {"conversation_id": conv_id},
+            {"_id": 0, "image_b64": 0, "file_text": 0},
+        )
         .sort("created_at", 1)
         .to_list(2000)
     )
@@ -1604,6 +1731,7 @@ async def chat_send(
     conversation_id: str = Form(...),
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
+    file: Optional[UploadFile] = File(None),
     provider: str = Form("claude"),
     model: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
@@ -1620,21 +1748,30 @@ async def chat_send(
         raise HTTPException(status_code=400, detail="provider invalide")
 
     text = (text or "").strip()
-    if not text and image is None:
+    upload = file or image  # `image` conserve pour compatibilite
+    if not text and upload is None:
         raise HTTPException(status_code=400, detail="Empty message")
 
-    # --- Image eventuelle ---
+    # --- Piece jointe eventuelle (image, texte/code, PDF) ---
     image_b64 = None
     image_mime = None
-    if image is not None:
-        image_bytes = await image.read()
-        if len(image_bytes) > settings.max_image_mb * 1024 * 1024:
+    attachment = None
+    prompt_text = text
+    if upload is not None:
+        raw = await upload.read()
+        if len(raw) > settings.max_upload_mb * 1024 * 1024:
             raise HTTPException(
                 status_code=400,
-                detail=f"Image too large (max {settings.max_image_mb}MB)",
+                detail=f"Fichier trop lourd (max {settings.max_upload_mb} Mo).",
             )
-        image_mime = image.content_type or "image/png"
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        attachment = parse_attachment(
+            upload.filename or "fichier", upload.content_type or "", raw
+        )
+        if attachment["kind"] == "image":
+            image_b64 = attachment["image_b64"]
+            image_mime = attachment["mime"] or "image/png"
+        else:
+            prompt_text = build_attachment_prompt(text, attachment)
 
     # --- Message utilisateur ---
     user_msg_id = str(uuid.uuid4())
@@ -1642,10 +1779,16 @@ async def chat_send(
         "id": user_msg_id,
         "conversation_id": conversation_id,
         "role": "user",
-        "content": text or "(image)",
+        "content": text or (
+            f"(fichier : {attachment['name']})" if attachment else "(image)"
+        ),
         "has_image": image_b64 is not None,
         "image_b64": image_b64,
         "image_mime": image_mime,
+        "file_name": attachment["name"] if attachment else None,
+        "file_kind": attachment["kind"] if attachment else None,
+        "file_size": attachment["size"] if attachment else None,
+        "file_text": attachment.get("text") if attachment else None,
         "created_at": now_iso(),
     }
     await database.messages.insert_one(user_msg_doc)
@@ -1654,7 +1797,7 @@ async def chat_send(
     history = (
         await database.messages.find(
             {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
-            {"_id": 0, "image_b64": 0},
+            {"_id": 0, "image_b64": 0, "file_text": 0},
         )
         .sort("created_at", 1)
         .to_list(2000)
@@ -1665,7 +1808,7 @@ async def chat_send(
     try:
         ai_response, tool_steps, meta = await generate_ai_response(
             history=history,
-            text=text,
+            text=prompt_text,
             image_b64=image_b64,
             image_mime=image_mime,
             provider=provider,
@@ -1701,12 +1844,16 @@ async def chat_send(
     )
     update_fields = {"updated_at": now_iso()}
     if msg_count <= 2 and conv.get("title") in (None, "", "New Chat"):
-        update_fields["title"] = (text or "Image chat")[:50]
+        fallback_title = (
+            f"Fichier : {attachment['name']}" if attachment else "Image chat"
+        )
+        update_fields["title"] = (text or fallback_title)[:50]
     await database.conversations.update_one(
         {"id": conversation_id}, {"$set": update_fields}
     )
 
     user_msg_doc.pop("image_b64", None)
+    user_msg_doc.pop("file_text", None)
     user_msg_doc.pop("_id", None)
     ai_msg_doc.pop("_id", None)
     return {"user_message": user_msg_doc, "ai_message": ai_msg_doc}
@@ -1746,9 +1893,22 @@ async def chat_regenerate(
     prompt_msg = prior[-1]
     history = prior[:-1][-settings.history_turns :]
     raw_text = prompt_msg.get("content", "") or ""
-    text = "" if raw_text == "(image)" else raw_text
+    text = "" if raw_text in ("(image)",) else raw_text
+    if raw_text.startswith("(fichier :"):
+        text = ""
     image_b64 = prompt_msg.get("image_b64")
     image_mime = prompt_msg.get("image_mime") or "image/png"
+
+    # Fichier texte joint : on reinjecte son contenu comme au premier envoi.
+    if prompt_msg.get("file_kind") == "text" and prompt_msg.get("file_text"):
+        text = build_attachment_prompt(
+            text,
+            {
+                "name": prompt_msg.get("file_name") or "fichier",
+                "size": prompt_msg.get("file_size") or 0,
+                "text": prompt_msg["file_text"],
+            },
+        )
 
     try:
         ai_response, tool_steps, meta = await generate_ai_response(

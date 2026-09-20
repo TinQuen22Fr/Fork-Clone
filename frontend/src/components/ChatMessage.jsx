@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/fr";
-import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal } from "lucide-react";
+import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal, Paperclip } from "lucide-react";
 
 dayjs.extend(relativeTime);
 dayjs.locale("fr");
@@ -71,9 +71,12 @@ export default function ChatMessage({
         data-testid="chat-message-user"
       >
         <div className="max-w-[80%] flex flex-col items-end">
-          {message.has_image && (
-            <div className="mb-2 text-xs font-mono text-[#ffd700] text-right">
-              [image attached]
+          {(message.has_image || message.file_name) && (
+            <div className="mb-2 inline-flex items-center gap-1.5 text-xs font-mono text-[#ffd700] border border-[#ffd700]/40 bg-[#ffd700]/10 px-2 py-1">
+              <Paperclip className="w-3 h-3" />
+              <span data-testid={`attachment-chip-${message.id}`}>
+                {message.file_name || "image"}
+              </span>
             </div>
           )}
           <div className="bg-[#ffd700] text-black border-2 border-black p-4 font-medium rounded-br-none shadow-[4px_4px_0_0_#ff2a6d] whitespace-pre-wrap break-words">
