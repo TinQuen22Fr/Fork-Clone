@@ -125,6 +125,37 @@ Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`.
 - Testé : `provider=opencode` → 200 via `glm-5.3-flash`. Modèles validés en direct :
   glm-5.3-flash, mimo-v2.5, kimi-k2.7-code, hy3.
 
+## Implémenté (2026-06) — OpenCode : 3 transports + sélecteur de modèle
+Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
+`frontend/src/pages/Chat.jsx`.
+
+- **OpenCode v2** : aucune adaptation API nécessaire. L'API HTTP reste sur `/zen/go/v1`
+  (seule la console a déménagé sur console.opencode.ai). v2 = CLI/desktop/web.
+- **Trois transports gérés** dans `_generate_opencode`, détectés via `_opencode_transport()`
+  d'après l'id du modèle, avec **réessai automatique entre transports** si l'endpoint ne colle pas
+  (`_opencode_wrong_transport()` : codes 400/404/405/415/422 + messages « not supported for format »,
+  et 401 non-authentification) :
+  - `/chat/completions` (OpenAI) : deepseek-*, glm-*, kimi-*, mimo-*, hy*, longcat
+  - `/messages` (Anthropic, auth `x-api-key`) : minimax-*, qwen3.*
+  - `/responses` (OpenAI Responses, `input`/`instructions`) : gpt-5.6-luna, muse-spark-*
+  Parsing par transport (`_opencode_extract`) + conversion d'image par transport
+  (`_opencode_convert_image` : image_url / input_image / source base64).
+  Override manuel possible : `OPENCODE_TRANSPORT=auto|chat|messages|responses`.
+- **Sélecteur de modèle** : `GET /api/models` renvoie le catalogue live de chaque provider distant
+  (`_fetch_catalog`, cache 10 min : `/zen/go/v1/models` et `/api/tags`). `POST /api/chat/send`
+  et `/api/chat/regenerate` acceptent un champ `model` qui ne s'applique **qu'au provider demandé**
+  (les providers de secours gardent leur modèle configuré). UI : second `<select>`
+  (`data-testid=model-select`) affiché quand le provider a un catalogue, persisté en localStorage,
+  réinitialisé au changement de provider. En-tête affiche le modèle choisi avec la mention « (choisi) ».
+- **Opt-in Chine activé côté utilisateur** : `deepseek-v4-flash` / `deepseek-v4-pro` répondent désormais.
+
+### Tests E2E (curl + navigateur, 2026-06)
+- opencode défaut → deepseek-v4-flash OK. Override testés OK : minimax-m3 et qwen3.8-max (`/messages`),
+  gpt-5.6-luna et muse-spark-1.3-contributor (`/responses`), grok-4.6 (retry chat→responses),
+  kimi-k2.7-code, mimo-v2.5-pro, glm-5.3-flash.
+- ollama_cloud override nemotron-3-nano:30b OK.
+- UI : 37 modèles listés dans le sélecteur OpenCode, sélection appliquée à l'envoi.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).

@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import time
 import asyncio
 import base64
 import subprocess
@@ -170,6 +171,8 @@ class Settings:
         self.opencode_user_agent: str = _env(
             "OPENCODE_USER_AGENT", "claude-unchained-forge/1.0"
         )
+        # auto | chat | messages | responses (auto = deduit de l'id du modele)
+        self.opencode_transport: str = _env("OPENCODE_TRANSPORT", "auto").lower()
 
         # --- Routeur / cascade de bascule ---
         # Ordre de priorite pour le mode auto et pour la cascade. Le provider
@@ -342,6 +345,7 @@ class RenameRequest(BaseModel):
 class RegenerateRequest(BaseModel):
     conversation_id: str
     provider: str = "claude"
+    model: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -803,6 +807,7 @@ async def _dispatch_provider(
     image_b64: Optional[str],
     image_mime: Optional[str],
     session_id: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """Retourne (texte, tool_steps, modele_reellement_utilise)."""
     if pid == "claude":
@@ -811,10 +816,12 @@ async def _dispatch_provider(
     if pid == "gemini":
         return await _generate_gemini(history, text, image_b64, image_mime)
     if pid == "ollama_cloud":
-        return await _generate_ollama_cloud(history, text, image_b64, image_mime)
+        return await _generate_ollama_cloud(
+            history, text, image_b64, image_mime, model_override
+        )
     if pid == "opencode":
         return await _generate_opencode(
-            history, text, image_b64, image_mime, session_id
+            history, text, image_b64, image_mime, session_id, model_override
         )
     if pid == "ollama":
         answer, steps = await _generate_ollama(history, text)
@@ -829,10 +836,14 @@ async def generate_ai_response(
     image_mime: Optional[str] = None,
     provider: str = "claude",
     session_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> tuple[str, list[dict], dict]:
     """
     Route la generation vers le provider demande (ou le meilleur disponible en
     mode `auto`), avec bascule automatique sur le suivant en cas d'echec.
+
+    `model` force un modele precis, uniquement sur le provider explicitement
+    demande (les providers de secours gardent leur modele configure).
 
     Retourne (texte, tool_steps, meta) ou meta trace le provider/modele ayant
     reellement repondu et l'historique des tentatives.
@@ -854,7 +865,8 @@ async def generate_ai_response(
 
         try:
             answer, steps, used_model = await _dispatch_provider(
-                pid, history, text, image_b64, image_mime, session_id
+                pid, history, text, image_b64, image_mime, session_id,
+                model if pid == requested else None,
             )
         except HTTPException as e:
             detail = str(e.detail)
@@ -1046,6 +1058,7 @@ async def _generate_ollama_cloud(
     text: str,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """
     Generation via Ollama Cloud (https://ollama.com/api), auth Bearer.
@@ -1068,10 +1081,10 @@ async def _generate_ollama_cloud(
             {"role": "system", "content": settings.claude_system_prompt}
         ] + messages
 
-    candidates = [settings.ollama_cloud_model]
+    candidates = [model_override or settings.ollama_cloud_model]
     if (
         settings.ollama_cloud_fallback_model
-        and settings.ollama_cloud_fallback_model != settings.ollama_cloud_model
+        and settings.ollama_cloud_fallback_model not in candidates
     ):
         candidates.append(settings.ollama_cloud_fallback_model)
 
@@ -1125,20 +1138,170 @@ async def _generate_ollama_cloud(
     )
 
 
+def _opencode_transport(model: str) -> str:
+    """
+    OpenCode expose trois familles d'endpoints selon le modele :
+    - /chat/completions (format OpenAI) : deepseek, glm, kimi, mimo, hy, grok...
+    - /messages         (format Anthropic) : minimax-*, qwen3.*
+    - /responses        (OpenAI Responses) : gpt-5.6-luna, muse-spark-*
+    """
+    forced = settings.opencode_transport
+    if forced in ("chat", "messages", "responses"):
+        return forced
+    m = (model or "").lower()
+    if m.startswith(("minimax-", "qwen3")):
+        return "messages"
+    if m.startswith(("gpt-", "muse-spark")):
+        return "responses"
+    return "chat"
+
+
+def _opencode_convert_image(messages: list[dict], transport: str) -> list[dict]:
+    """Traduit la partie image (format OpenAI) vers le format du transport."""
+    if transport == "chat":
+        return messages
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if not isinstance(content, list):
+            out.append(m)
+            continue
+        parts = []
+        for part in content:
+            if part.get("type") != "image_url":
+                parts.append(part)
+                continue
+            url = (part.get("image_url") or {}).get("url", "")
+            if transport == "responses":
+                parts.append({"type": "input_image", "image_url": url})
+            else:  # messages (format Anthropic)
+                header, _, b64 = url.partition(",")
+                mime = header.replace("data:", "").replace(";base64", "")
+                parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime or "image/png",
+                        "data": b64,
+                    },
+                })
+        out.append({**m, "content": parts})
+    return out
+
+
+def _opencode_payload(
+    transport: str,
+    model: str,
+    messages: list[dict],
+    system_prompt: str,
+) -> tuple[str, dict]:
+    """Construit (chemin, payload) pour le transport demande."""
+    messages = _opencode_convert_image(messages, transport)
+
+    if transport == "messages":
+        # Format Anthropic : le system est un champ a part.
+        body = {
+            "model": model,
+            "max_tokens": settings.claude_max_tokens,
+            "messages": messages,
+        }
+        if system_prompt:
+            body["system"] = system_prompt
+        return "/messages", body
+
+    if transport == "responses":
+        # Format OpenAI Responses : `input` + `instructions`.
+        body = {
+            "model": model,
+            "input": messages,
+            "max_output_tokens": settings.claude_max_tokens,
+        }
+        if system_prompt:
+            body["instructions"] = system_prompt
+        return "/responses", body
+
+    body = {"model": model, "max_tokens": settings.claude_max_tokens}
+    if system_prompt:
+        body["messages"] = [
+            {"role": "system", "content": system_prompt}
+        ] + messages
+    else:
+        body["messages"] = messages
+    return "/chat/completions", body
+
+
+def _opencode_extract(transport: str, data: dict) -> str:
+    """Extrait le texte de la reponse selon le transport."""
+    if transport == "messages":
+        parts = [
+            b.get("text", "")
+            for b in (data.get("content") or [])
+            if b.get("type") == "text"
+        ]
+        return "".join(parts).strip()
+
+    if transport == "responses":
+        out = []
+        for item in data.get("output") or []:
+            if item.get("type") != "message":
+                continue
+            for block in item.get("content") or []:
+                if block.get("type") in ("output_text", "text"):
+                    out.append(block.get("text", ""))
+        return "".join(out).strip()
+
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    return ((choices[0].get("message") or {}).get("content") or "").strip()
+
+
+# Codes/erreurs indiquant un mauvais endpoint plutot qu'un vrai refus :
+# on reessaie alors le meme modele sur un autre transport.
+_OPENCODE_WRONG_TRANSPORT = (400, 401, 404, 405, 415, 422)
+_OPENCODE_FORMAT_HINTS = (
+    "not supported for format",
+    "unsupported format",
+    "invalid format",
+    "modelerror",
+    "is not supported",
+)
+
+
+def _opencode_wrong_transport(status: int, detail: str) -> bool:
+    low = (detail or "").lower()
+    if any(h in low for h in _OPENCODE_FORMAT_HINTS):
+        return True
+    # 401 n'est un vrai refus que s'il parle bien d'authentification.
+    if status == 401 and not any(
+        k in low for k in ("api key", "auth", "unauthorized", "token")
+    ):
+        return True
+    return status in _OPENCODE_WRONG_TRANSPORT and status != 401
+
+
 async def _generate_opencode(
     history: list[dict],
     text: str,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
     session_id: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """
-    Generation via OpenCode Zen / Go (passerelle compatible OpenAI).
+    Generation via OpenCode Zen / Go.
 
-    OpenCode Go impose deux choses depuis l'abonnement :
+    Gere les TROIS transports de la passerelle (/chat/completions au format
+    OpenAI, /messages au format Anthropic, /responses au format OpenAI
+    Responses), detectes automatiquement d'apres l'id du modele et reessayes
+    entre eux si l'endpoint ne correspond pas.
+
+    OpenCode Go impose par ailleurs :
     - un User-Agent identifiable (pas un nom de lib HTTP) ;
     - un identifiant de session stable par conversation dans
       `x-opencode-session` (sinon erreur MissingSessionID).
+    L'endpoint /messages s'authentifie via `x-api-key` (style Anthropic), les
+    deux autres via `Authorization: Bearer` : on envoie les deux.
     """
     if not settings.opencode_api_key:
         raise HTTPException(
@@ -1160,21 +1323,19 @@ async def _generate_opencode(
                 },
             },
         ]
-    if settings.claude_system_prompt:
-        messages = [
-            {"role": "system", "content": settings.claude_system_prompt}
-        ] + messages
 
-    candidates = [settings.opencode_model]
+    candidates = [model_override or settings.opencode_model]
     if (
         settings.opencode_fallback_model
-        and settings.opencode_fallback_model != settings.opencode_model
+        and settings.opencode_fallback_model not in candidates
     ):
         candidates.append(settings.opencode_fallback_model)
 
     last_detail = ""
     headers = {
         "Authorization": f"Bearer {settings.opencode_api_key}",
+        "x-api-key": settings.opencode_api_key,
+        "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
         "User-Agent": settings.opencode_user_agent,
         # Session stable = id de conversation, pour le routage et le cache prompt.
@@ -1184,44 +1345,47 @@ async def _generate_opencode(
         timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
     ) as http:
         for model_name in candidates:
-            payload = {
-                "model": model_name,
-                "messages": messages,
-                "max_tokens": settings.claude_max_tokens,
-            }
-            try:
-                logger.info("Appel OpenCode (modele %s)...", model_name)
-                resp = await http.post(
-                    f"{settings.opencode_base_url}/chat/completions",
-                    json=payload,
-                    headers=headers,
+            primary = _opencode_transport(model_name)
+            transports = [primary] + [
+                t for t in ("chat", "messages", "responses") if t != primary
+            ]
+            for transport in transports:
+                path, payload = _opencode_payload(
+                    transport, model_name, messages, settings.claude_system_prompt
                 )
-            except httpx.HTTPError as e:
-                last_detail = f"reseau: {e}"
-                continue
+                try:
+                    logger.info(
+                        "Appel OpenCode (modele %s, transport %s)...",
+                        model_name, transport,
+                    )
+                    resp = await http.post(
+                        f"{settings.opencode_base_url}{path}",
+                        json=payload,
+                        headers=headers,
+                    )
+                except httpx.HTTPError as e:
+                    last_detail = f"reseau: {e}"
+                    break
 
-            if resp.status_code >= 400:
-                last_detail = _http_error_detail(resp)
-                logger.warning(
-                    "OpenCode %s -> HTTP %s: %s",
-                    model_name, resp.status_code, last_detail[:200],
-                )
-                continue
+                try:
+                    data = resp.json() if resp.content else {}
+                except Exception:  # noqa: BLE001
+                    data = {}
 
-            data = resp.json()
-            if isinstance(data, dict) and data.get("error"):
-                last_detail = _http_error_detail(resp)
-                logger.warning(
-                    "OpenCode %s -> erreur applicative: %s",
-                    model_name, last_detail[:200],
-                )
-                continue
+                if resp.status_code >= 400 or (
+                    isinstance(data, dict) and data.get("error")
+                ):
+                    last_detail = _http_error_detail(resp)
+                    logger.warning(
+                        "OpenCode %s/%s -> HTTP %s: %s",
+                        model_name, transport, resp.status_code, last_detail[:200],
+                    )
+                    if _opencode_wrong_transport(resp.status_code, last_detail):
+                        continue  # mauvais endpoint probable : autre transport
+                    break  # vrai refus (region, quota, auth...) : modele suivant
 
-            choices = data.get("choices") or []
-            answer = ""
-            if choices:
-                answer = ((choices[0].get("message") or {}).get("content") or "").strip()
-            return (answer or "(reponse vide)", [], model_name)
+                answer = _opencode_extract(transport, data)
+                return (answer or "(reponse vide)", [], model_name)
 
     raise HTTPException(
         status_code=502,
@@ -1441,6 +1605,7 @@ async def chat_send(
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
     provider: str = Form("claude"),
+    model: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     database = get_db()
@@ -1505,6 +1670,7 @@ async def chat_send(
             image_mime=image_mime,
             provider=provider,
             session_id=conversation_id,
+            model=(model or "").strip() or None,
         )
     except HTTPException:
         raise
@@ -1592,6 +1758,7 @@ async def chat_regenerate(
             image_mime=image_mime,
             provider=payload.provider,
             session_id=payload.conversation_id,
+            model=(payload.model or "").strip() or None,
         )
     except HTTPException:
         raise
@@ -1651,9 +1818,57 @@ async def set_feedback(
 # =========================================================================
 # Sante
 # =========================================================================
+_CATALOG_CACHE: dict[str, tuple[float, list[str]]] = {}
+_CATALOG_TTL = 600.0
+
+
+async def _fetch_catalog(pid: str) -> list[str]:
+    """Liste des modeles disponibles chez un provider distant (cache 10 min)."""
+    cached = _CATALOG_CACHE.get(pid)
+    if cached and (time.time() - cached[0]) < _CATALOG_TTL:
+        return cached[1]
+
+    ids: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as http:
+            if pid == "opencode":
+                resp = await http.get(
+                    f"{settings.opencode_base_url}/models",
+                    headers={
+                        "Authorization": f"Bearer {settings.opencode_api_key}",
+                        "User-Agent": settings.opencode_user_agent,
+                    },
+                )
+                resp.raise_for_status()
+                ids = [m["id"] for m in resp.json().get("data", []) if m.get("id")]
+            elif pid == "ollama_cloud":
+                resp = await http.get(
+                    f"{settings.ollama_cloud_url}/tags",
+                    headers={
+                        "Authorization": f"Bearer {settings.ollama_cloud_api_key}"
+                    },
+                )
+                resp.raise_for_status()
+                ids = [
+                    m["name"] for m in resp.json().get("models", []) if m.get("name")
+                ]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Catalogue %s indisponible: %s", pid, str(e)[:150])
+        return cached[1] if cached else []
+
+    ids.sort()
+    _CATALOG_CACHE[pid] = (time.time(), ids)
+    return ids
+
+
 @api_router.get("/models")
 async def list_models(current_user: dict = Depends(get_current_user)):
-    """Providers detectes dynamiquement + modele reel de chacun."""
+    """Providers detectes dynamiquement + modele reel et catalogue de chacun."""
+    catalogs: dict[str, list[str]] = {}
+    for pid in ("opencode", "ollama_cloud"):
+        if _provider_available(pid):
+            catalogs[pid] = await _fetch_catalog(pid)
+
     providers = [
         {
             "id": pid,
@@ -1661,6 +1876,7 @@ async def list_models(current_user: dict = Depends(get_current_user)):
             "model": _provider_model(pid),
             "available": _provider_available(pid),
             "local": pid == "ollama",
+            "models": catalogs.get(pid, []),
         }
         for pid in PROVIDER_IDS
     ]

@@ -38,6 +38,9 @@ export default function Chat() {
   );
   const [models, setModels] = useState([]);
   const [autoChain, setAutoChain] = useState([]);
+  const [modelOverride, setModelOverride] = useState(
+    () => localStorage.getItem("forge_model_override") || ""
+  );
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -169,6 +172,7 @@ export default function Chat() {
       const { data } = await api.post("/chat/regenerate", {
         conversation_id: activeId,
         provider,
+        model: modelOverride || null,
       });
       setMessages((prev) => {
         const copy = [...prev];
@@ -257,6 +261,7 @@ export default function Chat() {
       form.append("text", sentText);
       if (sentImage) form.append("image", sentImage);
       form.append("provider", provider);
+      if (modelOverride) form.append("model", modelOverride);
       const { data } = await api.post("/chat/send", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -279,6 +284,16 @@ export default function Chat() {
     const value = e.target.value;
     setProvider(value);
     localStorage.setItem("forge_provider", value);
+    // Un modèle choisi pour un provider n'a aucun sens pour un autre.
+    setModelOverride("");
+    localStorage.removeItem("forge_model_override");
+  };
+
+  const handleModelChange = (e) => {
+    const value = e.target.value;
+    setModelOverride(value);
+    if (value) localStorage.setItem("forge_model_override", value);
+    else localStorage.removeItem("forge_model_override");
   };
 
   const onKeyDown = (e) => {
@@ -292,6 +307,7 @@ export default function Chat() {
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
   const activeModel = models.find((m) => m.id === provider);
+  const catalog = activeModel?.models || [];
   return (
     <div className="h-screen w-full flex bg-[#050505] text-white overflow-hidden">
       {/* Sidebar */}
@@ -473,7 +489,12 @@ export default function Chat() {
             ) : (
               <>
                 {activeModel?.label || provider}:{" "}
-                <span className="text-[#05d9e8]">{activeModel?.model || "…"}</span>
+                <span className="text-[#05d9e8]">
+                  {modelOverride || activeModel?.model || "…"}
+                </span>
+                {modelOverride && (
+                  <span className="text-[#ffd700]"> (choisi)</span>
+                )}
                 {activeModel && activeModel.available === false && (
                   <span className="text-[#ff2a6d]"> (non configuré)</span>
                 )}
@@ -595,6 +616,28 @@ export default function Chat() {
                   ))}
                 </select>
               </div>
+              {catalog.length > 0 && (
+                <div
+                  className="hidden sm:flex items-center gap-1 flex-shrink-0 border-2 border-white/20 hover:border-[#ffd700]/60 bg-black/40 px-2 py-1"
+                  title="Choisir un modèle précis chez ce provider"
+                >
+                  <select
+                    value={modelOverride}
+                    onChange={handleModelChange}
+                    className="bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer max-w-[150px]"
+                    data-testid="model-select"
+                  >
+                    <option value="" className="bg-[#0a0a0a] text-white">
+                      défaut ({activeModel?.model})
+                    </option>
+                    {catalog.map((m) => (
+                      <option key={m} value={m} className="bg-[#0a0a0a] text-white">
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -610,7 +653,7 @@ export default function Chat() {
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKeyDown}
                 rows={1}
-                placeholder="Forge a message... (Enter to send, Shift+Enter for new line)"
+                placeholder="Forge a message... (Enter to send)"
                 className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-gray-600 resize-none max-h-40 py-2"
                 style={{ minHeight: "2.5rem" }}
                 data-testid="chat-text-input"
