@@ -70,7 +70,7 @@ export default function ChatMessage({
         className="flex justify-end mb-6 fade-in-up group"
         data-testid="chat-message-user"
       >
-        <div className="max-w-[80%] flex flex-col items-end">
+        <div className="max-w-[88%] sm:max-w-[80%] min-w-0 flex flex-col items-end">
           {(message.has_image || message.file_name) && (
             <div className="mb-2 inline-flex items-center gap-1.5 text-xs font-mono text-[#ffd700] border border-[#ffd700]/40 bg-[#ffd700]/10 px-2 py-1">
               <Paperclip className="w-3 h-3" />
@@ -135,7 +135,7 @@ export default function ChatMessage({
         alt="AI"
         className="w-10 h-10 border-2 border-white/30 object-cover flex-shrink-0"
       />
-      <div className="flex-1 max-w-[80%]">
+      <div className="flex-1 max-w-[88%] sm:max-w-[80%] min-w-0">
         <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2 flex items-center gap-2 flex-wrap">
           <span data-testid={`msg-provider-${message.id}`}>
             // {(message.provider || "claude").toUpperCase().replace("_", " ")}

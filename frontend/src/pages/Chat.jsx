@@ -336,12 +336,12 @@ export default function Chat() {
   const activeModel = models.find((m) => m.id === provider);
   const catalog = activeModel?.models || [];
   return (
-    <div className="h-screen w-full flex bg-[#050505] text-white overflow-hidden">
+    <div className="h-full w-full flex bg-[#050505] text-white overflow-hidden">
       {/* Sidebar */}
       <aside
         className={`${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } md:translate-x-0 fixed md:relative z-30 md:z-auto top-0 left-0 h-full w-72 bg-[#0d0d0d] border-r-2 border-white/20 flex flex-col transition-transform`}
+        } lg:translate-x-0 fixed lg:relative z-30 lg:z-auto top-0 left-0 h-full w-72 max-w-[85vw] flex-shrink-0 bg-[#0d0d0d] border-r-2 border-white/20 flex flex-col transition-transform`}
         data-testid="chat-sidebar"
       >
         <div className="p-5 border-b-2 border-white/10 flex items-center justify-between">
@@ -357,7 +357,7 @@ export default function Chat() {
             </div>
           </div>
           <button
-            className="md:hidden btn-ghost"
+            className="lg:hidden btn-ghost"
             onClick={() => setSidebarOpen(false)}
             data-testid="close-sidebar-btn"
           >
@@ -475,13 +475,22 @@ export default function Chat() {
         </div>
       </aside>
 
+      {/* Fond cliquable quand le tiroir est ouvert sur mobile/tablette */}
+      {sidebarOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-20 bg-black/70"
+          onClick={() => setSidebarOpen(false)}
+          data-testid="sidebar-backdrop"
+        />
+      )}
+
       {/* Main */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <header className="border-b-2 border-white/10 px-4 md:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
+        <header className="border-b-2 border-white/10 px-3 sm:px-4 lg:px-8 py-3 sm:py-4 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
-              className="md:hidden btn-ghost"
+              className="lg:hidden btn-ghost flex-shrink-0"
               onClick={() => setSidebarOpen(true)}
               data-testid="open-sidebar-btn"
             >
@@ -491,12 +500,15 @@ export default function Chat() {
               <div className="text-[10px] uppercase tracking-[0.3em] text-[#ffd700] font-bold">
                 // active session
               </div>
-              <div className="font-heading font-black truncate text-lg">
+              <div className="font-heading font-black truncate text-base sm:text-lg">
                 {activeConv?.title || "No conversation selected"}
               </div>
             </div>
           </div>
-          <div className="text-xs font-mono text-gray-500 hidden md:block" data-testid="active-model-label">
+          <div
+            className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[40%] flex-shrink-0 text-right"
+            data-testid="active-model-label"
+          >
             {provider === "auto" ? (
               <>
                 AUTO:{" "}
@@ -531,7 +543,7 @@ export default function Chat() {
         </header>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 lg:px-8 py-4 sm:py-6">
           <div className="max-w-4xl mx-auto" data-testid="messages-container">
             {!activeId && (
               <EmptyState onStart={newConversation} />
@@ -577,7 +589,7 @@ export default function Chat() {
 
         {/* Error banner */}
         {error && (
-          <div className="px-4 md:px-8 pb-2">
+          <div className="px-3 sm:px-4 lg:px-8 pb-2 flex-shrink-0">
             <div
               className="max-w-4xl mx-auto border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 text-[#ff2a6d] p-3 text-sm font-mono flex items-center justify-between"
               data-testid="chat-error"
@@ -591,7 +603,7 @@ export default function Chat() {
         )}
 
         {/* Input dock */}
-        <div className="px-4 md:px-8 pb-6 pt-2">
+        <div className="px-3 sm:px-4 lg:px-8 pt-2 safe-bottom flex-shrink-0">
           <div className="max-w-4xl mx-auto">
             {imageFile && (
               <div className="mb-3 inline-flex items-center gap-3 border-2 border-[#ffd700] p-2 bg-black/40">
@@ -627,7 +639,7 @@ export default function Chat() {
             )}
             <form
               onSubmit={sendMessage}
-              className="border-2 border-white/20 bg-[#0a0a0a]/90 backdrop-blur-xl shadow-[8px_8px_0_0_#ff2a6d] flex items-end gap-2 p-3"
+              className="border-2 border-white/20 bg-[#0a0a0a]/90 backdrop-blur-xl shadow-[4px_4px_0_0_#ff2a6d] sm:shadow-[8px_8px_0_0_#ff2a6d] flex flex-col sm:flex-row sm:items-end gap-2 p-2 sm:p-3"
               data-testid="chat-input-form"
             >
               <input
@@ -637,98 +649,105 @@ export default function Chat() {
                 className="hidden"
                 data-testid="image-file-input"
               />
-              <div
-                className="flex items-center gap-1 flex-shrink-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
-                title="Choisir le modèle IA"
-              >
-                <Cpu className="w-4 h-4 text-gray-500" />
-                <select
-                  value={provider}
-                  onChange={handleProviderChange}
-                  className="bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
-                  data-testid="provider-select"
-                >
-                  <option value="auto" className="bg-[#0a0a0a] text-white">
-                    Auto (meilleur dispo)
-                  </option>
-                  {models.map((m) => (
-                    <option
-                      key={m.id}
-                      value={m.id}
-                      className="bg-[#0a0a0a] text-white"
-                    >
-                      {m.label}
-                      {m.available === false ? " (non configuré)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {catalog.length > 0 && (
+              {/* Ligne 1 sur mobile : contrôles. Sur >=sm, `contents` fait
+                  disparaître ce conteneur pour garder une seule rangée. */}
+              <div className="flex items-center gap-2 min-w-0 sm:contents">
                 <div
-                  className="hidden sm:flex items-center gap-1 flex-shrink-0 border-2 border-white/20 hover:border-[#ffd700]/60 bg-black/40 px-2 py-1"
-                  title="Choisir un modèle précis chez ce provider"
+                  className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
+                  title="Choisir le modèle IA"
                 >
+                  <Cpu className="w-4 h-4 text-gray-500 flex-shrink-0" />
                   <select
-                    value={modelOverride}
-                    onChange={handleModelChange}
-                    className="bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer max-w-[150px]"
-                    data-testid="model-select"
+                    value={provider}
+                    onChange={handleProviderChange}
+                    className="flex-1 min-w-0 bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
+                    data-testid="provider-select"
                   >
-                    <option value="" className="bg-[#0a0a0a] text-white">
-                      défaut ({activeModel?.model})
+                    <option value="auto" className="bg-[#0a0a0a] text-white">
+                      Auto (meilleur dispo)
                     </option>
-                    {catalog.map((m) => (
-                      <option key={m} value={m} className="bg-[#0a0a0a] text-white">
-                        {m}
+                    {models.map((m) => (
+                      <option
+                        key={m.id}
+                        value={m.id}
+                        className="bg-[#0a0a0a] text-white"
+                      >
+                        {m.label}
+                        {m.available === false ? " (non configuré)" : ""}
                       </option>
                     ))}
                   </select>
                 </div>
-              )}
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] flex-shrink-0"
-                title="Joindre un fichier (image, PDF, texte, code...)"
-                data-testid="attach-image-btn"
-              >
-                <Paperclip className="w-5 h-5" />
-              </button>
-              <textarea
-                ref={textareaRef}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={onKeyDown}
-                rows={1}
-                placeholder="Forge a message... (Enter to send)"
-                className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-gray-600 resize-none max-h-40 py-2"
-                style={{ minHeight: "2.5rem" }}
-                data-testid="chat-text-input"
-              />
-              {sending ? (
+                {catalog.length > 0 && (
+                  <div
+                    className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#ffd700]/60 bg-black/40 px-2 py-1"
+                    title="Choisir un modèle précis chez ce provider"
+                  >
+                    <select
+                      value={modelOverride}
+                      onChange={handleModelChange}
+                      className="flex-1 min-w-0 sm:max-w-[150px] bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer"
+                      data-testid="model-select"
+                    >
+                      <option value="" className="bg-[#0a0a0a] text-white">
+                        défaut ({activeModel?.model})
+                      </option>
+                      {catalog.map((m) => (
+                        <option key={m} value={m} className="bg-[#0a0a0a] text-white">
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={abortRequest}
-                  className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-2 border-black bg-[#ff2a6d] text-white font-heading font-black uppercase tracking-wider shadow-[4px_4px_0_0_#000] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0_0_#000] transition-all"
-                  title="Arrêter la génération"
-                  data-testid="stop-message-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] flex-shrink-0"
+                  title="Joindre un fichier (image, PDF, texte, code...)"
+                  data-testid="attach-image-btn"
                 >
-                  <Square className="w-4 h-4 fill-current" />
-                  <span className="hidden sm:inline">Stop</span>
+                  <Paperclip className="w-5 h-5" />
                 </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!text.trim() && !imageFile}
-                  className="btn-primary flex-shrink-0 flex items-center gap-2"
-                  data-testid="send-message-btn"
-                >
-                  <Send className="w-4 h-4" />
-                  <span className="hidden sm:inline">Send</span>
-                </button>
-              )}
+              </div>
+              {/* Ligne 2 sur mobile : saisie + envoi. */}
+              <div className="flex items-end gap-2 min-w-0 sm:contents">
+                <textarea
+                  ref={textareaRef}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  rows={1}
+                  placeholder="Forge a message..."
+                  className="flex-1 min-w-0 bg-transparent border-none outline-none text-white text-base placeholder:text-gray-600 resize-none max-h-40 py-2"
+                  style={{ minHeight: "2.5rem" }}
+                  data-testid="chat-text-input"
+                />
+                {sending ? (
+                  <button
+                    type="button"
+                    onClick={abortRequest}
+                    className="flex-shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 border-2 border-black bg-[#ff2a6d] text-white font-heading font-black uppercase tracking-wider shadow-[4px_4px_0_0_#000] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0_0_#000] transition-all"
+                    title="Arrêter la génération"
+                    data-testid="stop-message-btn"
+                  >
+                    <Square className="w-4 h-4 fill-current" />
+                    <span className="hidden sm:inline">Stop</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!text.trim() && !imageFile}
+                    className="btn-primary flex-shrink-0 flex items-center gap-2"
+                    data-testid="send-message-btn"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span className="hidden sm:inline">Send</span>
+                  </button>
+                )}
+              </div>
             </form>
-            <div className="text-center text-[10px] uppercase tracking-[0.3em] text-gray-600 mt-3 font-mono">
+            <div className="hidden sm:block text-center text-[10px] uppercase tracking-[0.3em] text-gray-600 mt-3 font-mono">
               claude_unchained_zerodollar_forge // raw output, verify before trusting
             </div>
           </div>

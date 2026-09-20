@@ -192,6 +192,41 @@ Fichiers modifiés: `backend/server.py`, `backend/requirements.txt` (+pypdf),
 - Navigateur : carte d'aperçu OK, STOP + « annuler » visibles pendant la génération,
   annulation → bandeau « Requête annulée. » et retour du bouton SEND.
 
+## Corrigé (2026-06) — Affichage mobile / tablette
+Fichiers modifiés: `frontend/src/App.css`, `frontend/src/index.css`,
+`frontend/src/pages/Chat.jsx`, `frontend/src/components/ChatMessage.jsx`.
+
+### Cause racine du dock de saisie invisible sur téléphone
+`App.jsx` enveloppe tout dans `<div className="App">`, et `App.css` ne lui donnait
+qu'un `min-height: 100vh` — donc **aucune hauteur définie**. Le shell du chat en
+`h-screen`/`h-full` retombait en hauteur auto : le document faisait 10 700 px de haut
+et le dock se retrouvait tout en bas, hors écran, inatteignable à cause de
+`overflow-hidden`. En paysage / mode ordinateur la hauteur suffisait, d'où le symptôme.
+
+### Corrections
+- `App.css` : `.App { height: 100%; min-height: 100%; display: flex; flex-direction: column }`
+  + `.App > * { flex: 1; min-height: 0 }` → hauteur de référence réelle pour les enfants.
+- `index.css` : `html, body, #root` passent en **`100dvh`** via `@supports`
+  (100vh inclut la barre d'URL mobile et déborde). Classe `.safe-bottom`
+  (`env(safe-area-inset-bottom)`) pour la barre de geste iPhone.
+- Chat : shell en `h-full` (plus `h-screen`), zone messages `flex-1 min-h-0 overflow-y-auto
+  overflow-x-hidden`, dock et bandeau d'erreur en `flex-shrink-0`.
+- **Composer sur 2 rangées en mobile** : rangée contrôles (provider + modèle + trombone)
+  puis rangée saisie + envoi, via des conteneurs `sm:contents` qui disparaissent dès `sm`
+  pour conserver la rangée unique du desktop. Sélecteurs en `flex-1 min-w-0` (plus de
+  débordement horizontal). Le sélecteur de modèle n'est plus caché en mobile.
+- **Breakpoint tablette md → lg** : le tiroir latéral reste un overlay jusqu'à 1024 px,
+  donc l'iPad portrait a toute la largeur pour le chat. Ajout d'un fond cliquable
+  (`sidebar-backdrop`, `lg:hidden`) pour fermer le tiroir.
+- Bulles `max-w-[88%] sm:max-w-[80%]`, header compacté, `overflow-wrap: anywhere` et
+  `pre` réduits en mobile, pied de page masqué sous `sm`, textarea en 16 px (pas de zoom iOS).
+
+### Tests (navigateur, viewports réels)
+- 390×700 (téléphone portrait) : dock visible, `scrollHeight == clientHeight` (plus de scroll
+  de page), `scrollWidth == 390` (pas de débordement), burger présent, envoi Gemini OK.
+- 844×390 (téléphone paysage) et 820×1100 (tablette portrait) : dock visible, aucun débordement.
+- Tiroir mobile : ouverture, fond cliquable, fermeture OK.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).

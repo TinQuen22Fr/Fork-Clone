@@ -1,4 +1,17 @@
 /* App-specific styles can go here */
+
+/* Conteneur racine de l'app : il doit avoir une hauteur DEFINIE, sinon les
+   enfants en `h-full` (le shell du chat) retombent en hauteur auto et le dock
+   de saisie se retrouve pousse hors de l'ecran. `min-height` seul ne suffit
+   pas : il ne donne pas de hauteur de reference aux enfants. */
 .App {
-    min-height: 100vh;
+    height: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.App > * {
+    flex: 1;
+    min-height: 0;
 }

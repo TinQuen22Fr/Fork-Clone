@@ -26,6 +26,22 @@ body,
     margin: 0;
 }
 
+/* Sur mobile, 100vh inclut la barre d'URL du navigateur : le bas de l'app
+   (le dock de saisie) se retrouve alors hors de l'ecran visible. 100dvh suit
+   la hauteur reellement visible et corrige le probleme. */
+@supports (height: 100dvh) {
+    html,
+    body,
+    #root {
+        height: 100dvh;
+    }
+}
+
+/* Respiration sous le dock sur iPhone (barre de geste home). */
+.safe-bottom {
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+
 body {
     background-color: var(--bg-main);
     color: #ffffff;
@@ -183,6 +199,22 @@ body {
     overflow-x: auto;
     margin: 0.75rem 0;
     box-shadow: 4px 4px 0 0 rgba(5, 217, 232, 0.4);
+}
+/* Evite qu'une URL ou un mot tres long ne fasse deborder l'ecran sur mobile. */
+.md-body {
+    overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+    .md-body pre {
+        padding: 0.65rem;
+        font-size: 0.85rem;
+    }
+    .md-body h1 {
+        font-size: 1.25rem;
+    }
+    .md-body h2 {
+        font-size: 1.1rem;
+    }
 }
 .md-body pre code {
     background: transparent;
