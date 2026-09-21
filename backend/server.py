@@ -19,8 +19,10 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import io
+import re
 import json
 import time
+from html import unescape
 import asyncio
 import base64
 import subprocess
@@ -46,7 +48,7 @@ from fastapi import (
     Form,
 )
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import StreamingResponse
+from starlette.responses import StreamingResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
@@ -116,6 +118,23 @@ class Settings:
         # Nb max de caracteres extraits d'un fichier texte/PDF injecte au prompt.
         self.max_file_chars: int = int(_env("MAX_FILE_CHARS", "40000"))
         self.max_attachments: int = int(_env("MAX_ATTACHMENTS", "10"))
+
+        # --- Outils web de l'agent ---
+        # Google Custom Search est optionnel : si ces deux variables sont
+        # renseignees, il prend le pas sur DuckDuckGo (qui ne demande aucune cle).
+        self.google_cse_key: str = _env("GOOGLE_CSE_KEY")
+        self.google_cse_cx: str = _env("GOOGLE_CSE_CX")
+        self.fetch_url_max_chars: int = int(_env("FETCH_URL_MAX_CHARS", "12000"))
+        # Chromium headless est lourd : desactivable sur petite machine.
+        self.enable_screenshot: bool = _env_bool("ENABLE_SCREENSHOT", True)
+        self.screenshot_retention_hours: int = int(
+            _env("SCREENSHOT_RETENTION_HOURS", "48")
+        )
+
+        # --- Transcription vocale (repli quand le navigateur ne sait pas faire) ---
+        # Utilise la cle Groq deja configuree ; endpoint compatible OpenAI.
+        self.stt_model: str = _env("STT_MODEL", "whisper-large-v3-turbo")
+        self.stt_max_mb: int = int(_env("STT_MAX_MB", "20"))
         self.history_turns: int = int(_env("HISTORY_TURNS", "20"))
 
         # --- Providers cloud gratuits, compatibles OpenAI -------------------
@@ -297,6 +316,8 @@ async def lifespan(app: FastAPI):
     problems = settings.validate()
     for p in problems:
         logger.error("CONFIG: %s", p)
+
+    _purge_old_screenshots()
 
     if settings.mongo_url:
         try:
@@ -488,6 +509,9 @@ CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude
 # --- Tool Calling (capacités agentiques) ---------------------------------
 MAX_TOOL_ITERS = 25  # garde-fou contre les boucles d'outils infinies
 
+# Les captures sont ecrites sur disque et servies par /api/screenshots/{nom}.
+SCREENSHOT_DIR = ROOT_DIR / "static" / "screenshots"
+
 TOOLS = [
     {
         "name": "bash",
@@ -522,6 +546,64 @@ TOOLS = [
                 }
             },
             "required": ["path"],
+        },
+    },
+    {
+        "name": "web_search",
+        "description": (
+            "Recherche sur le web et renvoie une liste concise de resultats "
+            "(titre, URL, extrait). Utilise cet outil des qu'une information "
+            "recente, factuelle ou externe est necessaire."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "La requete de recherche.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Nombre de resultats souhaites (defaut 5).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "fetch_url",
+        "description": (
+            "Telecharge une page web et renvoie son contenu texte nettoye "
+            "(sans balises, scripts ni styles), tronque. A utiliser apres un "
+            "web_search pour lire reellement une page."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "L'URL a telecharger."},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "screenshot_url",
+        "description": (
+            "Ouvre une URL dans un navigateur sans interface et capture le "
+            "rendu visuel de la page. Renvoie le chemin de l'image, a inserer "
+            "dans la reponse sous forme ![capture](chemin) pour l'afficher. "
+            "A n'utiliser que si l'aspect VISUEL importe : le texte seul "
+            "s'obtient avec fetch_url, bien plus econome."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "L'URL a capturer."},
+                "full_page": {
+                    "type": "boolean",
+                    "description": "Capturer toute la page plutot que l'ecran visible.",
+                },
+            },
+            "required": ["url"],
         },
     },
 ]
@@ -566,11 +648,229 @@ def _tool_read_file(path: str) -> str:
         return f"Erreur de lecture: {e}"
 
 
+def _tool_web_search(query: str, max_results: int = 5) -> str:
+    """
+    Recherche web. Priorite a DuckDuckGo (aucune cle requise) ; bascule sur
+    Google Custom Search si GOOGLE_CSE_KEY et GOOGLE_CSE_CX sont renseignes.
+    Sortie volontairement compacte pour ne pas saturer le contexte.
+    """
+    query = (query or "").strip()
+    if not query:
+        return "Erreur: requete vide."
+    n = max(1, min(int(max_results or 5), 10))
+
+    if settings.google_cse_key and settings.google_cse_cx:
+        try:
+            resp = httpx.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={
+                    "key": settings.google_cse_key,
+                    "cx": settings.google_cse_cx,
+                    "q": query,
+                    "num": n,
+                },
+                timeout=20.0,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items") or []
+            if items:
+                return _format_search_results([
+                    {
+                        "title": i.get("title", ""),
+                        "href": i.get("link", ""),
+                        "body": i.get("snippet", ""),
+                    }
+                    for i in items
+                ], query, "Google Custom Search")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Google CSE indisponible, repli DuckDuckGo: %s", str(e)[:150])
+
+    try:
+        from ddgs import DDGS
+
+        with DDGS(timeout=20) as ddgs:
+            results = list(ddgs.text(query, max_results=n))
+        if results:
+            return _format_search_results(results, query, "DuckDuckGo")
+        reason = "aucun resultat"
+    except Exception as e:  # noqa: BLE001
+        reason = str(e)[:200]
+        logger.warning("DuckDuckGo indisponible (%s), repli Wikipedia", reason)
+
+    # Dernier recours sans cle : l'API de recherche Wikipedia. Les moteurs
+    # generalistes bloquent souvent les IP de datacenter (429/403) ; Wikipedia
+    # reste accessible et suffit pour une question factuelle.
+    wiki = _search_wikipedia(query, n)
+    if wiki:
+        return wiki
+    return (
+        f"Recherche web indisponible pour « {query} » ({reason}). "
+        "Le moteur a refuse la requete depuis cette machine. Configure "
+        "GOOGLE_CSE_KEY et GOOGLE_CSE_CX dans backend/.env pour une source fiable."
+    )
+
+
+def _search_wikipedia(query: str, n: int) -> str:
+    """Recherche encyclopedique sans cle, utilisee en dernier recours."""
+    for lang in ("fr", "en"):
+        try:
+            resp = httpx.get(
+                f"https://{lang}.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "list": "search", "srsearch": query,
+                    "srlimit": n, "format": "json",
+                },
+                # Wikipedia exige un User-Agent identifiant l'app avec un
+                # moyen de contact, sinon 403.
+                headers={
+                    "User-Agent": (
+                        "ClaudeUnchainedForge/1.0 "
+                        "(https://github.com/; auto-heberge)"
+                    )
+                },
+                timeout=20.0,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("query", {}).get("search") or []
+        except Exception:  # noqa: BLE001
+            continue
+        if not hits:
+            continue
+        return _format_search_results([
+            {
+                "title": h.get("title", ""),
+                "href": (
+                    f"https://{lang}.wikipedia.org/wiki/"
+                    + (h.get("title") or "").replace(" ", "_")
+                ),
+                "body": _TAG_RE.sub("", unescape(h.get("snippet") or "")),
+            }
+            for h in hits
+        ], query, f"Wikipedia ({lang})")
+    return ""
+
+
+def _format_search_results(results: list[dict], query: str, source: str) -> str:
+    if not results:
+        return f"Aucun resultat pour « {query} »."
+    lines = [f"{len(results)} resultats pour « {query} » (via {source}) :"]
+    for i, r in enumerate(results, 1):
+        snippet = " ".join((r.get("body") or "").split())[:300]
+        lines.append(
+            f"\n{i}. {r.get('title', '(sans titre)')}\n"
+            f"   {r.get('href') or r.get('url', '')}\n"
+            f"   {snippet}"
+        )
+    return "\n".join(lines)
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_SCRIPT_RE = re.compile(
+    r"<(script|style|noscript|svg|head)[^>]*>.*?</\1>", re.S | re.I
+)
+
+
+def _tool_fetch_url(url: str) -> str:
+    """Telecharge une page et en extrait le texte, sans dependance lourde."""
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return "Erreur: l'URL doit commencer par http:// ou https://."
+    try:
+        resp = httpx.get(
+            url,
+            timeout=25.0,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; ClaudeUnchainedForge/1.0)"},
+        )
+        resp.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        return f"Erreur de telechargement: {str(e)[:300]}"
+
+    ctype = resp.headers.get("content-type", "")
+    if "html" not in ctype and "xml" not in ctype:
+        if any(t in ctype for t in ("text/", "json")):
+            return resp.text[: settings.fetch_url_max_chars]
+        return f"Contenu non textuel ({ctype or 'type inconnu'}), lecture ignoree."
+
+    html = _SCRIPT_RE.sub(" ", resp.text)
+    text = _TAG_RE.sub(" ", html)
+    text = unescape(text)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
+    truncated = len(text) > settings.fetch_url_max_chars
+    out = text[: settings.fetch_url_max_chars]
+    if truncated:
+        out += f"\n\n[... tronque a {settings.fetch_url_max_chars} caracteres ...]"
+    return f"Contenu de {url} :\n\n{out}"
+
+
+def _tool_screenshot_url(url: str, full_page: bool = False) -> str:
+    """
+    Capture le rendu d'une page via Chromium sans interface.
+
+    Volontairement desactivable (`ENABLE_SCREENSHOT`) : un navigateur headless
+    est lourd pour un petit serveur.
+    """
+    if not settings.enable_screenshot:
+        return (
+            "Erreur: capture d'ecran desactivee (ENABLE_SCREENSHOT=false). "
+            "Utilise fetch_url pour recuperer le texte de la page."
+        )
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return "Erreur: l'URL doit commencer par http:// ou https://."
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return (
+            "Erreur: Playwright n'est pas installe. Sur le serveur : "
+            "pip install playwright && python3 -m playwright install chromium"
+        )
+
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex}.png"
+    path = SCREENSHOT_DIR / name
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            page = browser.new_page(
+                viewport={"width": 1280, "height": 800},
+                device_scale_factor=1,
+            )
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(1500)
+            title = page.title()
+            page.screenshot(path=str(path), full_page=bool(full_page))
+            browser.close()
+    except Exception as e:  # noqa: BLE001
+        return f"Erreur de capture: {str(e)[:300]}"
+
+    public = f"/api/screenshots/{name}"
+    return (
+        f"Capture reussie de {url} (titre : {title}).\n"
+        f"Chemin de l'image : {public}\n"
+        f"Insere-la dans ta reponse avec : ![capture]({public})"
+    )
+
+
 def _run_tool(name: str, tool_input: dict) -> str:
     if name == "bash":
         return _tool_bash(tool_input.get("command", ""))
     if name == "read_file":
         return _tool_read_file(tool_input.get("path", ""))
+    if name == "web_search":
+        return _tool_web_search(
+            tool_input.get("query", ""), tool_input.get("max_results", 5)
+        )
+    if name == "fetch_url":
+        return _tool_fetch_url(tool_input.get("url", ""))
+    if name == "screenshot_url":
+        return _tool_screenshot_url(
+            tool_input.get("url", ""), tool_input.get("full_page", False)
+        )
     return f"Erreur: outil inconnu '{name}'."
 
 
@@ -2780,6 +3080,82 @@ async def chat_send(
     return {"user_message": user_msg_doc, "ai_message": ai_msg_doc}
 
 
+@api_router.get("/screenshots/{name}")
+async def get_screenshot(name: str, current_user: dict = Depends(get_current_user)):
+    """Sert une capture produite par l'outil screenshot_url."""
+    if not re.fullmatch(r"[0-9a-f]{32}\.png", name):
+        raise HTTPException(status_code=400, detail="nom invalide")
+    path = SCREENSHOT_DIR / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="capture introuvable")
+    return FileResponse(path, media_type="image/png")
+
+
+@api_router.post("/stt")
+async def speech_to_text(
+    audio: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Transcription audio, utilisee comme repli quand le navigateur n'expose pas
+    la Web Speech API (Firefox, certains WebView). S'appuie sur l'endpoint
+    Whisper compatible OpenAI du premier provider gratuit configure.
+    """
+    provider = next(
+        (p for p in ("groq",) + FREE_PROVIDER_IDS if _provider_available(p)),
+        None,
+    )
+    if not provider:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Aucune cle de transcription disponible. Renseigne GROQ_API_KEY "
+                "dans backend/.env, ou utilise un navigateur qui gere la dictee "
+                "native (Chrome, Edge, Safari)."
+            ),
+        )
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Audio vide.")
+    if len(raw) > settings.stt_max_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Audio trop lourd (max {settings.stt_max_mb} Mo).",
+        )
+
+    conf = settings.free_providers[provider]
+    headers = {k: v for k, v in _free_provider_headers(provider).items()
+               if k != "Content-Type"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as http:
+            resp = await http.post(
+                f"{conf['base_url']}/audio/transcriptions",
+                headers=headers,
+                files={
+                    "file": (
+                        audio.filename or "dictee.webm",
+                        raw,
+                        audio.content_type or "audio/webm",
+                    )
+                },
+                data={"model": settings.stt_model, "response_format": "json"},
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Transcription indisponible: {e}")
+
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur de transcription: {_http_error_detail(resp)}",
+        )
+    return {
+        "text": (resp.json().get("text") or "").strip(),
+        "provider": provider,
+        "model": settings.stt_model,
+    }
+
+
 @api_router.post("/chat/stream")
 async def chat_stream(
     conversation_id: str = Form(...),
@@ -2920,6 +3296,23 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _purge_old_screenshots() -> None:
+    """Supprime les captures expirees pour ne pas remplir le disque."""
+    if not SCREENSHOT_DIR.exists():
+        return
+    cutoff = time.time() - settings.screenshot_retention_hours * 3600
+    removed = 0
+    for f in SCREENSHOT_DIR.glob("*.png"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        logger.info("Captures expirees supprimees : %d", removed)
 
 
 def _sse(event: str, data: dict) -> str:

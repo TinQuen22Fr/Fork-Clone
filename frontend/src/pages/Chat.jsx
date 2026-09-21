@@ -19,6 +19,9 @@ import {
   Cpu,
   Gauge,
   Star,
+  Mic,
+  MicOff,
+  Loader2,
 } from "lucide-react";
 
 const MAX_ATTACHMENTS = 10;
@@ -59,8 +62,12 @@ export default function Chat() {
   const [streamInfo, setStreamInfo] = useState(null);
   const [usage, setUsage] = useState(null);
   const [dragging, setDragging] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const recorderRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -423,6 +430,81 @@ export default function Chat() {
       setSending(false);
       textareaRef.current?.focus();
     }
+  };
+
+  const appendDictation = (chunk) => {
+    const clean = (chunk || "").trim();
+    if (!clean) return;
+    setText((prev) => (prev ? `${prev.replace(/\s+$/, "")} ${clean}` : clean));
+  };
+
+  // 1er choix : dictée natively du navigateur (gratuite, instantanée).
+  const startNativeDictation = () => {
+    const Ctor =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Ctor) return false;
+    const rec = new Ctor();
+    rec.lang = navigator.language || "fr-FR";
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i += 1) {
+        if (e.results[i].isFinal) appendDictation(e.results[i][0].transcript);
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error !== "aborted") setError(`Dictée : ${e.error}`);
+      setListening(false);
+    };
+    rec.onend = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+    return true;
+  };
+
+  // Repli : on enregistre l'audio et le backend le transcrit (Whisper).
+  const startRecordingFallback = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks = [];
+      const rec = new MediaRecorder(stream);
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setListening(false);
+        if (!chunks.length) return;
+        setTranscribing(true);
+        try {
+          const form = new FormData();
+          form.append("audio", new Blob(chunks, { type: "audio/webm" }), "dictee.webm");
+          const { data } = await api.post("/stt", form, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+          appendDictation(data.text);
+        } catch (err) {
+          setError(formatApiError(err));
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setListening(true);
+    } catch (_) {
+      setError("Micro inaccessible : autorise l'accès au microphone.");
+    }
+  };
+
+  const toggleDictation = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      recorderRef.current?.stop();
+      recognitionRef.current = null;
+      setListening(false);
+      return;
+    }
+    if (!startNativeDictation()) startRecordingFallback();
   };
 
   const currentModel = () =>
@@ -969,6 +1051,30 @@ export default function Chat() {
                     className="w-5 h-5"
                     fill={isFavorite ? "currentColor" : "none"}
                   />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleDictation}
+                  disabled={transcribing}
+                  className={`btn-ghost border-2 flex-shrink-0 ${
+                    listening
+                      ? "border-[#ff2a6d] text-[#ff2a6d] animate-pulse"
+                      : "border-white/20 hover:border-[#05d9e8] hover:text-[#05d9e8]"
+                  }`}
+                  title={
+                    listening
+                      ? "Arrêter la dictée"
+                      : "Dicter le message à la voix"
+                  }
+                  data-testid="dictate-btn"
+                >
+                  {transcribing ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : listening ? (
+                    <MicOff className="w-5 h-5" />
+                  ) : (
+                    <Mic className="w-5 h-5" />
+                  )}
                 </button>
                 <button
                   type="button"

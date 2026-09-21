@@ -362,6 +362,41 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/.env`,
   le fait technique clé (« Atom C2338 sans AVX2 ») préservé, résumé persisté en base.
 - UI : 11 providers listés, badge « bascule auto depuis groq » affiché sur la réponse.
 
+## Implémenté (2026-06) — Outils web de l'agent + dictée vocale
+Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
+(+ddgs, +playwright), `frontend/src/pages/Chat.jsx`, `evolutions-futures-possibles.md`.
+
+- 3 nouveaux outils agent (`TOOLS` + `_run_tool`) : `web_search`, `fetch_url`,
+  `screenshot_url`. Aucun n'existait avant (seuls `bash` et `read_file`).
+- `web_search` en cascade : Google CSE (si `GOOGLE_CSE_KEY`+`GOOGLE_CSE_CX`) →
+  ddgs (DuckDuckGo, sans clé) → **API de recherche Wikipedia**. Le repli Wikipedia
+  était indispensable : depuis une IP de datacenter, DDG/Google/Brave/Mojeek
+  renvoient 202/429/403. ⚠️ Wikipedia exige un User-Agent identifiant l'app avec
+  un moyen de contact, sinon 403 (un UA type « Mozilla/5.0 » est refusé).
+- `fetch_url` : httpx + nettoyage regex (script/style/balises + unescape), tronqué
+  à `FETCH_URL_MAX_CHARS`. Pas de beautifulsoup/lxml pour rester léger.
+- `screenshot_url` : Playwright sync dans `asyncio.to_thread` (OK car hors boucle
+  d'événements), flags `--no-sandbox --disable-dev-shm-usage --disable-gpu`.
+  Image dans `backend/static/screenshots/`, servie par `GET /api/screenshots/{nom}`
+  (auth requise, nom validé `[0-9a-f]{32}\.png`, purge au démarrage selon
+  `SCREENSHOT_RETENTION_HOURS`). L'outil renvoie le markdown à insérer, ce qui
+  affiche l'image dans la réponse via ReactMarkdown. Désactivable
+  (`ENABLE_SCREENSHOT=false`) car ~300 Mo de RAM par capture.
+  ⚠️ En sandbox, les navigateurs sont dans `/pw-browsers` alors que Playwright les
+  cherche dans `~/.cache/ms-playwright` → symlink créé. Sur le serveur de l'user,
+  `python3 -m playwright install chromium` doit être lancé par LE MÊME utilisateur
+  que le service systemd.
+- Dictée : bouton micro (`dictate-btn`). Web Speech API en premier choix, repli
+  MediaRecorder + `POST /api/stt` (Whisper via provider gratuit, `STT_MODEL`).
+
+### Tests
+- `web_search` → 5 résultats (repli Wikipedia fr, sandbox bloquée côté DDG).
+- `screenshot_url` via l'agent Claude → capture réussie, markdown inséré, image
+  chargée dans le chat (`naturalWidth: 1280`), `401` sans authentification.
+- `fetch_url` → texte d'example.com extrait.
+- `/api/stt` sans clé → 503 avec message explicite.
+- UI : bouton micro visible, capture affichée dans la conversation.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).

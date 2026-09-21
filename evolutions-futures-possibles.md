@@ -29,11 +29,20 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
 | Suivi du quota Go | Jauges 5 h / semaine / mois dans l'en-tête |
 | PWA | Installable sur l'écran d'accueil, plein écran, icône « unchained » |
 | Responsive | Téléphone, tablette et ordinateur |
+| **Recherche web** | Outil `web_search` sans clé (DuckDuckGo → repli Wikipedia), Google Custom Search optionnel |
+| **Lecture de page** | Outil `fetch_url` : extraction du texte d'une URL, tronquée, sans dépendance lourde |
+| **Capture d'écran web** | Outil `screenshot_url` (Chromium headless), image servie et affichée dans la réponse |
+| **Dictée vocale** | Bouton micro : dictée natively du navigateur, repli Whisper via `/api/stt` |
 | **Providers cloud gratuits** | Groq, Cerebras, SambaNova, NVIDIA NIM, OpenRouter via un adaptateur unifié compatible OpenAI (streaming inclus) |
 | **Découverte dynamique des modèles** | `GET /v1/models` interrogé par provider, cache 1 h, filtre `:free` pour OpenRouter, zéro modèle codé en dur |
 | **Résumé automatique de l'historique** | Condensation incrémentale des vieux messages au-delà d'un seuil de tokens, résumé persisté par conversation |
 
-### Détail — cascade multi-providers gratuits (livré le 21/06/2026)
+> ⏳ **EN ATTENTE DE VALIDATION EN PROD** (au 21/06/2026) : la cascade multi-providers,
+> le résumé automatique de l'historique, la recherche web et la capture d'écran sont
+> développés et validés en sandbox (mocks + appels réels), mais **pas encore éprouvés
+> sur le serveur de production**. À repasser en « Validé » après tes tests réels.
+
+### Détail — cascade multi-providers gratuits (livré le 21/06/2026, à valider en prod)
 - Priorité 1 : Claude Pro (OAuth) puis OpenCode Go.
 - Priorité 2 : providers gratuits actifs, dans l'ordre de `PROVIDER_PRIORITY`,
   avec les modèles découverts dynamiquement.
@@ -44,7 +53,29 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
   et dans le champ `routing` du message, avec un badge visible dans l'interface.
 - Une clé absente ou vide = provider simplement ignoré, jamais d'erreur bloquante.
 
-### Détail — résumé automatique de l'historique (livré le 21/06/2026)
+### Détail — outils web de l'agent (livré le 21/06/2026, à valider en prod)
+- `web_search` : Google Custom Search si `GOOGLE_CSE_KEY`+`GOOGLE_CSE_CX` sont présents,
+  sinon DuckDuckGo (aucune clé), sinon repli sur l'API de recherche Wikipedia.
+  Sortie compacte (titre, URL, extrait 300 car.) pour ne pas saturer le contexte.
+- `fetch_url` : téléchargement + nettoyage HTML par expressions régulières (aucune
+  dépendance lourde), tronqué à `FETCH_URL_MAX_CHARS`.
+- `screenshot_url` : Chromium headless via Playwright, image écrite sur disque et servie
+  par `GET /api/screenshots/{nom}.png` (authentifiée, nom validé par regex, purge des
+  captures de plus de `SCREENSHOT_RETENTION_HOURS` au démarrage). Désactivable via
+  `ENABLE_SCREENSHOT=false` — recommandé sur l'Atom C2338 (~300 Mo de RAM par capture).
+- Note : les moteurs généralistes bloquent souvent les IP de datacenter (429/403) ;
+  depuis une IP résidentielle ou un serveur dédié, DuckDuckGo devrait répondre
+  normalement. Sinon, Google CSE (100 requêtes/jour gratuites) règle le problème.
+
+### Détail — dictée vocale (livré le 21/06/2026)
+- Priorité à la **Web Speech API** du navigateur : zéro backend, zéro coût, instantané,
+  langue déduite de `navigator.language`, insertion propre à la fin du champ de saisie.
+- Repli automatique si le navigateur ne la gère pas (Firefox, certains WebView) :
+  enregistrement `MediaRecorder` puis `POST /api/stt` → endpoint Whisper compatible
+  OpenAI du premier provider gratuit configuré (Groq, `whisper-large-v3-turbo`).
+- Sans clé et sans support navigateur, le bouton renvoie un message explicite.
+
+### Détail — résumé automatique de l'historique (livré le 21/06/2026, à valider en prod)
 - Déclenché quand l'historique brut dépasse `HISTORY_SUMMARY_THRESHOLD_TOKENS`
   (estimation ≈ 4 caractères par token).
 - Les `HISTORY_SUMMARY_KEEP_RECENT` derniers messages partent toujours mot pour mot ;
