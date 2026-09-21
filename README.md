@@ -99,6 +99,30 @@ pour le texte intégral officiel de la licence, ou <https://www.gnu.org/licenses
 Les licences des dépendances tierces (Python et npm) sont recensées dans
 [NOTICE](./NOTICE).
 
+## Enregistrer le workspace sur GitHub
+
+Dans la barre de saisie, le bouton **+** ouvre un menu : « Joindre un fichier »,
+« Enregistrer sur GitHub », « Forker ce chat ».
+
+« Enregistrer sur GitHub » commite le contenu de `WORKSPACE_DIR` (le projet lui-même
+par défaut, `.gitignore` respecté) et le pousse sur le dépôt et la branche choisis
+dans les listes déroulantes, alimentées par ton compte GitHub. Un champ permet de
+créer une branche à la volée. En cas de divergence avec le distant, le push est
+refusé (aucun `--force`) et il faut choisir une autre branche.
+
+Configuration dans `backend/.env` :
+
+```ini
+GITHUB_PAT=ghp_xxx           # jeton personnel, portée "repo" (GITHUB_TOKEN accepté)
+WORKSPACE_DIR=/var/www/forge
+GIT_AUTHOR_NAME=Claude Unchained Forge
+GIT_AUTHOR_EMAIL=forge@localhost
+```
+
+Le jeton peut aussi être collé depuis la fenêtre : il est alors stocké côté serveur
+(collection `settings`) et prend le pas sur le `.env`. Il n'est jamais renvoyé au
+navigateur, et il est masqué dans les logs et les messages d'erreur.
+
 ## Captures d'écran de l'agent (Playwright)
 
 L'outil `screenshot_url` a besoin de Chromium headless. Sur le serveur

@@ -32,7 +32,10 @@ import {
   Mic,
   MicOff,
   Loader2,
+  Github,
+  GitFork,
 } from "lucide-react";
+import GithubSaveDialog from "@/components/GithubSaveDialog";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -74,6 +77,9 @@ export default function Chat() {
   const [dragging, setDragging] = useState(false);
   const [listening, setListening] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [githubOpen, setGithubOpen] = useState(false);
+  const [forking, setForking] = useState(false);
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -197,6 +203,23 @@ export default function Chat() {
       setSidebarOpen(false);
     } catch (e) {
       setError(formatApiError(e));
+    }
+  };
+
+  const forkConversation = async () => {
+    if (!activeId) return;
+    setForking(true);
+    setError("");
+    try {
+      const { data } = await api.post(`/conversations/${activeId}/fork`);
+      setConversations((prev) => [data, ...prev]);
+      setActiveId(data.id);
+      setSidebarOpen(false);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setForking(false);
+      setPlusOpen(false);
     }
   };
 
@@ -751,8 +774,9 @@ export default function Chat() {
         </div>
       </aside>
 
-      {/* Superposition glisser-déposer */}
-      {dragging && (
+      {githubOpen && <GithubSaveDialog onClose={() => setGithubOpen(false)} />}
+
+      {/* Superposition glisser-déposer */}      {dragging && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none"
           data-testid="drop-overlay"
@@ -1112,15 +1136,71 @@ export default function Chat() {
                     <Mic className="w-5 h-5" />
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] flex-shrink-0"
-                  title="Joindre un fichier (image, PDF, texte, code...)"
-                  data-testid="attach-image-btn"
-                >
-                  <Paperclip className="w-5 h-5" />
-                </button>
+                <div className="relative flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPlusOpen((v) => !v)}
+                    className={`btn-ghost border-2 ${
+                      plusOpen
+                        ? "border-[#ffd700] text-[#ffd700]"
+                        : "border-white/20 hover:border-[#ffd700] hover:text-[#ffd700]"
+                    }`}
+                    title="Outils : fichier, GitHub, fork"
+                    data-testid="plus-menu-btn"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                  {plusOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setPlusOpen(false)}
+                        data-testid="plus-menu-backdrop"
+                      />
+                      <div
+                        className="absolute z-40 bottom-full mb-2 left-0 w-60 border-2 border-white/20 bg-[#0a0a0a] shadow-[6px_6px_0_0_#05d9e8]"
+                        data-testid="plus-menu"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlusOpen(false);
+                            fileInputRef.current?.click();
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#ffd700] transition-colors"
+                          data-testid="menu-attach-file"
+                        >
+                          <Paperclip className="w-4 h-4" /> Joindre un fichier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlusOpen(false);
+                            setGithubOpen(true);
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#05d9e8] transition-colors border-t border-white/10"
+                          data-testid="menu-save-github"
+                        >
+                          <Github className="w-4 h-4" /> Enregistrer sur GitHub
+                        </button>
+                        <button
+                          type="button"
+                          onClick={forkConversation}
+                          disabled={!activeId || forking}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#ff2a6d] transition-colors border-t border-white/10 disabled:opacity-40"
+                          data-testid="menu-fork-chat"
+                        >
+                          {forking ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <GitFork className="w-4 h-4" />
+                          )}
+                          Forker ce chat
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
               {/* Ligne 2 sur mobile : saisie + envoi. */}
               <div className="flex items-end gap-2 min-w-0 sm:contents">

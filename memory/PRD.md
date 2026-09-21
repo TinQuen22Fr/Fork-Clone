@@ -435,3 +435,22 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Detection via `apt-cache policy ... Candidate:` (au lieu de `apt-cache show`, qui reussit pour les paquets virtuels), avec table de repli LEGACY pour les distros plus anciennes.
 
 - Correctif (2026-09-21) : `libxrandr6` (inexistant) -> `libxrandr2` dans deploy/install-playwright.sh.
+
+## Implemente (2026-09-21) — Menu « + », sauvegarde GitHub, fork de chat
+
+- Frontend : bouton `+` dans la barre de saisie (`plus-menu-btn`) ouvrant un menu :
+  Joindre un fichier (`menu-attach-file`), Enregistrer sur GitHub (`menu-save-github`),
+  Forker ce chat (`menu-fork-chat`). Le bouton trombone autonome est remplace par ce menu.
+- Nouveau composant `frontend/src/components/GithubSaveDialog.jsx` : statut (workspace,
+  jeton, nb de modifications), saisie du PAT si absent, selecteurs depot + branche
+  remplis dynamiquement via l API GitHub, champ nouvelle branche, message de commit,
+  bouton Pousser, lien vers le resultat.
+- Backend : `GET /api/github/status`, `POST|DELETE /api/github/token`,
+  `GET /api/github/repos`, `GET /api/github/branches?repo=`, `POST /api/github/push`
+  (git add -A / commit / push HEAD:refs/heads/<branche>, sans --force, token masque),
+  et `POST /api/conversations/{id}/fork` (duplique conversation + messages, titre « ... (fork) »).
+- Jeton : `GITHUB_PAT` (ou `GITHUB_TOKEN`) dans le .env, surchargeable depuis l UI
+  (collection `settings`, jamais renvoye au navigateur). `WORKSPACE_DIR`,
+  `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` ajoutes a env.example.
+- Verifie : status/repos(400 sans jeton)/fork par curl, menu + fenetre par navigateur.
+  NON verifie faute de jeton reel dans le sandbox : liste des depots/branches et push effectif.

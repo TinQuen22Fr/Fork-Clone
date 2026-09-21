@@ -258,6 +258,17 @@ class Settings:
         ]
         self.enable_fallback: bool = _env_bool("ENABLE_FALLBACK", True)
 
+        # --- Sauvegarde du workspace sur GitHub ---
+        # Jeton personnel (classic ou fine-grained, portee "repo"). Accepte les
+        # deux noms de variable ; surchargeable depuis l'interface.
+        self.github_pat: str = _env("GITHUB_PAT") or _env("GITHUB_TOKEN")
+        # Repertoire pousse sur GitHub : la racine du projet par defaut.
+        self.workspace_dir: str = _env("WORKSPACE_DIR", str(ROOT_DIR.parent))
+        self.git_author_name: str = _env("GIT_AUTHOR_NAME", "Claude Unchained Forge")
+        self.git_author_email: str = _env(
+            "GIT_AUTHOR_EMAIL", "forge@localhost"
+        )
+
     def validate(self) -> list[str]:
         """Retourne la liste des problèmes bloquants (vide si tout va bien)."""
         problems: list[str] = []
@@ -3640,6 +3651,291 @@ async def list_models(current_user: dict = Depends(get_current_user)):
         "enable_fallback": settings.enable_fallback,
         "enable_tools": settings.enable_tools,
     }
+
+
+# =========================================================================
+# GitHub — sauvegarde du workspace sur un depot de l'utilisateur
+# =========================================================================
+GITHUB_API = "https://api.github.com"
+
+
+class GithubTokenRequest(BaseModel):
+    token: str
+
+
+class GithubPushRequest(BaseModel):
+    repo: str  # "owner/name"
+    branch: str
+    message: Optional[str] = None
+
+
+async def _github_token(user_id: str) -> tuple[str, str]:
+    """Jeton a utiliser + origine ('ui' | 'env' | 'none')."""
+    doc = await get_db().settings.find_one(
+        {"key": "github_token", "user_id": user_id}
+    )
+    token = (doc or {}).get("token") or ""
+    if token:
+        return token, "ui"
+    if settings.github_pat:
+        return settings.github_pat, "env"
+    return "", "none"
+
+
+def _redact(text: str, token: str) -> str:
+    return text.replace(token, "***") if token else text
+
+
+def _git(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
+    # safe.directory=* : le workspace peut appartenir a un autre utilisateur
+    # que celui qui fait tourner le service.
+    return subprocess.run(
+        ["git", "-c", "safe.directory=*", *args],
+        cwd=settings.workspace_dir,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+async def _gh_api(token: str, path: str, params: Optional[dict] = None):
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        resp = await http.get(
+            f"{GITHUB_API}{path}",
+            params=params,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+    if resp.status_code == 401:
+        raise HTTPException(
+            status_code=401,
+            detail="Jeton GitHub refuse (401). Verifie qu'il est valide et non expire.",
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502, detail=f"GitHub {resp.status_code}: {resp.text[:300]}"
+        )
+    return resp.json()
+
+
+@api_router.get("/github/status")
+async def github_status(current_user: dict = Depends(get_current_user)):
+    token, source = await _github_token(current_user["id"])
+    out = {
+        "configured": bool(token),
+        "source": source,
+        "workspace": settings.workspace_dir,
+        "login": None,
+        "branch": None,
+        "changes": 0,
+        "is_git_repo": False,
+    }
+    if token:
+        try:
+            out["login"] = (await _gh_api(token, "/user")).get("login")
+        except HTTPException as e:
+            out["error"] = str(e.detail)
+            out["configured"] = False
+
+    try:
+        head = _git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=15)
+        if head.returncode == 0:
+            out["is_git_repo"] = True
+            out["branch"] = head.stdout.strip()
+        st = _git(["status", "--porcelain"], timeout=60)
+        if st.returncode == 0:
+            out["changes"] = len([l for l in st.stdout.splitlines() if l.strip()])
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"git indisponible: {str(e)[:200]}"
+    return out
+
+
+@api_router.post("/github/token")
+async def github_set_token(
+    payload: GithubTokenRequest, current_user: dict = Depends(get_current_user)
+):
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Jeton vide.")
+    login = (await _gh_api(token, "/user")).get("login")
+    await get_db().settings.update_one(
+        {"key": "github_token", "user_id": current_user["id"]},
+        {"$set": {"token": token, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "login": login, "source": "ui"}
+
+
+@api_router.delete("/github/token")
+async def github_clear_token(current_user: dict = Depends(get_current_user)):
+    await get_db().settings.delete_one(
+        {"key": "github_token", "user_id": current_user["id"]}
+    )
+    return {"ok": True, "source": "env" if settings.github_pat else "none"}
+
+
+@api_router.get("/github/repos")
+async def github_repos(current_user: dict = Depends(get_current_user)):
+    token, _ = await _github_token(current_user["id"])
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="Aucun jeton GitHub. Renseigne GITHUB_PAT dans backend/.env "
+            "ou colle ton jeton dans la fenetre.",
+        )
+    repos = await _gh_api(
+        token,
+        "/user/repos",
+        {"per_page": 100, "sort": "pushed", "affiliation": "owner,collaborator"},
+    )
+    return [
+        {
+            "full_name": r.get("full_name"),
+            "private": r.get("private"),
+            "default_branch": r.get("default_branch"),
+        }
+        for r in repos
+        if (r.get("permissions") or {}).get("push", True)
+    ]
+
+
+@api_router.get("/github/branches")
+async def github_branches(
+    repo: str, current_user: dict = Depends(get_current_user)
+):
+    token, _ = await _github_token(current_user["id"])
+    if not token:
+        raise HTTPException(status_code=400, detail="Aucun jeton GitHub.")
+    if repo.count("/") != 1:
+        raise HTTPException(status_code=400, detail="Format attendu : owner/repo.")
+    branches = await _gh_api(token, f"/repos/{repo}/branches", {"per_page": 100})
+    return [b.get("name") for b in branches if b.get("name")]
+
+
+@api_router.post("/github/push")
+async def github_push(
+    payload: GithubPushRequest, current_user: dict = Depends(get_current_user)
+):
+    """Commit + push du workspace vers le depot/branche choisis."""
+    token, _ = await _github_token(current_user["id"])
+    if not token:
+        raise HTTPException(status_code=400, detail="Aucun jeton GitHub.")
+    repo = payload.repo.strip()
+    branch = payload.branch.strip() or "main"
+    if repo.count("/") != 1:
+        raise HTTPException(status_code=400, detail="Format attendu : owner/repo.")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch):
+        raise HTTPException(status_code=400, detail="Nom de branche invalide.")
+
+    message = (payload.message or "").strip() or (
+        f"Sauvegarde depuis Claude Unchained Forge — {now_iso()[:19]}"
+    )
+    remote = f"https://x-access-token:{token}@github.com/{repo}.git"
+
+    def _run() -> dict:
+        work = Path(settings.workspace_dir)
+        if not work.is_dir():
+            raise HTTPException(
+                status_code=500,
+                detail=f"WORKSPACE_DIR introuvable: {settings.workspace_dir}",
+            )
+        if not (work / ".git").exists():
+            init = _git(["init", "-b", branch])
+            if init.returncode != 0:
+                raise HTTPException(
+                    status_code=500, detail=f"git init: {init.stderr[:300]}"
+                )
+
+        add = _git(["add", "-A"])
+        if add.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"git add: {add.stderr[:300]}")
+
+        staged = _git(["diff", "--cached", "--name-only"])
+        files = [f for f in staged.stdout.splitlines() if f.strip()]
+        commit_sha = ""
+        if files:
+            commit = _git([
+                "-c", f"user.name={settings.git_author_name}",
+                "-c", f"user.email={settings.git_author_email}",
+                "commit", "-m", message,
+            ])
+            if commit.returncode != 0:
+                raise HTTPException(
+                    status_code=500, detail=f"git commit: {commit.stderr[:300]}"
+                )
+        rev = _git(["rev-parse", "--short", "HEAD"])
+        commit_sha = rev.stdout.strip()
+
+        push = _git(["push", remote, f"HEAD:refs/heads/{branch}"], timeout=600)
+        if push.returncode != 0:
+            err = _redact(push.stderr or push.stdout, token)[:600]
+            if "rejected" in err or "non-fast-forward" in err:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Push refuse : la branche distante a des commits que le "
+                        "workspace n'a pas. Choisis une autre branche (ou cree-en "
+                        "une nouvelle) pour ne rien ecraser. Detail : " + err
+                    ),
+                )
+            raise HTTPException(status_code=502, detail=f"git push: {err}")
+
+        return {
+            "ok": True,
+            "repo": repo,
+            "branch": branch,
+            "commit": commit_sha,
+            "files_committed": len(files),
+            "url": f"https://github.com/{repo}/tree/{branch}",
+            "output": _redact(push.stderr or push.stdout, token)[:600],
+        }
+
+    return await asyncio.to_thread(_run)
+
+
+@api_router.post("/conversations/{conv_id}/fork")
+async def fork_conversation(
+    conv_id: str, current_user: dict = Depends(get_current_user)
+):
+    """Duplique une conversation (messages compris) dans un nouveau fil."""
+    database = get_db()
+    conv = await database.conversations.find_one(
+        {"id": conv_id, "user_id": current_user["id"]}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    new_id = str(uuid.uuid4())
+    base_title = (conv.get("title") or "New Chat")[:80]
+    doc = {
+        "id": new_id,
+        "user_id": current_user["id"],
+        "title": f"{base_title} (fork)",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "forked_from": conv_id,
+    }
+    if conv.get("summary"):
+        doc["summary"] = conv["summary"]
+        doc["summarized_ids"] = []
+    await database.conversations.insert_one(doc)
+
+    msgs = (
+        await database.messages.find({"conversation_id": conv_id}, {"_id": 0})
+        .sort("created_at", 1)
+        .to_list(2000)
+    )
+    if msgs:
+        for m in msgs:
+            m["id"] = str(uuid.uuid4())
+            m["conversation_id"] = new_id
+        await database.messages.insert_many(msgs)
+
+    doc.pop("_id", None)
+    return {**doc, "messages_copied": len(msgs)}
 
 
 @api_router.get("/")
