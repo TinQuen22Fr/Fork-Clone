@@ -433,3 +433,5 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 
 - `libasound2` (paquet virtuel sans candidat sur Ubuntu 26.04) remplace par `libasound2t64`; idem pour libatk/libatspi/libcups/libglib.
 - Detection via `apt-cache policy ... Candidate:` (au lieu de `apt-cache show`, qui reussit pour les paquets virtuels), avec table de repli LEGACY pour les distros plus anciennes.
+
+- Correctif (2026-09-21) : `libxrandr6` (inexistant) -> `libxrandr2` dans deploy/install-playwright.sh.

@@ -67,7 +67,7 @@ CANDIDATES=(
   libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0t64
   libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0
   libudev1 libvulkan1 libx11-6 libxcb1 libxcomposite1 libxdamage1
-  libxext6 libxfixes3 libxkbcommon0 libxrandr6 libxshmfence1
+  libxext6 libxfixes3 libxkbcommon0 libxrandr2 libxshmfence1
   xdg-utils
 )
 
