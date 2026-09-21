@@ -428,3 +428,8 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - `backend/env.example` : nouvelle variable PLAYWRIGHT_BROWSERS_PATH + doc mise a jour.
 - `screenshot_url` : message d erreur explicite pointant vers le script si Chromium est absent.
 - README : section « Captures d ecran de l agent (Playwright) » + renvoi vers NOTICE.
+
+## Correctif (2026-09-21) — install-playwright.sh Ubuntu 26.04
+
+- `libasound2` (paquet virtuel sans candidat sur Ubuntu 26.04) remplace par `libasound2t64`; idem pour libatk/libatspi/libcups/libglib.
+- Detection via `apt-cache policy ... Candidate:` (au lieu de `apt-cache show`, qui reussit pour les paquets virtuels), avec table de repli LEGACY pour les distros plus anciennes.

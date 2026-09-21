@@ -54,24 +54,50 @@ log "Mise a jour de l'index apt"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 
+# Noms "t64" explicites (Ubuntu 26.04) : libasound2 et consorts ne sont plus
+# que des paquets virtuels sans candidat d'installation.
 CANDIDATES=(
   ca-certificates fonts-liberation fonts-unifont
-  libasound2t64 libasound2
-  libatk-bridge2.0-0t64 libatk-bridge2.0-0
-  libatk1.0-0t64 libatk1.0-0
-  libatspi2.0-0t64 libatspi2.0-0
-  libcairo2 libcups2t64 libcups2
-  libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0t64 libglib2.0-0
+  libasound2t64
+  libatk-bridge2.0-0t64
+  libatk1.0-0t64
+  libatspi2.0-0t64
+  libcairo2
+  libcups2t64
+  libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0t64
   libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0
   libudev1 libvulkan1 libx11-6 libxcb1 libxcomposite1 libxdamage1
   libxext6 libxfixes3 libxkbcommon0 libxrandr6 libxshmfence1
   xdg-utils
 )
 
+# Repli pour les distributions plus anciennes (nom t64 inexistant).
+declare -A LEGACY=(
+  [libasound2t64]=libasound2
+  [libatk-bridge2.0-0t64]=libatk-bridge2.0-0
+  [libatk1.0-0t64]=libatk1.0-0
+  [libatspi2.0-0t64]=libatspi2.0-0
+  [libcups2t64]=libcups2
+  [libglib2.0-0t64]=libglib2.0-0
+)
+
+# Un paquet virtuel passe apt-cache show mais n'a pas de candidat : on teste
+# explicitement la ligne "Candidate:" d'apt-cache policy.
+has_candidate() {
+  local cand
+  cand="$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  [ -n "$cand" ] && [ "$cand" != "(none)" ]
+}
+
 TO_INSTALL=()
 for pkg in "${CANDIDATES[@]}"; do
-  if apt-cache show "$pkg" >/dev/null 2>&1; then
+  if has_candidate "$pkg"; then
     TO_INSTALL+=("$pkg")
+  elif [ -n "${LEGACY[$pkg]:-}" ] && has_candidate "${LEGACY[$pkg]}"; then
+    warn "$pkg indisponible, repli sur ${LEGACY[$pkg]}"
+    TO_INSTALL+=("${LEGACY[$pkg]}")
+  else
+    warn "$pkg introuvable dans les depots, ignore"
   fi
 done
 
