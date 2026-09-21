@@ -72,7 +72,7 @@ La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mo
 - npm 11 strict → conflit peer-deps (date-fns@4 vs react-day-picker@8). Fix : `frontend/.npmrc` avec `legacy-peer-deps=true`.
 - Vite build.outDir = "build". Nginx DOIT avoir `root /var/www/forge/frontend/build;` (la config live avait divergé vers /var/www/forge/build → ancien bundle servi, crayon absent). Corrigé.
 
-## Implémenté (2026-06) — Routeur multi-providers + cascade de bascule
+## Implémenté (2026-09-21) — Routeur multi-providers + cascade de bascule
 Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
 `frontend/src/pages/Chat.jsx`, `frontend/src/components/ChatMessage.jsx`.
 
@@ -101,14 +101,14 @@ Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
 - Google AI Studio: clé valide. `gemini-2.5-flash` et `gemini-2.0-flash` RETIRÉS (404
   "no longer available to new users"). Basculé sur `gemini-3.6-flash` (+ secours `gemini-3.5-flash`) — OK.
 
-### Tests E2E (curl + navigateur, 2026-06)
+### Tests E2E (curl + navigateur, 2026-09-21)
 - provider=ollama_cloud → 200, bascule interne gpt-oss:120b, model remonté correctement.
 - provider=opencode → échec region → bascule auto sur claude, badge + routing corrects.
 - provider=gemini → 200 gemini-3.6-flash. provider=auto → claude. provider=claude → 200.
 - /api/chat/regenerate OK avec le nouveau meta. provider inconnu → 400.
 - UI: sélecteur = Auto + 5 providers; en-tête affiche la chaîne de bascule.
 
-## Adaptation (2026-06) — Abonnement OpenCode Go activé
+## Adaptation (2026-09-21) — Abonnement OpenCode Go activé
 Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`.
 
 - L'abonnement Go lève le `CreditsError`, mais la passerelle impose alors :
@@ -125,7 +125,7 @@ Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`.
 - Testé : `provider=opencode` → 200 via `glm-5.3-flash`. Modèles validés en direct :
   glm-5.3-flash, mimo-v2.5, kimi-k2.7-code, hy3.
 
-## Implémenté (2026-06) — OpenCode : 3 transports + sélecteur de modèle
+## Implémenté (2026-09-21) — OpenCode : 3 transports + sélecteur de modèle
 Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
 `frontend/src/pages/Chat.jsx`.
 
@@ -149,14 +149,14 @@ Fichiers modifiés: `backend/server.py`, `backend/.env`, `backend/env.example`,
   réinitialisé au changement de provider. En-tête affiche le modèle choisi avec la mention « (choisi) ».
 - **Opt-in Chine activé côté utilisateur** : `deepseek-v4-flash` / `deepseek-v4-pro` répondent désormais.
 
-### Tests E2E (curl + navigateur, 2026-06)
+### Tests E2E (curl + navigateur, 2026-09-21)
 - opencode défaut → deepseek-v4-flash OK. Override testés OK : minimax-m3 et qwen3.8-max (`/messages`),
   gpt-5.6-luna et muse-spark-1.3-contributor (`/responses`), grok-4.6 (retry chat→responses),
   kimi-k2.7-code, mimo-v2.5-pro, glm-5.3-flash.
 - ollama_cloud override nemotron-3-nano:30b OK.
 - UI : 37 modèles listés dans le sélecteur OpenCode, sélection appliquée à l'envoi.
 
-## Implémenté (2026-06) — Bouton Stop + pièces jointes universelles
+## Implémenté (2026-09-21) — Bouton Stop + pièces jointes universelles
 Fichiers modifiés: `backend/server.py`, `backend/requirements.txt` (+pypdf),
 `backend/env.example`, `frontend/src/pages/Chat.jsx`,
 `frontend/src/components/ChatMessage.jsx`.
@@ -185,14 +185,14 @@ Fichiers modifiés: `backend/server.py`, `backend/requirements.txt` (+pypdf),
 - Frontend : input sans `accept`, icône trombone, carte d'aperçu (vignette image ou icône fichier
   + nom + taille), puce de pièce jointe sur le message (`attachment-chip-{id}`).
 
-### Tests E2E (curl + navigateur, 2026-06)
+### Tests E2E (curl + navigateur, 2026-09-21)
 - `.py` via gemini → le modèle retrouve le marqueur du fichier. `.pdf` via gemini → marqueur extrait.
 - `.csv` via opencode/deepseek-v4-flash → bonne valeur lue dans le CSV.
 - Binaire `.bin` → 400 avec message clair.
 - Navigateur : carte d'aperçu OK, STOP + « annuler » visibles pendant la génération,
   annulation → bandeau « Requête annulée. » et retour du bouton SEND.
 
-## Corrigé (2026-06) — Affichage mobile / tablette
+## Corrigé (2026-09-21) — Affichage mobile / tablette
 Fichiers modifiés: `frontend/src/App.css`, `frontend/src/index.css`,
 `frontend/src/pages/Chat.jsx`, `frontend/src/components/ChatMessage.jsx`.
 
@@ -227,7 +227,7 @@ et le dock se retrouvait tout en bas, hors écran, inatteignable à cause de
 - 844×390 (téléphone paysage) et 820×1100 (tablette portrait) : dock visible, aucun débordement.
 - Tiroir mobile : ouverture, fond cliquable, fermeture OK.
 
-## Implémenté (2026-06) — PWA, streaming SSE, glisser-déposer, quota Go
+## Implémenté (2026-09-21) — PWA, streaming SSE, glisser-déposer, quota Go
 Fichiers: `backend/server.py`, `frontend/index.html`, `frontend/src/main.jsx`,
 `frontend/public/{manifest.webmanifest,sw.js,icon-*.png,maskable-*.png,apple-touch-icon.png,favicon-32.png}`,
 `frontend/src/lib/api.js`, `frontend/src/pages/Chat.jsx`,
@@ -278,7 +278,7 @@ Fichiers: `backend/server.py`, `frontend/index.html`, `frontend/src/main.jsx`,
 - Glisser-déposer : overlay affiché, fichier attaché, envoi en flux et marqueur retrouvé par Gemini.
 - Quota : badge affiché avec 0% sur les 3 fenêtres.
 
-## Implémenté (2026-06) — Multi-fichiers, favoris, icône « unchained »
+## Implémenté (2026-09-21) — Multi-fichiers, favoris, icône « unchained »
 Fichiers: `backend/server.py`, `frontend/src/pages/Chat.jsx`,
 `frontend/src/components/ChatMessage.jsx`, `frontend/src/pages/Login.jsx`,
 `frontend/public/*` (icônes régénérées), `evolutions-futures-possible.md` (nouveau).
@@ -316,7 +316,7 @@ Fichiers: `backend/server.py`, `frontend/src/pages/Chat.jsx`,
 - Navigateur : 2 favoris épinglés (gemini-3.6-flash, glm-5.3-flash), clic → provider appliqué ;
   dépôt de 3 fichiers → 3 vignettes ; envoi OK.
 
-## Implémenté (2026-06) — 5 providers gratuits + résumé auto de l'historique
+## Implémenté (2026-09-21) — 5 providers gratuits + résumé auto de l'historique
 Fichiers: `backend/server.py`, `backend/env.example`, `backend/.env`,
 `backend/tests/mock_openai_provider.py` (nouveau), `evolutions-futures-possibles.md`.
 
@@ -362,7 +362,7 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/.env`,
   le fait technique clé (« Atom C2338 sans AVX2 ») préservé, résumé persisté en base.
 - UI : 11 providers listés, badge « bascule auto depuis groq » affiché sur la réponse.
 
-## Implémenté (2026-06) — Outils web de l'agent + dictée vocale
+## Implémenté (2026-09-21) — Outils web de l'agent + dictée vocale
 Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 (+ddgs, +playwright), `frontend/src/pages/Chat.jsx`, `evolutions-futures-possibles.md`.
 
@@ -402,3 +402,9 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).
 - P2: "Share Conversation" (lien public read-only /share/{id}).
 - P2: sélecteur de modèle Claude dans l'UI + streaming (SSE).
+
+## Licence (2026-09-21)
+
+- `LICENSE` ajouté à la racine : texte intégral officiel GNU GPL v3 (récupéré depuis gnu.org), précédé de la notice `Copyright (C) 2026 Quentin Dumont`.
+- `README.md` : section « 📄 Licence » indiquant GPLv3 + lien vers le fichier LICENSE.
+- Dates des entrées de la dernière session corrigées (2026-06 / 21-06 → 2026-09-21).

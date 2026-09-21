@@ -37,12 +37,12 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
 | **Découverte dynamique des modèles** | `GET /v1/models` interrogé par provider, cache 1 h, filtre `:free` pour OpenRouter, zéro modèle codé en dur |
 | **Résumé automatique de l'historique** | Condensation incrémentale des vieux messages au-delà d'un seuil de tokens, résumé persisté par conversation |
 
-> ⏳ **EN ATTENTE DE VALIDATION EN PROD** (au 21/06/2026) : la cascade multi-providers,
+> ⏳ **EN ATTENTE DE VALIDATION EN PROD** (au 21/09/2026) : la cascade multi-providers,
 > le résumé automatique de l'historique, la recherche web et la capture d'écran sont
 > développés et validés en sandbox (mocks + appels réels), mais **pas encore éprouvés
 > sur le serveur de production**. À repasser en « Validé » après tes tests réels.
 
-### Détail — cascade multi-providers gratuits (livré le 21/06/2026, à valider en prod)
+### Détail — cascade multi-providers gratuits (livré le 21/09/2026, à valider en prod)
 - Priorité 1 : Claude Pro (OAuth) puis OpenCode Go.
 - Priorité 2 : providers gratuits actifs, dans l'ordre de `PROVIDER_PRIORITY`,
   avec les modèles découverts dynamiquement.
@@ -53,7 +53,7 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
   et dans le champ `routing` du message, avec un badge visible dans l'interface.
 - Une clé absente ou vide = provider simplement ignoré, jamais d'erreur bloquante.
 
-### Détail — outils web de l'agent (livré le 21/06/2026, à valider en prod)
+### Détail — outils web de l'agent (livré le 21/09/2026, à valider en prod)
 - `web_search` : Google Custom Search si `GOOGLE_CSE_KEY`+`GOOGLE_CSE_CX` sont présents,
   sinon DuckDuckGo (aucune clé), sinon repli sur l'API de recherche Wikipedia.
   Sortie compacte (titre, URL, extrait 300 car.) pour ne pas saturer le contexte.
@@ -67,7 +67,7 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
   depuis une IP résidentielle ou un serveur dédié, DuckDuckGo devrait répondre
   normalement. Sinon, Google CSE (100 requêtes/jour gratuites) règle le problème.
 
-### Détail — dictée vocale (livré le 21/06/2026)
+### Détail — dictée vocale (livré le 21/09/2026)
 - Priorité à la **Web Speech API** du navigateur : zéro backend, zéro coût, instantané,
   langue déduite de `navigator.language`, insertion propre à la fin du champ de saisie.
 - Repli automatique si le navigateur ne la gère pas (Firefox, certains WebView) :
@@ -75,7 +75,7 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
   OpenAI du premier provider gratuit configuré (Groq, `whisper-large-v3-turbo`).
 - Sans clé et sans support navigateur, le bouton renvoie un message explicite.
 
-### Détail — résumé automatique de l'historique (livré le 21/06/2026, à valider en prod)
+### Détail — résumé automatique de l'historique (livré le 21/09/2026, à valider en prod)
 - Déclenché quand l'historique brut dépasse `HISTORY_SUMMARY_THRESHOLD_TOKENS`
   (estimation ≈ 4 caractères par token).
 - Les `HISTORY_SUMMARY_KEEP_RECENT` derniers messages partent toujours mot pour mot ;
@@ -133,7 +133,7 @@ la cascade sont déjà factorisés. Référence à suivre :
 
 ## ÉCARTÉ
 
-### Duel de modèles (comparaison côte à côte) — écarté le 21/06/2026
+### Duel de modèles (comparaison côte à côte) — écarté le 21/09/2026
 **Raison (retour utilisateur)** : ne correspond pas à l'usage de la forge. C'est un
 outil de travail, pas un banc d'essai. Comparer deux réponses côte à côte double la
 consommation de quota pour un gain nul dans le flux de travail réel, et encombre une

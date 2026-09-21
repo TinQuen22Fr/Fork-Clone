@@ -80,3 +80,16 @@ toucher au `.env` :
 cd backend
 venv/bin/python reset_password.py admin@forge.dev
 ```
+
+## 📄 Licence
+
+Ce projet est distribué sous licence **GNU General Public License v3 (GPLv3)**.
+
+Copyright (C) 2026 Quentin Dumont
+
+Vous êtes libre de l'utiliser, de l'étudier, de le modifier et de le redistribuer,
+y compris modifié, à condition que toute redistribution reste sous la même licence
+GPLv3 et conserve le code source disponible.
+
+Ce programme est fourni SANS AUCUNE GARANTIE. Voir le fichier [LICENSE](./LICENSE)
+pour le texte intégral officiel de la licence, ou <https://www.gnu.org/licenses/gpl-3.0.html>.
