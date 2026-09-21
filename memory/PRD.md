@@ -470,3 +470,12 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   case « Depot prive » (coche par defaut). Backend : `create_if_missing`/`private`
   sur /api/github/push -> POST /user/repos (ou /orgs/{owner}/repos), `git remote add|set-url
   origin https://github.com/owner/repo.git` puis push. Nom seul -> prefixe par le login.
+
+## Mise a jour (2026-09-21)
+
+- `upgrade.sh` ajoute : pull ff-only (stash auto), ajout des nouvelles cles de
+  env.example dans le .env sans ecraser, pip/npm seulement si requirements.txt ou
+  package.json ont change (hash), build frontend, unite systemd synchronisee,
+  alerte si la conf Nginx differe, restart + verification HTTP 200.
+  Options : --no-pull, --backend-only, --frontend-only, --branch <nom>.
+  install.sh reste reserve a la premiere installation / reinstallation.

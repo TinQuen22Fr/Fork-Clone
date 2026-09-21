@@ -99,6 +99,26 @@ pour le texte intégral officiel de la licence, ou <https://www.gnu.org/licenses
 Les licences des dépendances tierces (Python et npm) sont recensées dans
 [NOTICE](./NOTICE).
 
+
+## Mise à jour (correctifs, nouveautés)
+
+`install.sh` ne sert qu'à la **première installation** (ou à une réinstallation
+complète). Pour tout le reste :
+
+```bash
+cd /var/www/forge
+sudo bash upgrade.sh
+```
+
+`upgrade.sh` : `git pull --ff-only` (met tes modifs locales de côté avec `git stash`),
+ajoute dans `backend/.env` les **nouvelles variables** apparues dans `env.example`
+sans toucher aux valeurs existantes, réinstalle les dépendances **seulement si**
+`requirements.txt` / `package.json` ont changé, rebuild le frontend, synchronise
+l'unité systemd, signale un écart de config Nginx, redémarre le service et vérifie
+que l'API répond `200`.
+
+Options : `--no-pull`, `--backend-only`, `--frontend-only`, `--branch <nom>`.
+
 ## Enregistrer le workspace sur GitHub
 
 Dans la barre de saisie, le bouton **+** ouvre un menu : « Joindre un fichier »,
