@@ -465,3 +465,8 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   exclusivement dans le dossier du projet, et memorise le projet sur la conversation.
 - Isolation : un projet sans `.git` propre n est jamais rattache au depot parent.
 - UI : selecteur « Projet » dans la fenetre GitHub (`github-project-select`).
+
+- Modale GitHub (2026-09-21) : option « + Creer un nouveau depot… » + champ nom +
+  case « Depot prive » (coche par defaut). Backend : `create_if_missing`/`private`
+  sur /api/github/push -> POST /user/repos (ou /orgs/{owner}/repos), `git remote add|set-url
+  origin https://github.com/owner/repo.git` puis push. Nom seul -> prefixe par le login.

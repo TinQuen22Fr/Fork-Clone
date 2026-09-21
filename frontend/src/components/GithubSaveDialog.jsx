@@ -25,6 +25,9 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
   const [branches, setBranches] = useState([]);
   const [branch, setBranch] = useState("");
   const [newBranch, setNewBranch] = useState("");
+  const [creatingRepo, setCreatingRepo] = useState(false);
+  const [newRepoName, setNewRepoName] = useState("");
+  const [privateRepo, setPrivateRepo] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -66,6 +69,16 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
   }, []);
 
   const pickRepo = async (full) => {
+    setResult(null);
+    setError("");
+    if (full === "__new__") {
+      setCreatingRepo(true);
+      setRepo("");
+      setBranches([]);
+      setBranch("main");
+      return;
+    }
+    setCreatingRepo(false);
     setRepo(full);
     setBranch("");
     setBranches([]);
@@ -99,9 +112,10 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
   };
 
   const push = async () => {
-    const target = newBranch.trim() || branch;
-    if (!repo || !target) {
-      setError("Choisis un dépôt et une branche.");
+    const target = newBranch.trim() || branch || "main";
+    const targetRepo = creatingRepo ? newRepoName.trim() : repo;
+    if (!targetRepo || !target) {
+      setError("Choisis un dépôt (ou saisis un nom) et une branche.");
       return;
     }
     setBusy(true);
@@ -109,14 +123,21 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
     setResult(null);
     try {
       const { data } = await api.post("/github/push", {
-        repo,
+        repo: targetRepo,
         branch: target,
         message: message.trim(),
         project,
         conversation_id: conversationId || null,
+        create_if_missing: creatingRepo,
+        private: privateRepo,
       });
       setResult(data);
-      loadStatus();
+      if (creatingRepo) {
+        setCreatingRepo(false);
+        setRepo(data.repo);
+        loadRepos();
+      }
+      loadStatus(project);
     } catch (e) {
       setError(formatApiError(e));
     } finally {
@@ -230,12 +251,13 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   Dépôt
                 </span>
                 <select
-                  value={repo}
+                  value={creatingRepo ? "__new__" : repo}
                   onChange={(e) => pickRepo(e.target.value)}
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
                   data-testid="github-repo-select"
                 >
                   <option value="">— choisir —</option>
+                  <option value="__new__">+ Créer un nouveau dépôt…</option>
                   {repos.map((r) => (
                     <option key={r.full_name} value={r.full_name}>
                       {r.full_name}
@@ -245,6 +267,37 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                 </select>
               </label>
 
+              {creatingRepo && (
+                <div className="space-y-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 p-3">
+                  <label className="block space-y-1">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+                      Nom du nouveau dépôt
+                    </span>
+                    <input
+                      value={newRepoName}
+                      onChange={(e) => setNewRepoName(e.target.value)}
+                      placeholder={project || "mon-projet"}
+                      className="w-full bg-black/50 border-2 border-white/20 focus:border-[#ffd700] outline-none px-3 py-2 font-mono text-xs"
+                      data-testid="github-new-repo-input"
+                    />
+                    <span className="block text-[10px] text-gray-500 font-mono">
+                      Nom seul → créé sur {status?.login || "ton compte"}. Sinon
+                      owner/nom pour une organisation.
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-mono text-gray-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={privateRepo}
+                      onChange={(e) => setPrivateRepo(e.target.checked)}
+                      className="accent-[#ff2a6d] w-4 h-4"
+                      data-testid="github-private-checkbox"
+                    />
+                    Dépôt privé
+                  </label>
+                </div>
+              )}
+
               <label className="block space-y-1">
                 <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
                   Branche
@@ -252,10 +305,11 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                 <select
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
-                  disabled={!branches.length}
+                  disabled={!branches.length || creatingRepo}
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs disabled:opacity-40"
                   data-testid="github-branch-select"
                 >
+                  {creatingRepo && <option value="main">main</option>}
                   {branches.map((b) => (
                     <option key={b} value={b}>
                       {b}
@@ -307,8 +361,9 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
               data-testid="github-result"
             >
               <div className="flex items-center gap-2 text-[#05d9e8]">
-                <CheckCircle2 className="w-4 h-4" /> Poussé sur {result.repo} @{" "}
-                {result.branch}
+                <CheckCircle2 className="w-4 h-4" />
+                {result.repo_created ? "Dépôt créé et poussé" : "Poussé"} sur{" "}
+                {result.repo} @ {result.branch}
               </div>
               <div className="text-gray-400">
                 {result.files_committed} fichier(s) · commit {result.commit || "—"}
@@ -336,7 +391,12 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
           </button>
           <button
             onClick={push}
-            disabled={busy || !status?.configured || !repo || !status?.workspace}
+            disabled={
+              busy ||
+              !status?.configured ||
+              !status?.workspace ||
+              (creatingRepo ? !newRepoName.trim() : !repo)
+            }
             className="btn-primary flex items-center gap-2 text-xs disabled:opacity-40"
             data-testid="github-push-btn"
           >

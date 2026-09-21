@@ -3673,6 +3673,8 @@ class GithubPushRequest(BaseModel):
     message: Optional[str] = None
     project: Optional[str] = None
     conversation_id: Optional[str] = None
+    create_if_missing: bool = False
+    private: bool = True
 
 
 async def _github_token(user_id: str) -> tuple[str, str]:
@@ -3781,6 +3783,45 @@ async def _gh_api(token: str, path: str, params: Optional[dict] = None):
 @api_router.get("/workspace/projects")
 async def workspace_projects(current_user: dict = Depends(get_current_user)):
     return {"root": settings.workspace_root, "projects": list_workspace_projects()}
+
+
+async def _gh_post(token: str, path: str, payload: dict):
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        resp = await http.post(
+            f"{GITHUB_API}{path}",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="Jeton GitHub refuse (401).")
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502, detail=f"GitHub {resp.status_code}: {resp.text[:300]}"
+        )
+    return resp.json()
+
+
+async def _ensure_repo(token: str, repo: str, private: bool) -> dict:
+    """Retourne le depot, en le creant s'il n'existe pas encore."""
+    owner, name = repo.split("/", 1)
+    try:
+        return await _gh_api(token, f"/repos/{owner}/{name}")
+    except HTTPException as e:
+        if e.status_code == 401:
+            raise
+    me = await _gh_api(token, "/user")
+    login = (me or {}).get("login") or ""
+    payload = {"name": name, "private": private, "auto_init": False}
+    if owner.lower() == login.lower():
+        created = await _gh_post(token, "/user/repos", payload)
+    else:
+        # Depot sous une organisation.
+        created = await _gh_post(token, f"/orgs/{owner}/repos", payload)
+    return created
 
 
 @api_router.get("/github/status")
@@ -3904,12 +3945,28 @@ async def github_push(
     token, _ = await _github_token(current_user["id"])
     if not token:
         raise HTTPException(status_code=400, detail="Aucun jeton GitHub.")
-    repo = payload.repo.strip()
+    repo = payload.repo.strip().removesuffix(".git")
     branch = payload.branch.strip() or "main"
-    if repo.count("/") != 1:
-        raise HTTPException(status_code=400, detail="Format attendu : owner/repo.")
+    if "/" not in repo:
+        if not payload.create_if_missing:
+            raise HTTPException(status_code=400, detail="Format attendu : owner/repo.")
+        login = (await _gh_api(token, "/user")).get("login")
+        repo = f"{login}/{repo}"
+    if repo.count("/") != 1 or not re.fullmatch(r"[A-Za-z0-9._/-]+", repo):
+        raise HTTPException(status_code=400, detail="Nom de depot invalide.")
     if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch):
         raise HTTPException(status_code=400, detail="Nom de branche invalide.")
+
+    created_repo = False
+    if payload.create_if_missing:
+        owner, name = repo.split("/", 1)
+        try:
+            await _gh_api(token, f"/repos/{owner}/{name}")
+        except HTTPException as e:
+            if e.status_code == 401:
+                raise
+            await _ensure_repo(token, repo, payload.private)
+            created_repo = True
 
     message = (payload.message or "").strip() or (
         f"Sauvegarde depuis Claude Unchained Forge — {now_iso()[:19]}"
@@ -3941,6 +3998,14 @@ async def github_push(
         add = _git(["add", "-A"], work_dir)
         if add.returncode != 0:
             raise HTTPException(status_code=500, detail=f"git add: {add.stderr[:300]}")
+
+        # Remote 'origin' sans jeton (le push utilise une URL authentifiee jetable).
+        clean_remote = f"https://github.com/{repo}.git"
+        has_origin = _git(["remote", "get-url", "origin"], work_dir, timeout=15)
+        if has_origin.returncode != 0:
+            _git(["remote", "add", "origin", clean_remote], work_dir, timeout=15)
+        elif has_origin.stdout.strip() != clean_remote:
+            _git(["remote", "set-url", "origin", clean_remote], work_dir, timeout=15)
 
         staged = _git(["diff", "--cached", "--name-only"], work_dir)
         files = [f for f in staged.stdout.splitlines() if f.strip()]
@@ -3975,6 +4040,7 @@ async def github_push(
         return {
             "ok": True,
             "repo": repo,
+            "repo_created": created_repo,
             "branch": branch,
             "project": project_name,
             "workspace": work_dir,
