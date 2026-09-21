@@ -408,3 +408,14 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - `LICENSE` ajouté à la racine : texte intégral officiel GNU GPL v3 (récupéré depuis gnu.org), précédé de la notice `Copyright (C) 2026 Quentin Dumont`.
 - `README.md` : section « 📄 Licence » indiquant GPLv3 + lien vers le fichier LICENSE.
 - Dates des entrées de la dernière session corrigées (2026-06 / 21-06 → 2026-09-21).
+
+## Conformité GPL (2026-09-21)
+
+- En-têtes GPL ajoutés : `backend/server.py`, `backend/reset_password.py`,
+  `frontend/src/main.jsx`, `App.jsx`, `pages/Chat.jsx`, `pages/Login.jsx`,
+  `components/ChatMessage.jsx`.
+- `NOTICE` créé à la racine : licences de toutes les dépendances directes
+  backend (PyPI) et frontend (npm) + polices OFL + services externes optionnels.
+- Pied de page de la sidebar : badge « GPLv3 » (lien gnu.org) + lien « Code source »
+  (`data-testid="license-badge"` / `source-code-link`). L`URL du dépôt Git reste
+  à renseigner quand le dépôt public existera.

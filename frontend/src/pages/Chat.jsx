@@ -1,3 +1,13 @@
+/*
+ * Claude Unchained Forge — Copyright (C) 2026 Quentin Dumont
+ *
+ * Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le
+ * modifier selon les termes de la GNU General Public License telle que publiée
+ * par la Free Software Foundation, soit la version 3, soit (à votre choix)
+ * toute version ultérieure. Il est distribué SANS AUCUNE GARANTIE.
+ * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
+ */
+
 import React, { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
@@ -711,6 +721,32 @@ export default function Chat() {
             >
               <LogOut className="w-4 h-4" />
             </button>
+          </div>
+
+          <div
+            className="mt-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.15em] text-gray-600"
+            data-testid="license-footer"
+          >
+            <a
+              href="https://www.gnu.org/licenses/gpl-3.0.html"
+              target="_blank"
+              rel="noreferrer"
+              className="border border-white/15 px-1.5 py-0.5 hover:border-[#ffd700] hover:text-[#ffd700] transition-colors"
+              title="Logiciel libre sous GNU GPL v3"
+              data-testid="license-badge"
+            >
+              GPLv3
+            </a>
+            <a
+              href="https://www.gnu.org/licenses/gpl-3.0.html#howto"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-[#ffd700] transition-colors"
+              title="Code source libre — Copyright (C) 2026 Quentin Dumont"
+              data-testid="source-code-link"
+            >
+              Code source
+            </a>
           </div>
         </div>
       </aside>

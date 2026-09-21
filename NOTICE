@@ -1,0 +1,106 @@
+Claude Unchained Forge
+Copyright (C) 2026 Quentin Dumont
+
+Ce logiciel est distribué sous licence GNU General Public License v3 (GPLv3).
+Voir le fichier LICENSE pour le texte intégral.
+
+Ce produit intègre des logiciels tiers, chacun soumis à sa propre licence.
+La liste ci-dessous recense les dépendances directes du projet. Les licences
+complètes sont disponibles auprès de chaque projet amont (PyPI / npm).
+
+================================================================================
+BACKEND — Python (voir backend/requirements.txt)
+================================================================================
+
+Nom                     Licence         Projet
+-------------------------------------------------------------------------------
+fastapi                 MIT             https://github.com/fastapi/fastapi
+uvicorn                 BSD-3-Clause    https://github.com/encode/uvicorn
+starlette               BSD-3-Clause    https://github.com/encode/starlette
+pydantic                MIT             https://github.com/pydantic/pydantic
+motor                   Apache-2.0      https://github.com/mongodb/motor
+pymongo                 Apache-2.0      https://github.com/mongodb/mongo-python-driver
+python-dotenv           BSD-3-Clause    https://github.com/theskumar/python-dotenv
+python-multipart        Apache-2.0      https://github.com/Kludex/python-multipart
+email-validator         Unlicense       https://github.com/JoshData/python-email-validator
+pyjwt                   MIT             https://github.com/jpadilla/pyjwt
+python-jose             MIT             https://github.com/mpdavis/python-jose
+bcrypt                  Apache-2.0      https://github.com/pyca/bcrypt
+passlib                 BSD-2-Clause    https://foss.heptapod.net/python-libs/passlib
+cryptography            Apache-2.0/BSD  https://github.com/pyca/cryptography
+httpx                   BSD-3-Clause    https://github.com/encode/httpx
+requests                Apache-2.0      https://github.com/psf/requests
+requests-oauthlib       ISC             https://github.com/requests/requests-oauthlib
+anthropic               MIT             https://github.com/anthropics/anthropic-sdk-python
+google-genai            Apache-2.0      https://github.com/googleapis/python-genai
+pypdf                   BSD-3-Clause    https://github.com/py-pdf/pypdf
+ddgs                    MIT             https://github.com/deedy5/ddgs
+playwright              Apache-2.0      https://github.com/microsoft/playwright-python
+boto3                   Apache-2.0      https://github.com/boto/boto3
+pandas                  BSD-3-Clause    https://github.com/pandas-dev/pandas
+numpy                   BSD-3-Clause    https://github.com/numpy/numpy
+typer                   MIT             https://github.com/fastapi/typer
+jq (bindings)           BSD-2-Clause    https://github.com/mwilliamson/jq.py
+tzdata                  Apache-2.0      https://github.com/python/tzdata
+
+Outils de développement (non embarqués en production) :
+pytest (MIT), black (MIT), isort (MIT), flake8 (MIT), mypy (MIT).
+
+================================================================================
+FRONTEND — JavaScript / npm (voir frontend/package.json)
+================================================================================
+
+Nom                          Licence     Projet
+-------------------------------------------------------------------------------
+react, react-dom             MIT         https://github.com/facebook/react
+react-router-dom             MIT         https://github.com/remix-run/react-router
+vite                         MIT         https://github.com/vitejs/vite
+@vitejs/plugin-react         MIT         https://github.com/vitejs/vite-plugin-react
+tailwindcss                  MIT         https://github.com/tailwindlabs/tailwindcss
+tailwindcss-animate          MIT         https://github.com/jamiebuilds/tailwindcss-animate
+postcss, autoprefixer        MIT         https://github.com/postcss
+@radix-ui/react-*            MIT         https://github.com/radix-ui/primitives
+lucide-react                 ISC         https://github.com/lucide-icons/lucide
+framer-motion                MIT         https://github.com/framer/motion
+axios                        MIT         https://github.com/axios/axios
+@tanstack/react-query        MIT         https://github.com/TanStack/query
+swr                          MIT         https://github.com/vercel/swr
+react-hook-form              MIT         https://github.com/react-hook-form/react-hook-form
+@hookform/resolvers          MIT         https://github.com/react-hook-form/resolvers
+zod                          MIT         https://github.com/colinhacks/zod
+react-markdown               MIT         https://github.com/remarkjs/react-markdown
+sonner                       MIT         https://github.com/emilkowalski/sonner
+cmdk                         MIT         https://github.com/pacocoursey/cmdk
+vaul                         MIT         https://github.com/emilkowalski/vaul
+recharts                     MIT         https://github.com/recharts/recharts
+embla-carousel-react         MIT         https://github.com/davidjerleke/embla-carousel
+react-day-picker             MIT         https://github.com/gpbl/react-day-picker
+react-resizable-panels       MIT         https://github.com/bvaughn/react-resizable-panels
+input-otp                    MIT         https://github.com/guilhermerodz/input-otp
+next-themes                  MIT         https://github.com/pacocoursey/next-themes
+class-variance-authority     Apache-2.0  https://github.com/joe-bell/cva
+clsx                         MIT         https://github.com/lukeed/clsx
+tailwind-merge               MIT         https://github.com/dcastil/tailwind-merge
+lodash                       MIT         https://github.com/lodash/lodash
+dayjs                        MIT         https://github.com/iamkun/dayjs
+date-fns                     MIT         https://github.com/date-fns/date-fns
+eslint (+ plugins)           MIT         https://github.com/eslint/eslint
+
+Polices de caractères (via Fontsource) :
+JetBrains Mono               OFL-1.1     https://github.com/JetBrains/JetBrainsMono
+Outfit                       OFL-1.1     https://github.com/Outfitio/Outfit-Fonts
+Unbounded                    OFL-1.1     https://github.com/etceteratype/Unbounded
+
+Les composants d'interface dérivés de shadcn/ui (frontend/src/components/ui/)
+sont publiés sous licence MIT — https://github.com/shadcn-ui/ui
+
+================================================================================
+SERVICES EXTERNES (optionnels, activés par clé API)
+================================================================================
+
+Anthropic Claude, Google Gemini, OpenCode Go, Ollama / Ollama Cloud, Groq,
+Cerebras, SambaNova, NVIDIA NIM, OpenRouter, DuckDuckGo, Wikipedia API.
+
+Ces services ne sont pas distribués avec ce logiciel. Leur utilisation est
+soumise aux conditions d'utilisation de chaque fournisseur. Aucune clé API
+n'est fournie avec ce projet.
