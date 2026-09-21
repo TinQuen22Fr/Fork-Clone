@@ -118,6 +118,42 @@ class Settings:
         self.max_attachments: int = int(_env("MAX_ATTACHMENTS", "10"))
         self.history_turns: int = int(_env("HISTORY_TURNS", "20"))
 
+        # --- Providers cloud gratuits, compatibles OpenAI -------------------
+        # Aucune cle ni aucun modele en dur : tout vient du .env et de la
+        # decouverte dynamique via GET {base_url}/models.
+        self.free_providers: dict[str, dict] = {}
+        for pid, label, default_base in (
+            ("groq", "Groq", "https://api.groq.com/openai/v1"),
+            ("cerebras", "Cerebras", "https://api.cerebras.ai/v1"),
+            ("sambanova", "SambaNova", "https://api.sambanova.ai/v1"),
+            ("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
+            ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1"),
+        ):
+            up = pid.upper()
+            self.free_providers[pid] = {
+                "label": label,
+                "base_url": _env(f"{up}_BASE_URL", default_base).rstrip("/"),
+                "api_key": _env(f"{up}_API_KEY"),
+                # Vide = premier modele decouvert dynamiquement.
+                "model": _env(f"{up}_MODEL"),
+                "timeout": float(_env(f"{up}_TIMEOUT", "180")),
+            }
+        # OpenRouter recommande de s'identifier (facultatif).
+        self.openrouter_referer: str = _env("OPENROUTER_HTTP_REFERER")
+        self.openrouter_title: str = _env("OPENROUTER_TITLE", "Claude Unchained Forge")
+        # OpenRouter : ne garder que les modeles gratuits (id contenant ":free").
+        self.openrouter_free_only: bool = _env_bool("OPENROUTER_FREE_ONLY", True)
+
+        # --- Resume automatique de l'historique long ------------------------
+        self.summary_enabled: bool = _env_bool("HISTORY_SUMMARY_ENABLED", True)
+        # Seuil en tokens estimes (≈ 4 caracteres par token).
+        self.summary_threshold_tokens: int = int(
+            _env("HISTORY_SUMMARY_THRESHOLD_TOKENS", "6000")
+        )
+        # Nombre de messages recents toujours transmis mot pour mot.
+        self.summary_keep_recent: int = int(_env("HISTORY_SUMMARY_KEEP_RECENT", "6"))
+        self.summary_max_chars: int = int(_env("HISTORY_SUMMARY_MAX_CHARS", "3000"))
+
         # --- Claude (abonnement Pro/Max via jeton OAuth Claude Code) ---
         # AUCUNE API payante au token : on utilise le jeton d'abonnement généré
         # par `claude setup-token` (commence par sk-ant-oat...). La conso est
@@ -187,7 +223,9 @@ class Settings:
         self.provider_priority: list[str] = [
             p.strip()
             for p in _env(
-                "PROVIDER_PRIORITY", "claude,gemini,ollama_cloud,opencode,ollama"
+                "PROVIDER_PRIORITY",
+                "claude,opencode,groq,cerebras,sambanova,nvidia,openrouter,"
+                "gemini,ollama_cloud,ollama",
             ).split(",")
             if p.strip()
         ]
@@ -717,7 +755,16 @@ async def _generate_claude(
 # =========================================================================
 # Routeur de providers + cascade de bascule automatique
 # =========================================================================
-PROVIDER_IDS = ("claude", "gemini", "ollama_cloud", "opencode", "ollama")
+# Catalogues de modeles decouverts dynamiquement : {pid: (timestamp, [ids])}
+_CATALOG_CACHE: dict[str, tuple[float, list[str]]] = {}
+_CATALOG_TTL = float(_env("MODEL_CATALOG_TTL", "3600"))
+
+FREE_PROVIDER_IDS = ("groq", "cerebras", "sambanova", "nvidia", "openrouter")
+
+PROVIDER_IDS = (
+    "claude", "opencode", "gemini", "ollama_cloud",
+    *FREE_PROVIDER_IDS, "ollama",
+)
 
 PROVIDER_LABELS = {
     "claude": "Claude",
@@ -725,10 +772,28 @@ PROVIDER_LABELS = {
     "ollama_cloud": "Ollama Cloud",
     "opencode": "OpenCode Zen",
     "ollama": "Ollama (Local)",
+    "groq": "Groq",
+    "cerebras": "Cerebras",
+    "sambanova": "SambaNova",
+    "nvidia": "NVIDIA NIM",
+    "openrouter": "OpenRouter",
 }
 
 
 def _provider_model(pid: str) -> str:
+    """
+    Modele configure pour un provider. Pour les providers gratuits, une valeur
+    vide signifie "premier modele decouvert dynamiquement" (resolu plus tard
+    par `_resolve_free_model`, qui a acces au catalogue).
+    """
+    if pid in FREE_PROVIDER_IDS:
+        conf = settings.free_providers[pid]
+        if conf["model"]:
+            return conf["model"]
+        cached = _CATALOG_CACHE.get(pid)
+        if cached and cached[1]:
+            return cached[1][0]
+        return "(auto-découvert)"
     return {
         "claude": settings.claude_model,
         "gemini": settings.gemini_model,
@@ -740,6 +805,9 @@ def _provider_model(pid: str) -> str:
 
 def _provider_available(pid: str) -> bool:
     """Detection dynamique : un provider sans cle configuree est ignore."""
+    if pid in FREE_PROVIDER_IDS:
+        conf = settings.free_providers[pid]
+        return bool(conf["api_key"] and conf["base_url"])
     if pid == "claude":
         return bool(settings.claude_token)
     if pid == "gemini":
@@ -751,6 +819,276 @@ def _provider_available(pid: str) -> bool:
     if pid == "ollama":
         return bool(settings.ollama_url)
     return False
+
+
+def _free_provider_headers(pid: str) -> dict:
+    conf = settings.free_providers[pid]
+    headers = {
+        "Authorization": f"Bearer {conf['api_key']}",
+        "Content-Type": "application/json",
+    }
+    if pid == "openrouter":
+        if settings.openrouter_referer:
+            headers["HTTP-Referer"] = settings.openrouter_referer
+        headers["X-Title"] = settings.openrouter_title
+    return headers
+
+
+async def _resolve_free_model(pid: str, model_override: Optional[str]) -> str:
+    """
+    Modele a utiliser : override explicite > variable d'env > premier modele
+    decouvert dynamiquement. Aucun nom de modele n'est code en dur.
+    """
+    if model_override:
+        return model_override
+    conf = settings.free_providers[pid]
+    if conf["model"]:
+        return conf["model"]
+    catalog = await _fetch_catalog(pid)
+    if not catalog:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Aucun modele decouvert chez {PROVIDER_LABELS[pid]} : cle "
+                "invalide, quota epuise ou endpoint /models injoignable."
+            ),
+        )
+    return catalog[0]
+
+
+def _openai_messages(
+    history: list[dict], text: str, images: Optional[list[dict]]
+) -> list[dict]:
+    """Corps de messages au format OpenAI, avec images eventuelles."""
+    messages = _plain_messages(history, text)
+    if images:
+        messages[-1]["content"] = [
+            {"type": "text", "text": text or "(image)"},
+            *[
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{i.get('mime') or 'image/png'};base64,{i['data']}"
+                    },
+                }
+                for i in images
+            ],
+        ]
+    if settings.claude_system_prompt:
+        messages = [
+            {"role": "system", "content": settings.claude_system_prompt}
+        ] + messages
+    return messages
+
+
+async def _generate_openai_compat(
+    pid: str,
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]] = None,
+    model_override: Optional[str] = None,
+) -> tuple[str, list[dict], str]:
+    """Adaptateur unifie pour tout endpoint compatible OpenAI (non-stream)."""
+    if not _provider_available(pid):
+        raise HTTPException(
+            status_code=503,
+            detail=f"{pid.upper()}_API_KEY absent dans backend/.env.",
+        )
+    conf = settings.free_providers[pid]
+    model_name = await _resolve_free_model(pid, model_override)
+    payload = {
+        "model": model_name,
+        "messages": _openai_messages(history, text, images),
+        "max_tokens": settings.claude_max_tokens,
+    }
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(conf["timeout"], connect=10.0)
+    ) as http:
+        resp = await http.post(
+            f"{conf['base_url']}/chat/completions",
+            json=payload,
+            headers=_free_provider_headers(pid),
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur {PROVIDER_LABELS[pid]}: {_http_error_detail(resp)}",
+        )
+    data = resp.json()
+    if data.get("error"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur {PROVIDER_LABELS[pid]}: {_http_error_detail(resp)}",
+        )
+    choices = data.get("choices") or []
+    answer = ""
+    if choices:
+        answer = ((choices[0].get("message") or {}).get("content") or "").strip()
+    return (answer or "(reponse vide)", [], model_name)
+
+
+async def _stream_openai_compat(
+    pid: str,
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    model_override: Optional[str],
+    state: dict,
+) -> AsyncIterator[dict]:
+    """Adaptateur unifie compatible OpenAI, en SSE (`stream: true`)."""
+    if not _provider_available(pid):
+        raise HTTPException(
+            status_code=503,
+            detail=f"{pid.upper()}_API_KEY absent dans backend/.env.",
+        )
+    conf = settings.free_providers[pid]
+    model_name = await _resolve_free_model(pid, model_override)
+    state["model"] = model_name
+    payload = {
+        "model": model_name,
+        "messages": _openai_messages(history, text, images),
+        "max_tokens": settings.claude_max_tokens,
+        "stream": True,
+    }
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(conf["timeout"], connect=10.0)
+    ) as http:
+        async with http.stream(
+            "POST",
+            f"{conf['base_url']}/chat/completions",
+            json=payload,
+            headers=_free_provider_headers(pid),
+        ) as resp:
+            if resp.status_code >= 400:
+                body = (await resp.aread()).decode("utf-8", "replace")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Erreur {PROVIDER_LABELS[pid]}: {body[:400]}",
+                )
+            async for ev in _sse_events(resp):
+                if ev.get("error"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"Erreur {PROVIDER_LABELS[pid]}: "
+                            f"{str(ev['error'])[:400]}"
+                        ),
+                    )
+                for ch in ev.get("choices") or []:
+                    piece = (ch.get("delta") or {}).get("content") or ""
+                    if piece:
+                        yield {"delta": piece}
+
+
+def _estimate_tokens(messages: list[dict]) -> int:
+    """Estimation grossiere mais suffisante : ~4 caracteres par token."""
+    chars = sum(len(m.get("content") or "") for m in messages)
+    return chars // 4
+
+
+SUMMARY_INSTRUCTION = (
+    "Tu resumes un historique de conversation pour liberer de la fenetre de "
+    "contexte. Produis un compte rendu dense, en francais, qui PRESERVE "
+    "absolument : les instructions et preferences donnees par l'utilisateur, "
+    "les decisions prises, les faits techniques etablis (noms de fichiers, "
+    "chemins, versions, identifiants, valeurs), et les problemes encore "
+    "ouverts. Supprime les politesses et les redites. Pas d'introduction ni de "
+    "conclusion, uniquement le contenu utile sous forme de puces courtes."
+)
+
+
+async def _summarize_messages(older: list[dict], previous: str = "") -> str:
+    """Condense des messages anciens en un compte rendu factuel."""
+    transcript = "\n\n".join(
+        f"{'UTILISATEUR' if m.get('role') == 'user' else 'ASSISTANT'}: "
+        f"{(m.get('content') or '')[:4000]}"
+        for m in older
+    )
+    prompt = SUMMARY_INSTRUCTION
+    if previous:
+        prompt += (
+            "\n\nVoici le resume deja etabli des echanges encore plus anciens, "
+            "a fusionner avec les nouveaux echanges :\n" + previous
+        )
+    prompt += "\n\nEchanges a resumer :\n" + transcript
+    # `history=[]` : pas de recursion possible sur la condensation.
+    answer, _, meta = await generate_ai_response(
+        history=[], text=prompt, provider="auto"
+    )
+    logger.info(
+        "Historique condense par %s (%s) : %d messages -> %d caracteres",
+        meta["provider"], meta["model"], len(older), len(answer),
+    )
+    return answer[: settings.summary_max_chars]
+
+
+async def prepare_history(
+    database, conversation_id: str, history: list[dict]
+) -> list[dict]:
+    """
+    Reduit un historique trop long : les messages anciens sont remplaces par un
+    resume persiste dans la conversation, les plus recents restent intacts.
+
+    Le resume est incremental : on ne re-resume que ce qui a ete ajoute depuis
+    le dernier passage, et il est stocke dans le document conversation.
+    """
+    if not settings.summary_enabled or not history:
+        return history[-settings.history_turns :]
+
+    conv = await database.conversations.find_one({"id": conversation_id})
+    summary = (conv or {}).get("summary") or ""
+    summarized_ids = set((conv or {}).get("summarized_ids") or [])
+
+    # Messages deja couverts par le resume : on les retire du contexte brut.
+    pending = [m for m in history if m.get("id") not in summarized_ids]
+
+    if _estimate_tokens(pending) <= settings.summary_threshold_tokens:
+        recent = pending[-settings.history_turns :]
+        return _with_summary(summary, recent)
+
+    keep = max(2, settings.summary_keep_recent)
+    older, recent = pending[:-keep], pending[-keep:]
+    if not older:
+        return _with_summary(summary, recent)
+
+    try:
+        summary = await _summarize_messages(older, summary)
+    except Exception as e:  # noqa: BLE001
+        # Un echec de condensation ne doit jamais bloquer la conversation :
+        # on retombe sur la troncature simple.
+        logger.warning("Condensation impossible, troncature simple : %s", str(e)[:200])
+        return _with_summary(summary, pending[-settings.history_turns :])
+
+    summarized_ids.update(m["id"] for m in older if m.get("id"))
+    await database.conversations.update_one(
+        {"id": conversation_id},
+        {"$set": {
+            "summary": summary,
+            "summarized_ids": list(summarized_ids),
+            "summarized_at": now_iso(),
+        }},
+    )
+    return _with_summary(summary, recent)
+
+
+def _with_summary(summary: str, recent: list[dict]) -> list[dict]:
+    """Prefixe l'historique recent par le resume, en respectant l'alternance."""
+    if not summary:
+        return recent
+    return [
+        {
+            "role": "user",
+            "content": (
+                "[Resume des echanges precedents de cette conversation]\n"
+                + summary
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "Compris, je garde ce contexte en memoire.",
+        },
+        *recent,
+    ]
 
 
 def _classify_error(msg: str) -> str:
@@ -776,12 +1114,14 @@ def _classify_error(msg: str) -> str:
     if any(k in low for k in ("connect", "dns", "network", "injoignable",
                               "unreachable")):
         return "network"
-    if any(k in low for k in ("not found", "introuvable", "model", "404",
-                              "unsupported")):
-        return "model"
+    # L'indisponibilite est testee avant le bucket "modele" : un message du
+    # type "model unavailable" releve d'une panne, pas d'un mauvais nom.
     if any(k in low for k in ("503", "unavailable", "overloaded", "high demand",
                               "500", "502", "internal")):
         return "unavailable"
+    if any(k in low for k in ("not found", "introuvable", "model", "404",
+                              "unsupported")):
+        return "model"
     return "unknown"
 
 
@@ -831,6 +1171,10 @@ async def _dispatch_provider(
     if pid == "ollama":
         answer, steps = await _generate_ollama(history, text)
         return answer, steps, settings.ollama_model
+    if pid in FREE_PROVIDER_IDS:
+        return await _generate_openai_compat(
+            pid, history, text, images, model_override
+        )
     raise HTTPException(status_code=400, detail=f"provider inconnu: {pid}")
 
 
@@ -2068,6 +2412,11 @@ async def _stream_provider(
     elif pid == "ollama":
         async for i in _stream_ollama(history, text, state):
             yield i
+    elif pid in FREE_PROVIDER_IDS:
+        async for i in _stream_openai_compat(
+            pid, history, text, images, model_override, state
+        ):
+            yield i
     else:
         raise HTTPException(status_code=400, detail=f"provider inconnu: {pid}")
 
@@ -2376,7 +2725,7 @@ async def chat_send(
         .sort("created_at", 1)
         .to_list(2000)
     )
-    history = history[-settings.history_turns :]
+    history = await prepare_history(database, conversation_id, history)
 
     # --- Generation ---
     try:
@@ -2492,7 +2841,7 @@ async def chat_stream(
         .sort("created_at", 1)
         .to_list(2000)
     )
-    history = history[-settings.history_turns :]
+    history = await prepare_history(database, conversation_id, history)
 
     public_user_msg = {
         k: v for k, v in user_msg_doc.items()
@@ -2707,7 +3056,9 @@ async def chat_regenerate(
         )
 
     prompt_msg = prior[-1]
-    history = prior[:-1][-settings.history_turns :]
+    history = await prepare_history(
+        database, payload.conversation_id, prior[:-1]
+    )
     raw_text = prompt_msg.get("content", "") or ""
     # Les libelles automatiques "(image)" / "(fichier : x)" ne sont pas du prompt.
     is_placeholder = raw_text.startswith("(") and raw_text.endswith(")") and (
@@ -2796,10 +3147,6 @@ async def set_feedback(
 # =========================================================================
 # Sante
 # =========================================================================
-_CATALOG_CACHE: dict[str, tuple[float, list[str]]] = {}
-_CATALOG_TTL = 600.0
-
-
 async def _fetch_catalog(pid: str) -> list[str]:
     """Liste des modeles disponibles chez un provider distant (cache 10 min)."""
     cached = _CATALOG_CACHE.get(pid)
@@ -2819,6 +3166,19 @@ async def _fetch_catalog(pid: str) -> list[str]:
                 )
                 resp.raise_for_status()
                 ids = [m["id"] for m in resp.json().get("data", []) if m.get("id")]
+            elif pid in FREE_PROVIDER_IDS:
+                conf = settings.free_providers[pid]
+                resp = await http.get(
+                    f"{conf['base_url']}/models",
+                    headers=_free_provider_headers(pid),
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                raw = body.get("data") if isinstance(body, dict) else body
+                ids = [m["id"] for m in (raw or []) if m.get("id")]
+                if pid == "openrouter" and settings.openrouter_free_only:
+                    # Ne garder que les modeles gratuits.
+                    ids = [i for i in ids if ":free" in i]
             elif pid == "ollama_cloud":
                 resp = await http.get(
                     f"{settings.ollama_cloud_url}/tags",
@@ -2843,7 +3203,7 @@ async def _fetch_catalog(pid: str) -> list[str]:
 async def list_models(current_user: dict = Depends(get_current_user)):
     """Providers detectes dynamiquement + modele reel et catalogue de chacun."""
     catalogs: dict[str, list[str]] = {}
-    for pid in ("opencode", "ollama_cloud"):
+    for pid in ("opencode", "ollama_cloud", *FREE_PROVIDER_IDS):
         if _provider_available(pid):
             catalogs[pid] = await _fetch_catalog(pid)
 

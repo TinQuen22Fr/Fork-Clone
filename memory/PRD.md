@@ -316,6 +316,52 @@ Fichiers: `backend/server.py`, `frontend/src/pages/Chat.jsx`,
 - Navigateur : 2 favoris épinglés (gemini-3.6-flash, glm-5.3-flash), clic → provider appliqué ;
   dépôt de 3 fichiers → 3 vignettes ; envoi OK.
 
+## Implémenté (2026-06) — 5 providers gratuits + résumé auto de l'historique
+Fichiers: `backend/server.py`, `backend/env.example`, `backend/.env`,
+`backend/tests/mock_openai_provider.py` (nouveau), `evolutions-futures-possibles.md`.
+
+### Chantier 1 — cascade multi-providers gratuits
+- `Settings.free_providers` : dict construit en boucle pour groq/cerebras/sambanova/
+  nvidia/openrouter avec `<UP>_API_KEY`, `<UP>_BASE_URL`, `<UP>_MODEL`, `<UP>_TIMEOUT`.
+  **Zéro clé et zéro modèle en dur.** `PROVIDER_IDS` passe à 10 providers.
+- Adaptateur unifié compatible OpenAI : `_generate_openai_compat` +
+  `_stream_openai_compat` (POST `/chat/completions`, `stream: true`, parseur SSE
+  partagé `_sse_events`), branché dans `_dispatch_provider` et `_stream_provider`.
+  `_openai_messages()` gère system prompt + images multiples.
+- Découverte dynamique : `_fetch_catalog` étendu à `GET {base}/models`
+  (cache `MODEL_CATALOG_TTL`, 1 h par défaut). OpenRouter filtré sur `:free`
+  (`OPENROUTER_FREE_ONLY`). En-têtes `HTTP-Referer`/`X-Title` pour OpenRouter.
+- `_resolve_free_model()` : override > env > **premier modèle découvert**. Si le
+  catalogue est vide → 503 explicite et la cascade passe au suivant.
+- `PROVIDER_PRIORITY` par défaut : claude, opencode, puis les 5 gratuits, puis
+  gemini, ollama_cloud, et **ollama local toujours forcé en dernier**.
+- `_classify_error` : indisponibilité (503/502/500/unavailable) testée AVANT le
+  bucket "model", sinon « model unavailable » était mal catégorisé.
+- `/api/models` renvoie les catalogues des 5 nouveaux providers ; l'UI existante les
+  affiche automatiquement (badge « non configuré » si clé absente).
+
+### Chantier 2 — résumé automatique de l'historique long
+- `prepare_history()` appelée par `/chat/send`, `/chat/stream` et `/chat/regenerate`
+  (remplace la troncature `history[-history_turns:]`).
+- Déclenchement au-delà de `HISTORY_SUMMARY_THRESHOLD_TOKENS` (estimation 4 car/token).
+  `HISTORY_SUMMARY_KEEP_RECENT` derniers messages intacts, les plus anciens condensés
+  via `_summarize_messages()` (appel `provider=auto`, `history=[]` → pas de récursion).
+- Résumé **incrémental et persisté** : `conversations.summary` + `summarized_ids`.
+  Injecté en tête sous forme d'un couple user/assistant pour respecter l'alternance
+  exigée par Claude (`_with_summary`).
+- Échec de condensation → log + troncature simple, jamais de blocage.
+
+### Tests (mock local, aucune vraie clé consommée)
+- `backend/tests/mock_openai_provider.py` : faux provider OpenAI (GET /v1/models,
+  POST /v1/chat/completions stream et non-stream, modèles pilotant des pannes
+  `mock-429` / `mock-503`).
+- Validé : découverte dynamique (3 modèles), providers sans clé ignorés
+  (`available: false`, pas d'erreur), streaming SSE, modèle forcé, cascade sur
+  **429 → quota → claude** et **503 → unavailable → claude** avec `routing` correct.
+- Résumé : 26 messages / 22 444 caractères condensés en 680 caractères par Claude,
+  le fait technique clé (« Atom C2338 sans AVX2 ») préservé, résumé persisté en base.
+- UI : 11 providers listés, badge « bascule auto depuis groq » affiché sur la réponse.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).

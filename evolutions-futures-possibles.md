@@ -29,6 +29,33 @@ de fichiers, agent avec outils), pas à les comparer ni à les mettre en concurr
 | Suivi du quota Go | Jauges 5 h / semaine / mois dans l'en-tête |
 | PWA | Installable sur l'écran d'accueil, plein écran, icône « unchained » |
 | Responsive | Téléphone, tablette et ordinateur |
+| **Providers cloud gratuits** | Groq, Cerebras, SambaNova, NVIDIA NIM, OpenRouter via un adaptateur unifié compatible OpenAI (streaming inclus) |
+| **Découverte dynamique des modèles** | `GET /v1/models` interrogé par provider, cache 1 h, filtre `:free` pour OpenRouter, zéro modèle codé en dur |
+| **Résumé automatique de l'historique** | Condensation incrémentale des vieux messages au-delà d'un seuil de tokens, résumé persisté par conversation |
+
+### Détail — cascade multi-providers gratuits (livré le 21/06/2026)
+- Priorité 1 : Claude Pro (OAuth) puis OpenCode Go.
+- Priorité 2 : providers gratuits actifs, dans l'ordre de `PROVIDER_PRIORITY`,
+  avec les modèles découverts dynamiquement.
+- Priorité 3 : Gemini et Ollama Cloud, puis **repli ultime sur Ollama local**
+  (toujours placé en dernier, quelle que soit la configuration).
+- Bascule transparente sur 429 (quota), 503 (indisponible), timeout, erreur réseau,
+  crédits épuisés ou restriction régionale. Chaque bascule est tracée dans les logs
+  et dans le champ `routing` du message, avec un badge visible dans l'interface.
+- Une clé absente ou vide = provider simplement ignoré, jamais d'erreur bloquante.
+
+### Détail — résumé automatique de l'historique (livré le 21/06/2026)
+- Déclenché quand l'historique brut dépasse `HISTORY_SUMMARY_THRESHOLD_TOKENS`
+  (estimation ≈ 4 caractères par token).
+- Les `HISTORY_SUMMARY_KEEP_RECENT` derniers messages partent toujours mot pour mot ;
+  les plus anciens sont condensés en puces factuelles.
+- La consigne de condensation préserve explicitement : instructions et préférences
+  de l'utilisateur, décisions prises, faits techniques (chemins, versions, valeurs)
+  et problèmes encore ouverts.
+- Le résumé est **incrémental et persisté** dans la conversation (`summary`,
+  `summarized_ids`) : on ne recondense que ce qui a été ajouté depuis.
+- Un échec de condensation retombe silencieusement sur la troncature simple :
+  une conversation ne peut jamais être bloquée par le résumé.
 
 ---
 
@@ -64,14 +91,12 @@ réellement (beaucoup sont texte seul) et à afficher un avertissement clair sin
 Pouvoir définir une consigne système différente selon la session (ex. « expert
 sysadmin Debian » vs « relecteur de code Python »), au lieu d'un seul prompt global.
 
-### Résumé automatique de l'historique long
-Quand une conversation dépasse la fenêtre de contexte, résumer les vieux messages
-plutôt que de les tronquer sèchement.
-
-### Nouveaux providers gratuits
-Surveiller les passerelles type FreeLLM pour ajouter des modèles sans coût
-supplémentaire. L'architecture du routeur les accepte sans refonte : un provider
-= une fonction de génération + une fonction de streaming.
+### Encore plus de providers gratuits
+Cinq passerelles sont intégrées (Groq, Cerebras, SambaNova, NVIDIA NIM, OpenRouter).
+Pour en ajouter une autre compatible OpenAI, il suffit désormais d'une ligne dans
+`Settings.free_providers` : l'adaptateur, le streaming, la découverte des modèles et
+la cascade sont déjà factorisés. Référence à suivre :
+<https://github.com/open-free-llm-api/awesome-freellm-apis>.
 
 ---
 
