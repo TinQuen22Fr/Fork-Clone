@@ -19,6 +19,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import io
+import json
 import time
 import asyncio
 import base64
@@ -28,7 +29,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, AsyncIterator
 
 import bcrypt
 import jwt
@@ -45,6 +46,7 @@ from fastapi import (
     Form,
 )
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
@@ -113,6 +115,7 @@ class Settings:
         self.max_upload_mb: int = int(_env("MAX_UPLOAD_MB", "16"))
         # Nb max de caracteres extraits d'un fichier texte/PDF injecte au prompt.
         self.max_file_chars: int = int(_env("MAX_FILE_CHARS", "40000"))
+        self.max_attachments: int = int(_env("MAX_ATTACHMENTS", "10"))
         self.history_turns: int = int(_env("HISTORY_TURNS", "20"))
 
         # --- Claude (abonnement Pro/Max via jeton OAuth Claude Code) ---
@@ -534,7 +537,7 @@ def _run_tool(name: str, tool_input: dict) -> str:
 
 
 def _build_messages(history: list[dict], text: str,
-                    image_b64: Optional[str], image_mime: Optional[str]) -> list[dict]:
+                    images: Optional[list[dict]]) -> list[dict]:
     """Construit le tableau `messages` au format Anthropic à partir de l'historique."""
     messages: list[dict] = []
     for h in history:
@@ -546,13 +549,13 @@ def _build_messages(history: list[dict], text: str,
 
     # Message courant (texte + image éventuelle)
     current: list[dict] = []
-    if image_b64:
+    for img in images or []:
         current.append({
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": image_mime or "image/png",
-                "data": image_b64,
+                "media_type": img.get("mime") or "image/png",
+                "data": img["data"],
             },
         })
     current.append({"type": "text", "text": text or "(image)"})
@@ -626,8 +629,7 @@ async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[di
 async def _generate_claude(
     history: list[dict],
     text: str,
-    image_b64: Optional[str],
-    image_mime: Optional[str],
+    images: Optional[list[dict]],
 ) -> tuple[str, list[dict]]:
     """
     Appelle Claude via le jeton OAuth d'ABONNEMENT (Claude Pro/Max), avec
@@ -650,7 +652,7 @@ async def _generate_claude(
             ),
         )
 
-    messages = _build_messages(history, text, image_b64, image_mime)
+    messages = _build_messages(history, text, images)
     tool_steps: list[dict] = []
 
     for _ in range(MAX_TOOL_ITERS):
@@ -808,24 +810,23 @@ async def _dispatch_provider(
     pid: str,
     history: list[dict],
     text: str,
-    image_b64: Optional[str],
-    image_mime: Optional[str],
+    images: Optional[list[dict]],
     session_id: Optional[str] = None,
     model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """Retourne (texte, tool_steps, modele_reellement_utilise)."""
     if pid == "claude":
-        answer, steps = await _generate_claude(history, text, image_b64, image_mime)
+        answer, steps = await _generate_claude(history, text, images)
         return answer, steps, settings.claude_model
     if pid == "gemini":
-        return await _generate_gemini(history, text, image_b64, image_mime)
+        return await _generate_gemini(history, text, images)
     if pid == "ollama_cloud":
         return await _generate_ollama_cloud(
-            history, text, image_b64, image_mime, model_override
+            history, text, images, model_override
         )
     if pid == "opencode":
         return await _generate_opencode(
-            history, text, image_b64, image_mime, session_id, model_override
+            history, text, images, session_id, model_override
         )
     if pid == "ollama":
         answer, steps = await _generate_ollama(history, text)
@@ -836,8 +837,7 @@ async def _dispatch_provider(
 async def generate_ai_response(
     history: list[dict],
     text: str,
-    image_b64: Optional[str] = None,
-    image_mime: Optional[str] = None,
+    images: Optional[list[dict]] = None,
     provider: str = "claude",
     session_id: Optional[str] = None,
     model: Optional[str] = None,
@@ -869,7 +869,7 @@ async def generate_ai_response(
 
         try:
             answer, steps, used_model = await _dispatch_provider(
-                pid, history, text, image_b64, image_mime, session_id,
+                pid, history, text, images, session_id,
                 model if pid == requested else None,
             )
         except HTTPException as e:
@@ -923,7 +923,7 @@ async def generate_ai_response(
     )
 
 
-def _gemini_contents(history, text, image_b64, image_mime):
+def _gemini_contents(history, text, images):
     from google.genai import types
     contents = []
     for h in history:
@@ -932,11 +932,11 @@ def _gemini_contents(history, text, image_b64, image_mime):
         if c:
             contents.append(types.Content(role=role, parts=[types.Part(text=c)]))
     parts = []
-    if image_b64:
+    for img in images or []:
         parts.append(types.Part(
             inline_data=types.Blob(
-                mime_type=image_mime or "image/png",
-                data=base64.b64decode(image_b64),
+                mime_type=img.get("mime") or "image/png",
+                data=base64.b64decode(img["data"]),
             )
         ))
     parts.append(types.Part(text=text or "(image)"))
@@ -947,8 +947,7 @@ def _gemini_contents(history, text, image_b64, image_mime):
 async def _generate_gemini(
     history: list[dict],
     text: str,
-    image_b64: Optional[str],
-    image_mime: Optional[str],
+    images: Optional[list[dict]],
 ) -> tuple[str, list[dict], str]:
     """Generation via Google Gemini (cle API GEMINI_API_KEY, SDK google-genai)."""
     if not settings.gemini_api_key:
@@ -963,7 +962,7 @@ async def _generate_gemini(
     from google.genai import types as gtypes
 
     client = genai.Client(api_key=settings.gemini_api_key)
-    contents = _gemini_contents(history, text, image_b64, image_mime)
+    contents = _gemini_contents(history, text, images)
     config = gtypes.GenerateContentConfig(
         system_instruction=settings.claude_system_prompt,
         max_output_tokens=settings.claude_max_tokens,
@@ -1134,18 +1133,105 @@ def parse_attachment(filename: str, content_type: str, data: bytes) -> dict:
 
 def build_attachment_prompt(text: str, att: dict) -> str:
     """Injecte le contenu d'un fichier texte dans le prompt utilisateur."""
-    content = att.get("text") or ""
-    truncated = len(content) > settings.max_file_chars
-    if truncated:
-        content = content[: settings.max_file_chars]
-    lang = _LANG_BY_EXT.get(os.path.splitext(att["name"])[1].lower(), "")
-    note = (
-        f"\n\n[... tronque : le fichier depasse {settings.max_file_chars} "
-        "caracteres ...]" if truncated else ""
-    )
-    header = f"Fichier joint : {att['name']} ({att['size']} octets)"
-    block = f"{header}\n```{lang}\n{content}{note}\n```"
-    return f"{block}\n\n{text}".strip() if text else block
+    return build_attachments_prompt(text, [att])
+
+
+def build_attachments_prompt(text: str, atts: list[dict]) -> str:
+    """
+    Injecte le contenu de N fichiers texte dans le prompt utilisateur.
+
+    Le budget `MAX_FILE_CHARS` est partage entre les fichiers pour ne pas
+    exploser la fenetre de contexte quand on depose un dossier entier.
+    """
+    if not atts:
+        return text
+    budget = max(2000, settings.max_file_chars // max(1, len(atts)))
+    blocks = []
+    for att in atts:
+        content = att.get("text") or ""
+        truncated = len(content) > budget
+        if truncated:
+            content = content[:budget]
+        lang = _LANG_BY_EXT.get(os.path.splitext(att["name"])[1].lower(), "")
+        note = (
+            f"\n\n[... tronque : le fichier depasse {budget} caracteres ...]"
+            if truncated else ""
+        )
+        header = f"Fichier joint : {att['name']} ({att['size']} octets)"
+        blocks.append(f"{header}\n```{lang}\n{content}{note}\n```")
+    joined = "\n\n".join(blocks)
+    return f"{joined}\n\n{text}".strip() if text else joined
+
+
+async def process_uploads(uploads: list, text: str) -> dict:
+    """
+    Lit et classe N pieces jointes.
+
+    Retourne {images, attachments, prompt_text, label} ou `images` part vers les
+    modeles vision et les fichiers texte sont injectes dans `prompt_text`.
+    """
+    if not uploads:
+        return {"images": [], "attachments": [], "prompt_text": text, "label": ""}
+    if len(uploads) > settings.max_attachments:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Trop de fichiers ({len(uploads)}). Maximum "
+                f"{settings.max_attachments} par message."
+            ),
+        )
+
+    images: list[dict] = []
+    attachments: list[dict] = []
+    text_atts: list[dict] = []
+    total = 0
+    for up in uploads:
+        raw = await up.read()
+        total += len(raw)
+        if total > settings.max_upload_mb * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Pieces jointes trop lourdes au total (max "
+                    f"{settings.max_upload_mb} Mo)."
+                ),
+            )
+        att = parse_attachment(
+            up.filename or "fichier", up.content_type or "", raw
+        )
+        attachments.append({
+            "name": att["name"], "kind": att["kind"],
+            "size": att["size"], "mime": att["mime"],
+        })
+        if att["kind"] == "image":
+            images.append({
+                "data": att["image_b64"],
+                "mime": att["mime"] or "image/png",
+            })
+        else:
+            text_atts.append(att)
+
+    names = ", ".join(a["name"] for a in attachments)
+    return {
+        "images": images,
+        "attachments": attachments,
+        "prompt_text": build_attachments_prompt(text, text_atts),
+        "label": f"({len(attachments)} fichiers : {names})"
+        if len(attachments) > 1 else f"(fichier : {names})",
+    }
+
+
+def _images_from_message(msg: dict) -> list[dict]:
+    """Images d'un message, avec compatibilite des anciens documents."""
+    stored = msg.get("images_b64")
+    if stored:
+        return stored
+    if msg.get("image_b64"):
+        return [{
+            "data": msg["image_b64"],
+            "mime": msg.get("image_mime") or "image/png",
+        }]
+    return []
 
 
 def _plain_messages(history: list[dict], text: str) -> list[dict]:
@@ -1180,8 +1266,7 @@ def _http_error_detail(resp) -> str:
 async def _generate_ollama_cloud(
     history: list[dict],
     text: str,
-    image_b64: Optional[str] = None,
-    image_mime: Optional[str] = None,
+    images: Optional[list[dict]] = None,
     model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """
@@ -1198,8 +1283,8 @@ async def _generate_ollama_cloud(
         )
 
     messages = _plain_messages(history, text)
-    if image_b64:
-        messages[-1]["images"] = [image_b64]
+    if images:
+        messages[-1]["images"] = [i["data"] for i in images]
     if settings.claude_system_prompt:
         messages = [
             {"role": "system", "content": settings.claude_system_prompt}
@@ -1407,8 +1492,7 @@ def _opencode_wrong_transport(status: int, detail: str) -> bool:
 async def _generate_opencode(
     history: list[dict],
     text: str,
-    image_b64: Optional[str] = None,
-    image_mime: Optional[str] = None,
+    images: Optional[list[dict]] = None,
     session_id: Optional[str] = None,
     model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
@@ -1437,15 +1521,18 @@ async def _generate_opencode(
         )
 
     messages = _plain_messages(history, text)
-    if image_b64:
+    if images:
         messages[-1]["content"] = [
             {"type": "text", "text": text or "(image)"},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{image_mime or 'image/png'};base64,{image_b64}"
-                },
-            },
+            *[
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{i.get('mime') or 'image/png'};base64,{i['data']}"
+                    },
+                }
+                for i in images
+            ],
         ]
 
     candidates = [model_override or settings.opencode_model]
@@ -1568,6 +1655,508 @@ async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
 
 
 # =========================================================================
+# Streaming (SSE) : generation mot a mot + arret immediat
+# =========================================================================
+ANTHROPIC_STREAM_HEADERS = {
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+    "content-type": "application/json",
+    "user-agent": "claude-cli/1.0.0 (external, cli)",
+    "x-app": "cli",
+}
+
+
+async def _sse_events(resp) -> AsyncIterator[dict]:
+    """Decoupe un flux SSE en objets JSON (ignore les lignes de commentaire)."""
+    async for raw in resp.aiter_lines():
+        line = (raw or "").strip()
+        if not line or not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload in ("", "[DONE]"):
+            continue
+        try:
+            yield json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+
+async def _stream_anthropic_turn(
+    http: httpx.AsyncClient,
+    url: str,
+    headers: dict,
+    payload: dict,
+) -> AsyncIterator[dict]:
+    """
+    Joue UN tour de conversation au format SSE Anthropic.
+
+    Emet {"delta": "..."} pour chaque fragment de texte, puis un
+    {"final": {"stop_reason": ..., "blocks": [...]}} reconstituant les blocs de
+    la reponse (texte + tool_use), necessaires pour enchainer un appel d'outil.
+    """
+    blocks: list[dict] = []
+    stop_reason = None
+    async with http.stream("POST", url, headers=headers, json=payload) as resp:
+        if resp.status_code >= 400:
+            body = (await resp.aread()).decode("utf-8", "replace")
+            detail = body
+            try:
+                detail = json.loads(body).get("error", {}).get("message", body)
+            except Exception:  # noqa: BLE001
+                pass
+            raise HTTPException(
+                status_code=resp.status_code if resp.status_code == 401 else 502,
+                detail=f"Erreur Claude: {detail[:400]}",
+            )
+
+        async for ev in _sse_events(resp):
+            etype = ev.get("type")
+            if etype == "content_block_start":
+                cb = ev.get("content_block") or {}
+                if cb.get("type") == "text":
+                    blocks.append({"type": "text", "text": ""})
+                elif cb.get("type") == "tool_use":
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": cb.get("id"),
+                        "name": cb.get("name"),
+                        "_json": "",
+                    })
+            elif etype == "content_block_delta":
+                d = ev.get("delta") or {}
+                if not blocks:
+                    continue
+                if d.get("type") == "text_delta":
+                    blocks[-1]["text"] = blocks[-1].get("text", "") + d.get("text", "")
+                    yield {"delta": d.get("text", "")}
+                elif d.get("type") == "input_json_delta":
+                    blocks[-1]["_json"] = blocks[-1].get("_json", "") + d.get(
+                        "partial_json", ""
+                    )
+            elif etype == "message_delta":
+                stop_reason = (ev.get("delta") or {}).get("stop_reason") or stop_reason
+            elif etype == "error":
+                msg = (ev.get("error") or {}).get("message", "erreur de flux")
+                raise HTTPException(status_code=502, detail=f"Erreur Claude: {msg}")
+
+    for b in blocks:
+        if b.get("type") == "tool_use":
+            try:
+                b["input"] = json.loads(b.pop("_json") or "{}")
+            except json.JSONDecodeError:
+                b["input"] = {}
+                b.pop("_json", None)
+    yield {"final": {"stop_reason": stop_reason, "blocks": blocks}}
+
+
+async def _stream_claude(
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    state: dict,
+) -> AsyncIterator[dict]:
+    """Claude en streaming, boucle d'outils incluse."""
+    if not settings.claude_token:
+        raise HTTPException(
+            status_code=503, detail="CLAUDE_CODE_OAUTH_TOKEN absent."
+        )
+    state["model"] = settings.claude_model
+    messages = _build_messages(history, text, images)
+    headers = {
+        "authorization": f"Bearer {settings.claude_token}",
+        **ANTHROPIC_STREAM_HEADERS,
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as http:
+        for _ in range(MAX_TOOL_ITERS):
+            payload = {
+                "model": settings.claude_model,
+                "max_tokens": settings.claude_max_tokens,
+                "system": [
+                    {"type": "text", "text": CLAUDE_CODE_IDENTITY},
+                    {"type": "text", "text": settings.claude_system_prompt},
+                ],
+                "messages": messages,
+                "stream": True,
+            }
+            if settings.enable_tools:
+                payload["tools"] = TOOLS
+
+            final = None
+            async for item in _stream_anthropic_turn(
+                http, ANTHROPIC_URL, headers, payload
+            ):
+                if "delta" in item:
+                    yield item
+                else:
+                    final = item["final"]
+
+            if not final or final["stop_reason"] != "tool_use":
+                return
+
+            # Un ou plusieurs outils a executer : on les joue puis on relance.
+            messages.append({"role": "assistant", "content": final["blocks"]})
+            results = []
+            for b in final["blocks"]:
+                if b.get("type") != "tool_use":
+                    continue
+                output = await asyncio.to_thread(
+                    _run_tool, b.get("name", ""), b.get("input") or {}
+                )
+                yield {
+                    "tool": {
+                        "tool": b.get("name"),
+                        "input": b.get("input") or {},
+                        "output": output,
+                    }
+                }
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": b.get("id"),
+                    "content": output,
+                })
+            messages.append({"role": "user", "content": results})
+
+
+async def _stream_gemini(
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    state: dict,
+) -> AsyncIterator[dict]:
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY absent.")
+    from google import genai
+    from google.genai import types as gtypes
+
+    client = genai.Client(api_key=settings.gemini_api_key)
+    contents = _gemini_contents(history, text, images)
+    config = gtypes.GenerateContentConfig(
+        system_instruction=settings.claude_system_prompt,
+        max_output_tokens=settings.claude_max_tokens,
+    )
+    state["model"] = settings.gemini_model
+    stream = await client.aio.models.generate_content_stream(
+        model=settings.gemini_model, contents=contents, config=config
+    )
+    async for chunk in stream:
+        piece = getattr(chunk, "text", None)
+        if piece:
+            yield {"delta": piece}
+
+
+async def _stream_ndjson_ollama(
+    url: str,
+    headers: dict,
+    payload: dict,
+    timeout: float,
+) -> AsyncIterator[dict]:
+    """Flux Ollama (local ou cloud) : une ligne JSON par fragment."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout, connect=10.0)
+    ) as http:
+        async with http.stream("POST", url, headers=headers, json=payload) as resp:
+            if resp.status_code >= 400:
+                body = (await resp.aread()).decode("utf-8", "replace")
+                raise HTTPException(
+                    status_code=502, detail=f"Erreur Ollama: {body[:400]}"
+                )
+            async for line in resp.aiter_lines():
+                if not (line or "").strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("error"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Erreur Ollama: {str(data['error'])[:400]}",
+                    )
+                piece = (data.get("message") or {}).get("content") or ""
+                if piece:
+                    yield {"delta": piece}
+
+
+async def _stream_ollama(
+    history: list[dict], text: str, state: dict
+) -> AsyncIterator[dict]:
+    state["model"] = settings.ollama_model
+    messages = _plain_messages(history, text)
+    payload = {
+        "model": settings.ollama_model,
+        "messages": messages,
+        "stream": True,
+        "keep_alive": settings.ollama_keep_alive,
+        "options": {
+            "num_ctx": settings.ollama_num_ctx,
+            "num_predict": settings.ollama_num_predict,
+            "num_thread": settings.ollama_num_thread,
+        },
+    }
+    async for item in _stream_ndjson_ollama(
+        f"{settings.ollama_url}/api/chat", {}, payload, settings.ollama_timeout
+    ):
+        yield item
+
+
+async def _stream_ollama_cloud(
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    model_override: Optional[str],
+    state: dict,
+) -> AsyncIterator[dict]:
+    if not settings.ollama_cloud_api_key:
+        raise HTTPException(status_code=503, detail="OLLAMA_CLOUD_API_KEY absent.")
+
+    candidates = [model_override or settings.ollama_cloud_model]
+    if (
+        settings.ollama_cloud_fallback_model
+        and settings.ollama_cloud_fallback_model not in candidates
+    ):
+        candidates.append(settings.ollama_cloud_fallback_model)
+
+    messages = _plain_messages(history, text)
+    if images:
+        messages[-1]["images"] = [i["data"] for i in images]
+    if settings.claude_system_prompt:
+        messages = [
+            {"role": "system", "content": settings.claude_system_prompt}
+        ] + messages
+
+    last_err: Optional[Exception] = None
+    for model_name in candidates:
+        state["model"] = model_name
+        payload = {"model": model_name, "messages": messages, "stream": True}
+        produced = False
+        try:
+            async for item in _stream_ndjson_ollama(
+                f"{settings.ollama_cloud_url}/chat",
+                {"Authorization": f"Bearer {settings.ollama_cloud_api_key}"},
+                payload,
+                settings.ollama_cloud_timeout,
+            ):
+                produced = True
+                yield item
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            if produced:
+                raise
+            last_err = e
+            logger.warning(
+                "Flux Ollama Cloud %s indisponible: %s",
+                model_name, str(getattr(e, "detail", e))[:180],
+            )
+            continue
+    raise last_err or HTTPException(
+        status_code=502, detail="Erreur Ollama Cloud: echec inconnu"
+    )
+
+
+async def _stream_opencode(
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    session_id: Optional[str],
+    model_override: Optional[str],
+    state: dict,
+) -> AsyncIterator[dict]:
+    """
+    OpenCode en streaming. Les transports /chat/completions (SSE OpenAI) et
+    /messages (SSE Anthropic) sont streames ; /responses retombe en non-stream.
+    """
+    if not settings.opencode_api_key:
+        raise HTTPException(status_code=503, detail="OPENCODE_API_KEY absent.")
+    model_name = model_override or settings.opencode_model
+    state["model"] = model_name
+    transport = _opencode_transport(model_name)
+
+    if transport == "responses":
+        answer, _, used = await _generate_opencode(
+            history, text, images, session_id, model_override
+        )
+        state["model"] = used
+        yield {"delta": answer}
+        return
+
+    messages = _plain_messages(history, text)
+    if images:
+        messages[-1]["content"] = [
+            {"type": "text", "text": text or "(image)"},
+            *[
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{i.get('mime') or 'image/png'};base64,{i['data']}"
+                    },
+                }
+                for i in images
+            ],
+        ]
+    path, payload = _opencode_payload(
+        transport, model_name, messages, settings.claude_system_prompt
+    )
+    payload["stream"] = True
+    headers = {
+        "Authorization": f"Bearer {settings.opencode_api_key}",
+        "x-api-key": settings.opencode_api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        "User-Agent": settings.opencode_user_agent,
+        "x-opencode-session": f"ses_forge_{session_id or uuid.uuid4().hex}",
+    }
+    url = f"{settings.opencode_base_url}{path}"
+
+    if transport == "messages":
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
+        ) as http:
+            async for item in _stream_anthropic_turn(http, url, headers, payload):
+                if "delta" in item:
+                    yield item
+        return
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
+    ) as http:
+        async with http.stream("POST", url, headers=headers, json=payload) as resp:
+            if resp.status_code >= 400:
+                body = (await resp.aread()).decode("utf-8", "replace")
+                raise HTTPException(
+                    status_code=502, detail=f"Erreur OpenCode: {body[:400]}"
+                )
+            async for ev in _sse_events(resp):
+                if ev.get("error"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Erreur OpenCode: {str(ev['error'])[:400]}",
+                    )
+                for ch in ev.get("choices") or []:
+                    piece = (ch.get("delta") or {}).get("content") or ""
+                    if piece:
+                        yield {"delta": piece}
+
+
+async def _stream_provider(
+    pid: str,
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    session_id: Optional[str],
+    model_override: Optional[str],
+    state: dict,
+) -> AsyncIterator[dict]:
+    if pid == "claude":
+        async for i in _stream_claude(history, text, images, state):
+            yield i
+    elif pid == "gemini":
+        async for i in _stream_gemini(history, text, images, state):
+            yield i
+    elif pid == "ollama_cloud":
+        async for i in _stream_ollama_cloud(
+            history, text, images, model_override, state
+        ):
+            yield i
+    elif pid == "opencode":
+        async for i in _stream_opencode(
+            history, text, images, session_id, model_override, state
+        ):
+            yield i
+    elif pid == "ollama":
+        async for i in _stream_ollama(history, text, state):
+            yield i
+    else:
+        raise HTTPException(status_code=400, detail=f"provider inconnu: {pid}")
+
+
+async def stream_ai_response(
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]] = None,
+    provider: str = "claude",
+    session_id: Optional[str] = None,
+    model: Optional[str] = None,
+) -> AsyncIterator[dict]:
+    """
+    Meme routeur/cascade que `generate_ai_response`, mais en flux.
+
+    La bascule sur le provider suivant n'est possible que TANT QU'AUCUN texte
+    n'a ete emis : une fois des mots envoyes au client, on ne peut plus repartir
+    de zero, l'erreur est donc remontee telle quelle.
+    """
+    requested = provider if provider in PROVIDER_IDS or provider == "auto" else "claude"
+    chain = _build_chain(requested)
+    attempts: list[dict] = []
+
+    for pid in chain:
+        if not _provider_available(pid):
+            attempts.append({
+                "provider": pid, "model": _provider_model(pid),
+                "kind": "unconfigured", "error": "cle / configuration absente",
+            })
+            continue
+
+        state: dict = {"model": _provider_model(pid)}
+        produced = False
+        try:
+            async for item in _stream_provider(
+                pid, history, text, images, session_id,
+                model if pid == requested else None, state,
+            ):
+                if not produced:
+                    yield {
+                        "type": "start",
+                        "provider": pid,
+                        "model": state.get("model"),
+                    }
+                if "delta" in item:
+                    produced = True
+                    yield {"type": "delta", "text": item["delta"]}
+                elif "tool" in item:
+                    produced = True
+                    yield {"type": "tool", "step": item["tool"]}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            detail = str(getattr(e, "detail", e))
+            kind = _classify_error(detail)
+            if produced:
+                logger.error("Flux interrompu sur %s [%s]: %s", pid, kind, detail[:200])
+                yield {"type": "error", "detail": detail[:400], "provider": pid}
+                return
+            attempts.append({
+                "provider": pid, "model": state.get("model"),
+                "kind": kind, "error": detail[:400],
+            })
+            logger.warning(
+                "Routeur (flux): bascule — %s a echoue [%s]: %s",
+                pid, kind, detail[:200],
+            )
+            continue
+
+        yield {
+            "type": "done",
+            "provider": pid,
+            "model": state.get("model"),
+            "requested_provider": requested,
+            "fallback_used": bool(attempts),
+            "attempts": attempts,
+        }
+        return
+
+    tried = ", ".join(f"{a['provider']}({a['kind']})" for a in attempts) or "aucun"
+    yield {
+        "type": "error",
+        "detail": (
+            "Aucun moteur IA n'a pu repondre. Tentatives : " + tried + "."
+        ),
+    }
+
+
+# =========================================================================
 # Auth
 # =========================================================================
 @api_router.post("/auth/register")
@@ -1686,7 +2275,7 @@ async def get_messages(conv_id: str, current_user: dict = Depends(get_current_us
     return (
         await database.messages.find(
             {"conversation_id": conv_id},
-            {"_id": 0, "image_b64": 0, "file_text": 0},
+            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
         )
         .sort("created_at", 1)
         .to_list(2000)
@@ -1732,6 +2321,7 @@ async def chat_send(
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
     file: Optional[UploadFile] = File(None),
+    files: list[UploadFile] = File(default=[]),
     provider: str = Form("claude"),
     model: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
@@ -1748,30 +2338,19 @@ async def chat_send(
         raise HTTPException(status_code=400, detail="provider invalide")
 
     text = (text or "").strip()
-    upload = file or image  # `image` conserve pour compatibilite
-    if not text and upload is None:
+    uploads = [u for u in (files or []) if u is not None]
+    # `file` et `image` restent acceptes pour compatibilite.
+    for legacy in (file, image):
+        if legacy is not None:
+            uploads.insert(0, legacy)
+    if not text and not uploads:
         raise HTTPException(status_code=400, detail="Empty message")
 
-    # --- Piece jointe eventuelle (image, texte/code, PDF) ---
-    image_b64 = None
-    image_mime = None
-    attachment = None
-    prompt_text = text
-    if upload is not None:
-        raw = await upload.read()
-        if len(raw) > settings.max_upload_mb * 1024 * 1024:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Fichier trop lourd (max {settings.max_upload_mb} Mo).",
-            )
-        attachment = parse_attachment(
-            upload.filename or "fichier", upload.content_type or "", raw
-        )
-        if attachment["kind"] == "image":
-            image_b64 = attachment["image_b64"]
-            image_mime = attachment["mime"] or "image/png"
-        else:
-            prompt_text = build_attachment_prompt(text, attachment)
+    # --- Pieces jointes (images, texte/code, PDF) ---
+    bundle = await process_uploads(uploads, text)
+    images = bundle["images"]
+    attachments = bundle["attachments"]
+    prompt_text = bundle["prompt_text"]
 
     # --- Message utilisateur ---
     user_msg_id = str(uuid.uuid4())
@@ -1779,16 +2358,11 @@ async def chat_send(
         "id": user_msg_id,
         "conversation_id": conversation_id,
         "role": "user",
-        "content": text or (
-            f"(fichier : {attachment['name']})" if attachment else "(image)"
-        ),
-        "has_image": image_b64 is not None,
-        "image_b64": image_b64,
-        "image_mime": image_mime,
-        "file_name": attachment["name"] if attachment else None,
-        "file_kind": attachment["kind"] if attachment else None,
-        "file_size": attachment["size"] if attachment else None,
-        "file_text": attachment.get("text") if attachment else None,
+        "content": text or bundle["label"],
+        "has_image": bool(images),
+        "attachments": attachments,
+        "images_b64": images,
+        "prompt_override": prompt_text if prompt_text != text else None,
         "created_at": now_iso(),
     }
     await database.messages.insert_one(user_msg_doc)
@@ -1797,7 +2371,7 @@ async def chat_send(
     history = (
         await database.messages.find(
             {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
-            {"_id": 0, "image_b64": 0, "file_text": 0},
+            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
         )
         .sort("created_at", 1)
         .to_list(2000)
@@ -1809,8 +2383,7 @@ async def chat_send(
         ai_response, tool_steps, meta = await generate_ai_response(
             history=history,
             text=prompt_text,
-            image_b64=image_b64,
-            image_mime=image_mime,
+            images=images,
             provider=provider,
             session_id=conversation_id,
             model=(model or "").strip() or None,
@@ -1845,18 +2418,261 @@ async def chat_send(
     update_fields = {"updated_at": now_iso()}
     if msg_count <= 2 and conv.get("title") in (None, "", "New Chat"):
         fallback_title = (
-            f"Fichier : {attachment['name']}" if attachment else "Image chat"
+            f"Fichier : {attachments[0]['name']}" if attachments else "Image chat"
         )
         update_fields["title"] = (text or fallback_title)[:50]
     await database.conversations.update_one(
         {"id": conversation_id}, {"$set": update_fields}
     )
 
-    user_msg_doc.pop("image_b64", None)
-    user_msg_doc.pop("file_text", None)
-    user_msg_doc.pop("_id", None)
+    for heavy in ("image_b64", "file_text", "images_b64", "prompt_override", "_id"):
+        user_msg_doc.pop(heavy, None)
     ai_msg_doc.pop("_id", None)
     return {"user_message": user_msg_doc, "ai_message": ai_msg_doc}
+
+
+@api_router.post("/chat/stream")
+async def chat_stream(
+    conversation_id: str = Form(...),
+    text: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    files: list[UploadFile] = File(default=[]),
+    provider: str = Form("claude"),
+    model: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Meme chose que /chat/send mais en flux SSE : les mots arrivent au fur et a
+    mesure et fermer la connexion arrete la generation immediatement.
+
+    Evenements emis : `delta` (fragment de texte), `tool` (outil execute),
+    `done` (message assistant complet + routage), `error`.
+    """
+    database = get_db()
+
+    conv = await database.conversations.find_one(
+        {"id": conversation_id, "user_id": current_user["id"]}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if provider not in PROVIDER_IDS and provider != "auto":
+        raise HTTPException(status_code=400, detail="provider invalide")
+
+    text = (text or "").strip()
+    uploads = [u for u in (files or []) if u is not None]
+    if file is not None:
+        uploads.insert(0, file)
+    if not text and not uploads:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    bundle = await process_uploads(uploads, text)
+    images = bundle["images"]
+    attachments = bundle["attachments"]
+    prompt_text = bundle["prompt_text"]
+
+    user_msg_id = str(uuid.uuid4())
+    user_msg_doc = {
+        "id": user_msg_id,
+        "conversation_id": conversation_id,
+        "role": "user",
+        "content": text or bundle["label"],
+        "has_image": bool(images),
+        "attachments": attachments,
+        "images_b64": images,
+        "prompt_override": prompt_text if prompt_text != text else None,
+        "created_at": now_iso(),
+    }
+    await database.messages.insert_one(user_msg_doc)
+
+    history = (
+        await database.messages.find(
+            {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
+            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
+        )
+        .sort("created_at", 1)
+        .to_list(2000)
+    )
+    history = history[-settings.history_turns :]
+
+    public_user_msg = {
+        k: v for k, v in user_msg_doc.items()
+        if k not in ("_id", "image_b64", "file_text", "images_b64", "prompt_override")
+    }
+
+    async def event_source():
+        yield _sse("user_message", public_user_msg)
+        chunks: list[str] = []
+        tool_steps: list[dict] = []
+        meta: Optional[dict] = None
+        stopped = True
+        try:
+            async for ev in stream_ai_response(
+                history=history,
+                text=prompt_text,
+                images=images,
+                provider=provider,
+                session_id=conversation_id,
+                model=(model or "").strip() or None,
+            ):
+                if ev["type"] == "delta":
+                    chunks.append(ev["text"])
+                    yield _sse("delta", {"text": ev["text"]})
+                elif ev["type"] == "start":
+                    meta = {
+                        "provider": ev["provider"],
+                        "model": ev["model"],
+                        "requested_provider": provider,
+                        "fallback_used": False,
+                        "attempts": [],
+                    }
+                    yield _sse("start", ev)
+                elif ev["type"] == "tool":
+                    tool_steps.append(ev["step"])
+                    yield _sse("tool", ev["step"])
+                elif ev["type"] == "error":
+                    stopped = False
+                    yield _sse("error", {"detail": ev["detail"]})
+                    return
+                elif ev["type"] == "done":
+                    meta = ev
+                    stopped = False
+            if meta is None:
+                return
+            ai_doc = await _persist_assistant(
+                database, conversation_id, "".join(chunks), tool_steps, meta, False
+            )
+            await _autotitle(database, conv, conversation_id, text, attachments)
+            yield _sse("done", ai_doc)
+        finally:
+            # Client parti en cours de route : on garde le texte deja produit.
+            # Les `await` sont interdits ici (le generateur est en cours de
+            # fermeture) : on delegue l'ecriture a une tache detachee.
+            if stopped and chunks:
+                _spawn(
+                    _persist_stopped(
+                        database, conversation_id, "".join(chunks), tool_steps,
+                        meta or {
+                            "provider": provider,
+                            "model": model or provider,
+                            "requested_provider": provider,
+                            "fallback_used": False,
+                            "attempts": [],
+                        },
+                    )
+                )
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            # Indispensable derriere Nginx : sans ca le flux est tamponne.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# Taches detachees : on garde une reference pour qu'elles ne soient pas
+# ramassees par le GC avant la fin.
+_BG_TASKS: set = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
+async def _persist_stopped(
+    database, conversation_id: str, content: str, tool_steps: list[dict], meta: dict
+) -> None:
+    """Sauvegarde la reponse partielle d'une generation interrompue."""
+    try:
+        await _persist_assistant(
+            database, conversation_id, content, tool_steps, meta, True
+        )
+        await database.conversations.update_one(
+            {"id": conversation_id}, {"$set": {"updated_at": now_iso()}}
+        )
+        logger.info(
+            "Generation arretee : %d caracteres conserves (conv %s)",
+            len(content), conversation_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Sauvegarde de la reponse partielle impossible")
+
+
+async def _persist_assistant(
+    database,
+    conversation_id: str,
+    content: str,
+    tool_steps: list[dict],
+    meta: dict,
+    stopped: bool,
+) -> dict:
+    doc = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": conversation_id,
+        "role": "assistant",
+        "content": content or "(reponse vide)",
+        "has_image": False,
+        "tool_steps": tool_steps,
+        "provider": meta.get("provider"),
+        "model": meta.get("model"),
+        "requested_provider": meta.get("requested_provider"),
+        "fallback_used": meta.get("fallback_used", False),
+        "routing": meta.get("attempts", []),
+        "stopped": stopped,
+        "created_at": now_iso(),
+    }
+    await database.messages.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _autotitle(database, conv, conversation_id, text, attachment) -> None:
+    msg_count = await database.messages.count_documents(
+        {"conversation_id": conversation_id}
+    )
+    update_fields = {"updated_at": now_iso()}
+    if msg_count <= 2 and conv.get("title") in (None, "", "New Chat"):
+        fallback = (
+            f"Fichier : {attachment[0]['name']}" if attachment else "Image chat"
+        )
+        update_fields["title"] = (text or fallback)[:50]
+    await database.conversations.update_one(
+        {"id": conversation_id}, {"$set": update_fields}
+    )
+
+
+@api_router.get("/opencode/usage")
+async def opencode_usage(current_user: dict = Depends(get_current_user)):
+    """Consommation du forfait OpenCode Go (fenetres 5 h / semaine / mois)."""
+    if not _provider_available("opencode"):
+        return {"available": False, "reason": "OPENCODE_API_KEY absent"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as http:
+            resp = await http.get(
+                f"{settings.opencode_base_url}/usage",
+                headers={
+                    "Authorization": f"Bearer {settings.opencode_api_key}",
+                    "User-Agent": settings.opencode_user_agent,
+                },
+            )
+        if resp.status_code >= 400:
+            return {
+                "available": False,
+                "reason": _http_error_detail(resp)[:200],
+            }
+        return {"available": True, **resp.json()}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Usage OpenCode indisponible: %s", str(e)[:150])
+        return {"available": False, "reason": str(e)[:200]}
 
 
 @api_router.post("/chat/regenerate")
@@ -1893,14 +2709,17 @@ async def chat_regenerate(
     prompt_msg = prior[-1]
     history = prior[:-1][-settings.history_turns :]
     raw_text = prompt_msg.get("content", "") or ""
-    text = "" if raw_text in ("(image)",) else raw_text
-    if raw_text.startswith("(fichier :"):
-        text = ""
-    image_b64 = prompt_msg.get("image_b64")
-    image_mime = prompt_msg.get("image_mime") or "image/png"
+    # Les libelles automatiques "(image)" / "(fichier : x)" ne sont pas du prompt.
+    is_placeholder = raw_text.startswith("(") and raw_text.endswith(")") and (
+        raw_text == "(image)" or "fichier" in raw_text
+    )
+    text = "" if is_placeholder else raw_text
+    images = _images_from_message(prompt_msg)
 
-    # Fichier texte joint : on reinjecte son contenu comme au premier envoi.
-    if prompt_msg.get("file_kind") == "text" and prompt_msg.get("file_text"):
+    # Pieces jointes texte : on reinjecte le prompt complet du premier envoi.
+    if prompt_msg.get("prompt_override"):
+        text = prompt_msg["prompt_override"]
+    elif prompt_msg.get("file_kind") == "text" and prompt_msg.get("file_text"):
         text = build_attachment_prompt(
             text,
             {
@@ -1914,8 +2733,7 @@ async def chat_regenerate(
         ai_response, tool_steps, meta = await generate_ai_response(
             history=history,
             text=text,
-            image_b64=image_b64,
-            image_mime=image_mime,
+            images=images,
             provider=payload.provider,
             session_id=payload.conversation_id,
             model=(payload.model or "").strip() or None,

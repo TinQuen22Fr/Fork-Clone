@@ -13,6 +13,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// Service worker : uniquement pour rendre la forge installable (pas de cache).
+if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>

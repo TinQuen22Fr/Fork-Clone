@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, postSSE } from "@/lib/api";
 import ChatMessage from "@/components/ChatMessage";
 import {
   Plus,
@@ -11,14 +11,19 @@ import {
   Square,
   Trash2,
   LogOut,
-  Flame,
   X,
   MessageSquare,
   Menu,
   Pencil,
   Check,
   Cpu,
+  Gauge,
+  Star,
 } from "lucide-react";
+
+const MAX_ATTACHMENTS = 10;
+const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
+const MAX_FAVORITES = 6;
 
 export default function Chat() {
   const { user, logout } = useAuth();
@@ -26,8 +31,7 @@ export default function Chat() {
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  const [attachments, setAttachments] = useState([]); // [{file, preview}]
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [error, setError] = useState("");
@@ -43,6 +47,18 @@ export default function Chat() {
   const [modelOverride, setModelOverride] = useState(
     () => localStorage.getItem("forge_model_override") || ""
   );
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("forge_favorites") || "[]");
+    } catch (_) {
+      return [];
+    }
+  });
+  const [streamText, setStreamText] = useState("");
+  const [streamTools, setStreamTools] = useState([]);
+  const [streamInfo, setStreamInfo] = useState(null);
+  const [usage, setUsage] = useState(null);
+  const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -59,9 +75,54 @@ export default function Chat() {
           setAutoChain(data.auto?.chain || []);
         })
         .catch(() => {});
+      refreshUsage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  const refreshUsage = () => {
+    api
+      .get("/opencode/usage")
+      .then(({ data }) => setUsage(data?.available ? data.usage : null))
+      .catch(() => setUsage(null));
+  };
+
+  // Glisser-déposer d'un fichier n'importe où sur la fenêtre.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e) =>
+      Array.from(e.dataTransfer?.types || []).includes("Files");
+    const onEnter = (e) => {
+      if (!hasFiles(e)) return;
+      depth += 1;
+      setDragging(true);
+    };
+    const onOver = (e) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onLeave = () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const onDrop = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      acceptFiles(e.dataTransfer.files);
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load messages when active conv changes
   useEffect(() => {
@@ -203,27 +264,52 @@ export default function Chat() {
     }
   };
 
-  const onPickFile = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (f.size > 16 * 1024 * 1024) {
-      setError("Fichier trop lourd (max 16 Mo).");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-    setImageFile(f);
-    if (f.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = (ev) => setImagePreview(ev.target.result);
-      reader.readAsDataURL(f);
-    } else {
-      setImagePreview(null);
-    }
+  const acceptFiles = (list) => {
+    const incoming = Array.from(list || []);
+    if (!incoming.length) return;
+    setAttachments((prev) => {
+      const room = MAX_ATTACHMENTS - prev.length;
+      if (room <= 0) {
+        setError(`Maximum ${MAX_ATTACHMENTS} fichiers par message.`);
+        return prev;
+      }
+      const kept = [];
+      let total = prev.reduce((sum, a) => sum + a.file.size, 0);
+      for (const f of incoming.slice(0, room)) {
+        if (total + f.size > MAX_TOTAL_BYTES) {
+          setError("Pièces jointes trop lourdes au total (max 16 Mo).");
+          break;
+        }
+        total += f.size;
+        kept.push({ file: f, preview: null, id: `${f.name}-${f.size}-${Math.random()}` });
+      }
+      if (incoming.length > room) {
+        setError(`Maximum ${MAX_ATTACHMENTS} fichiers par message.`);
+      }
+      // Vignettes pour les images, en tâche de fond.
+      kept.forEach((att) => {
+        if (!att.file.type.startsWith("image/")) return;
+        const reader = new FileReader();
+        reader.onload = (ev) =>
+          setAttachments((cur) =>
+            cur.map((a) => (a.id === att.id ? { ...a, preview: ev.target.result } : a))
+          );
+        reader.readAsDataURL(att.file);
+      });
+      return [...prev, ...kept];
+    });
   };
 
-  const clearImage = () => {
-    setImageFile(null);
-    setImagePreview(null);
+  const onPickFile = (e) => {
+    acceptFiles(e.target.files);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeAttachment = (id) =>
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+
+  const clearAttachments = () => {
+    setAttachments([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -236,7 +322,7 @@ export default function Chat() {
     e?.preventDefault();
     if (sending) return;
     const trimmed = text.trim();
-    if (!trimmed && !imageFile) return;
+    if (!trimmed && !attachments.length) return;
     setError("");
 
     let convId = activeId;
@@ -258,53 +344,125 @@ export default function Chat() {
       conversation_id: convId,
       role: "user",
       content:
-        trimmed || (imageFile ? `(fichier : ${imageFile.name})` : "(image)"),
-      has_image: !!imageFile && imageFile.type.startsWith("image/"),
-      file_name: imageFile ? imageFile.name : null,
+        trimmed ||
+        (attachments.length > 1
+          ? `(${attachments.length} fichiers : ${attachments
+              .map((a) => a.file.name)
+              .join(", ")})`
+          : `(fichier : ${attachments[0]?.file.name})`),
+      has_image: attachments.some((a) => a.file.type.startsWith("image/")),
+      attachments: attachments.map((a) => ({ name: a.file.name })),
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
     const sentText = trimmed;
-    const sentImage = imageFile;
+    const sentFiles = attachments.map((a) => a.file);
     setText("");
-    clearImage();
+    clearAttachments();
     setSending(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
+    setStreamText("");
+    setStreamTools([]);
+    setStreamInfo(null);
     try {
       const form = new FormData();
       form.append("conversation_id", convId);
       form.append("text", sentText);
-      if (sentImage) form.append("file", sentImage);
+      sentFiles.forEach((f) => form.append("files", f));
       form.append("provider", provider);
       if (modelOverride) form.append("model", modelOverride);
-      const { data } = await api.post("/chat/send", form, {
-        headers: { "Content-Type": "multipart/form-data" },
+
+      let acc = "";
+      await postSSE("/chat/stream", form, {
         signal: controller.signal,
+        onEvent: ({ event, data }) => {
+          if (event === "user_message") {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === optimisticUser.id ? data : m))
+            );
+            optimisticUser.id = data.id;
+          } else if (event === "delta") {
+            acc += data.text;
+            setStreamText(acc);
+          } else if (event === "start") {
+            setStreamInfo({ provider: data.provider, model: data.model });
+          } else if (event === "tool") {
+            setStreamTools((prev) => [...prev, data]);
+          } else if (event === "error") {
+            setError(data.detail);
+          } else if (event === "done") {
+            setMessages((prev) => [...prev, data]);
+            setStreamText("");
+            setStreamTools([]);
+            setStreamInfo(null);
+          }
+        },
       });
-      setMessages((prev) => {
-        const without = prev.filter((m) => m.id !== optimisticUser.id);
-        return [...without, data.user_message, data.ai_message];
-      });
-      // refresh conv list for updated title/order
       fetchConversations();
+      refreshUsage();
     } catch (err) {
-      const aborted =
-        err?.code === "ERR_CANCELED" || err?.name === "CanceledError";
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+      const aborted = err?.name === "AbortError";
       if (aborted) {
-        setError("Requête annulée.");
-        // La réponse a peut-être été enregistrée côté serveur : on resynchronise.
-        loadMessages(convId);
+        setError("Génération arrêtée.");
+        // Le serveur enregistre le texte déjà produit en tâche de fond.
+        await new Promise((r) => setTimeout(r, 700));
       } else {
-        setError(formatApiError(err));
+        setError(err?.message || "Erreur inconnue");
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
       }
+      // Le serveur conserve ce qui a déjà été généré : on resynchronise.
+      loadMessages(convId);
+      fetchConversations();
     } finally {
       abortRef.current = null;
+      setStreamText("");
+      setStreamTools([]);
+      setStreamInfo(null);
       setSending(false);
       textareaRef.current?.focus();
     }
+  };
+
+  const currentModel = () =>
+    modelOverride || models.find((m) => m.id === provider)?.model || "";
+
+  const isFavorite = favorites.some(
+    (f) => f.provider === provider && f.model === (modelOverride || "")
+  );
+
+  const persistFavorites = (list) => {
+    setFavorites(list);
+    localStorage.setItem("forge_favorites", JSON.stringify(list));
+  };
+
+  const toggleFavorite = () => {
+    const entry = {
+      provider,
+      model: modelOverride || "",
+      label: currentModel() || provider,
+    };
+    const without = favorites.filter(
+      (f) => !(f.provider === entry.provider && f.model === entry.model)
+    );
+    if (without.length !== favorites.length) {
+      persistFavorites(without);
+      return;
+    }
+    if (favorites.length >= MAX_FAVORITES) {
+      setError(`Maximum ${MAX_FAVORITES} favoris. Retires-en un d'abord.`);
+      return;
+    }
+    persistFavorites([...favorites, entry]);
+  };
+
+  const applyFavorite = (fav) => {
+    setProvider(fav.provider);
+    localStorage.setItem("forge_provider", fav.provider);
+    setModelOverride(fav.model);
+    if (fav.model) localStorage.setItem("forge_model_override", fav.model);
+    else localStorage.removeItem("forge_model_override");
   };
 
   const handleProviderChange = (e) => {
@@ -346,7 +504,7 @@ export default function Chat() {
       >
         <div className="p-5 border-b-2 border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Flame className="w-6 h-6 text-[#ff2a6d]" />
+            <img src="/logo-64.png" alt="" className="w-7 h-7 flex-shrink-0" />
             <div>
               <div className="font-heading font-black text-sm tracking-tight">
                 THE FORGE
@@ -475,6 +633,24 @@ export default function Chat() {
         </div>
       </aside>
 
+      {/* Superposition glisser-déposer */}
+      {dragging && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none"
+          data-testid="drop-overlay"
+        >
+          <div className="border-4 border-dashed border-[#ffd700] px-8 py-10 text-center">
+            <Paperclip className="w-10 h-10 text-[#ffd700] mx-auto mb-4" />
+            <div className="font-heading font-black text-xl sm:text-2xl tracking-tighter">
+              LÂCHE TON FICHIER
+            </div>
+            <div className="text-gray-400 text-sm mt-2 font-mono">
+              image, PDF, texte ou code — 16 Mo max
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Fond cliquable quand le tiroir est ouvert sur mobile/tablette */}
       {sidebarOpen && (
         <div
@@ -505,10 +681,12 @@ export default function Chat() {
               </div>
             </div>
           </div>
-          <div
-            className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[40%] flex-shrink-0 text-right"
-            data-testid="active-model-label"
-          >
+          <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
+            {usage && <UsageBadge usage={usage} />}
+            <div
+              className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[220px] lg:max-w-[420px] text-right"
+              data-testid="active-model-label"
+            >
             {provider === "auto" ? (
               <>
                 AUTO:{" "}
@@ -539,6 +717,7 @@ export default function Chat() {
                 )}
               </>
             )}
+            </div>
           </div>
         </header>
 
@@ -562,26 +741,45 @@ export default function Chat() {
               />
             ))}
             {sending && (
-              <div className="flex gap-4 mb-6">
-                <div className="w-10 h-10 border-2 border-white/30 bg-[#0a0a0a] flex items-center justify-center flex-shrink-0">
-                  <Flame className="w-5 h-5 text-[#ff2a6d] pulse-glow" />
-                </div>
-                <div className="border-2 border-white/20 p-4 shadow-[4px_4px_0_0_rgba(5,217,232,0.4)] flex items-center gap-4">
-                  <div className="typing-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+              <>
+                {(streamText || streamTools.length > 0) && (
+                  <ChatMessage
+                    key="streaming"
+                    message={{
+                      id: "streaming",
+                      role: "assistant",
+                      content: streamText,
+                      provider: streamInfo?.provider || provider,
+                      model:
+                        streamInfo?.model || modelOverride || activeModel?.model,
+                      tool_steps: streamTools,
+                      streaming: true,
+                    }}
+                  />
+                )}
+                {!streamText && (
+                  <div className="flex gap-4 mb-6">
+                    <div className="w-10 h-10 border-2 border-white/30 bg-[#0a0a0a] flex items-center justify-center flex-shrink-0">
+                      <img src="/logo-64.png" alt="" className="w-7 h-7 pulse-glow" />
+                    </div>
+                    <div className="border-2 border-white/20 p-4 shadow-[4px_4px_0_0_rgba(5,217,232,0.4)] flex items-center gap-4">
+                      <div className="typing-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={abortRequest}
+                        className="text-[11px] font-mono uppercase tracking-wider text-gray-500 hover:text-[#ff2a6d] border border-white/20 hover:border-[#ff2a6d] px-2 py-1 transition-colors"
+                        data-testid="stop-generation-btn"
+                      >
+                        annuler
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={abortRequest}
-                    className="text-[11px] font-mono uppercase tracking-wider text-gray-500 hover:text-[#ff2a6d] border border-white/20 hover:border-[#ff2a6d] px-2 py-1 transition-colors"
-                    data-testid="stop-generation-btn"
-                  >
-                    annuler
-                  </button>
-                </div>
-              </div>
+                )}
+              </>
             )}
             <div ref={messagesEndRef} />
           </div>
@@ -605,36 +803,87 @@ export default function Chat() {
         {/* Input dock */}
         <div className="px-3 sm:px-4 lg:px-8 pt-2 safe-bottom flex-shrink-0">
           <div className="max-w-4xl mx-auto">
-            {imageFile && (
-              <div className="mb-3 inline-flex items-center gap-3 border-2 border-[#ffd700] p-2 bg-black/40">
-                {imagePreview ? (
-                  <img
-                    src={imagePreview}
-                    alt="preview"
-                    className="w-16 h-16 object-cover"
-                  />
-                ) : (
-                  <div className="w-16 h-16 flex items-center justify-center bg-[#ffd700]/10 border border-[#ffd700]/40">
-                    <FileText className="w-7 h-7 text-[#ffd700]" />
+            {favorites.length > 0 && (
+              <div
+                className="mb-2 flex gap-1.5 overflow-x-auto pb-1"
+                data-testid="favorites-bar"
+              >
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-600 flex items-center flex-shrink-0 pr-1">
+                  favoris
+                </span>
+                {favorites.map((fav) => {
+                  const active =
+                    fav.provider === provider && fav.model === (modelOverride || "");
+                  return (
+                    <button
+                      key={`${fav.provider}:${fav.model}`}
+                      type="button"
+                      onClick={() => applyFavorite(fav)}
+                      className={`flex-shrink-0 text-[11px] font-mono px-2 py-1 border-2 transition-colors ${
+                        active
+                          ? "border-[#ffd700] text-[#ffd700] bg-[#ffd700]/10"
+                          : "border-white/20 text-gray-400 hover:border-[#ffd700]/60 hover:text-[#ffd700]"
+                      }`}
+                      title={`${fav.provider} · ${fav.label}`}
+                      data-testid={`favorite-chip-${fav.provider}-${fav.model || "default"}`}
+                    >
+                      {fav.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {attachments.length > 0 && (
+              <div
+                className="mb-3 flex gap-2 overflow-x-auto pb-1"
+                data-testid="attachment-list"
+              >
+                {attachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="flex items-center gap-2 border-2 border-[#ffd700] p-1.5 bg-black/40 flex-shrink-0"
+                  >
+                    {att.preview ? (
+                      <img
+                        src={att.preview}
+                        alt=""
+                        className="w-10 h-10 object-cover"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 flex items-center justify-center bg-[#ffd700]/10 border border-[#ffd700]/40">
+                        <FileText className="w-5 h-5 text-[#ffd700]" />
+                      </div>
+                    )}
+                    <div className="text-[11px] font-mono text-[#ffd700] max-w-[150px]">
+                      <div className="truncate" data-testid="attachment-name">
+                        {att.file.name}
+                      </div>
+                      <div className="text-gray-500">
+                        {att.file.size < 1024
+                          ? `${att.file.size} o`
+                          : `${(att.file.size / 1024).toFixed(1)} Ko`}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(att.id)}
+                      className="btn-ghost text-gray-400 hover:text-[#ff2a6d] p-1"
+                      data-testid="clear-image-btn"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
+                ))}
+                {attachments.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={clearAttachments}
+                    className="flex-shrink-0 text-[10px] font-mono uppercase tracking-wider text-gray-500 hover:text-[#ff2a6d] border-2 border-white/20 hover:border-[#ff2a6d] px-2"
+                    data-testid="clear-all-attachments-btn"
+                  >
+                    tout retirer
+                  </button>
                 )}
-                <div className="text-xs font-mono text-[#ffd700] max-w-[240px]">
-                  <div className="truncate" data-testid="attachment-name">
-                    {imageFile.name}
-                  </div>
-                  <div className="text-gray-500">
-                    {imageFile.size < 1024
-                      ? `${imageFile.size} o`
-                      : `${(imageFile.size / 1024).toFixed(1)} Ko`}
-                  </div>
-                </div>
-                <button
-                  onClick={clearImage}
-                  className="btn-ghost text-gray-400 hover:text-[#ff2a6d]"
-                  data-testid="clear-image-btn"
-                >
-                  <X className="w-4 h-4" />
-                </button>
               </div>
             )}
             <form
@@ -644,6 +893,7 @@ export default function Chat() {
             >
               <input
                 type="file"
+                multiple
                 ref={fileInputRef}
                 onChange={onPickFile}
                 className="hidden"
@@ -702,6 +952,26 @@ export default function Chat() {
                 )}
                 <button
                   type="button"
+                  onClick={toggleFavorite}
+                  className={`btn-ghost border-2 flex-shrink-0 ${
+                    isFavorite
+                      ? "border-[#ffd700] text-[#ffd700]"
+                      : "border-white/20 hover:border-[#ffd700] hover:text-[#ffd700]"
+                  }`}
+                  title={
+                    isFavorite
+                      ? "Retirer des favoris"
+                      : "Épingler ce modèle dans les favoris"
+                  }
+                  data-testid="toggle-favorite-btn"
+                >
+                  <Star
+                    className="w-5 h-5"
+                    fill={isFavorite ? "currentColor" : "none"}
+                  />
+                </button>
+                <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
                   className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] flex-shrink-0"
                   title="Joindre un fichier (image, PDF, texte, code...)"
@@ -737,7 +1007,7 @@ export default function Chat() {
                 ) : (
                   <button
                     type="submit"
-                    disabled={!text.trim() && !imageFile}
+                    disabled={!text.trim() && !attachments.length}
                     className="btn-primary flex-shrink-0 flex items-center gap-2"
                     data-testid="send-message-btn"
                   >
@@ -757,10 +1027,63 @@ export default function Chat() {
   );
 }
 
+function UsageBadge({ usage }) {
+  const windows = [
+    { key: "rolling", label: "5H" },
+    { key: "weekly", label: "SEM" },
+    { key: "monthly", label: "MOIS" },
+  ].filter((w) => usage?.[w.key]);
+  if (!windows.length) return null;
+
+  const color = (p) =>
+    p >= 90 ? "#ff2a6d" : p >= 70 ? "#ffd700" : "#05d9e8";
+
+  return (
+    <div
+      className="hidden md:flex items-center gap-2 border-2 border-white/20 bg-black/40 px-2 py-1"
+      title={
+        "Forfait OpenCode Go — " +
+        windows
+          .map(
+            (w) =>
+              `${w.label} : ${Math.round(usage[w.key].percent)}% utilisé (reset ${new Date(
+                usage[w.key].resetsAt
+              ).toLocaleString("fr-FR")})`
+          )
+          .join(" · ")
+      }
+      data-testid="usage-badge"
+    >
+      <Gauge className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+      {windows.map((w) => {
+        const pct = Math.min(100, Math.max(0, usage[w.key].percent || 0));
+        return (
+          <div key={w.key} className="flex items-center gap-1">
+            <span className="text-[9px] font-mono text-gray-500">{w.label}</span>
+            <div className="w-10 h-1.5 bg-white/10">
+              <div
+                className="h-full transition-all"
+                style={{ width: `${pct}%`, backgroundColor: color(pct) }}
+              />
+            </div>
+            <span
+              className="text-[9px] font-mono"
+              style={{ color: color(pct) }}
+              data-testid={`usage-${w.key}`}
+            >
+              {Math.round(pct)}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EmptyState({ onStart }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-20">
-      <Flame className="w-16 h-16 text-[#ff2a6d] mb-6" />
+      <img src="/icon-192.png" alt="" className="w-24 h-24 mb-6 border-2 border-white/20" />
       <h2 className="font-heading text-3xl md:text-5xl font-black tracking-tighter mb-4">
         WELCOME TO <span className="text-[#ffd700]">THE FORGE</span>
       </h2>

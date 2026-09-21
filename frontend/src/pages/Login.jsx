@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { Flame, Zap } from "lucide-react";
+import { Zap } from "lucide-react";
 
 const LOGIN_BG =
   "https://static.prod-images.emergentagent.com/jobs/ed4e7d81-8953-45de-a23c-d48e941ecd1d/images/2f6ca7a6762694d8e1ea0a0988b4619f404b2c526a4d4d50bdadd00248948ac6.png";
@@ -46,7 +46,7 @@ export default function Login() {
         <div className="absolute inset-0 bg-black/60" />
         <div className="relative z-10 flex flex-col justify-between p-12 w-full">
           <div className="flex items-center gap-3">
-            <Flame className="w-8 h-8 text-[#ff2a6d]" />
+            <img src="/logo-64.png" alt="" className="w-10 h-10" />
             <span className="font-heading font-black text-xl tracking-tight">
               UNCHAINED FORGE
             </span>

@@ -22,6 +22,61 @@ api.interceptors.request.use((config) => {
 
 export default api;
 
+/**
+ * Consomme un flux SSE renvoye par un POST (EventSource ne gere pas POST).
+ * Appelle onEvent({event, data}) pour chaque evenement recu.
+ */
+export async function postSSE(path, formData, { signal, onEvent }) {
+  const headers = {};
+  const token = localStorage.getItem("auth_token");
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const resp = await fetch(`${API}${path}`, {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+    headers,
+    signal,
+  });
+
+  if (!resp.ok || !resp.body) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      const j = await resp.json();
+      if (j?.detail) detail = typeof j.detail === "string" ? j.detail : detail;
+    } catch (_) {
+      // reponse non JSON : on garde le code HTTP
+    }
+    throw new Error(detail);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let event = "message";
+      const dataLines = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) continue;
+      try {
+        onEvent({ event, data: JSON.parse(dataLines.join("\n")) });
+      } catch (_) {
+        // fragment illisible : on l'ignore plutot que de casser le flux
+      }
+    }
+  }
+}
+
 export function formatApiError(err) {
   const detail = err?.response?.data?.detail;
   if (detail == null) return err?.message || "Something went wrong.";

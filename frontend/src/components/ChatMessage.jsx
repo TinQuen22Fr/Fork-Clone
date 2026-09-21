@@ -8,8 +8,7 @@ import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal
 dayjs.extend(relativeTime);
 dayjs.locale("fr");
 
-const AI_AVATAR =
-  "https://static.prod-images.emergentagent.com/jobs/ed4e7d81-8953-45de-a23c-d48e941ecd1d/images/c7086dd78e0bfe64bf4737e1adc397f7dc41438f8c4eee76e4b486e0869312c3.png";
+const AI_AVATAR = "/logo-64.png";
 
 const ttsAvailable =
   typeof window !== "undefined" && "speechSynthesis" in window;
@@ -71,12 +70,23 @@ export default function ChatMessage({
         data-testid="chat-message-user"
       >
         <div className="max-w-[88%] sm:max-w-[80%] min-w-0 flex flex-col items-end">
-          {(message.has_image || message.file_name) && (
-            <div className="mb-2 inline-flex items-center gap-1.5 text-xs font-mono text-[#ffd700] border border-[#ffd700]/40 bg-[#ffd700]/10 px-2 py-1">
-              <Paperclip className="w-3 h-3" />
-              <span data-testid={`attachment-chip-${message.id}`}>
-                {message.file_name || "image"}
-              </span>
+          {(message.attachments?.length > 0 ||
+            message.has_image ||
+            message.file_name) && (
+            <div className="mb-2 flex flex-wrap gap-1.5 justify-end">
+              {(message.attachments?.length
+                ? message.attachments.map((a) => a.name)
+                : [message.file_name || "image"]
+              ).map((name, i) => (
+                <span
+                  key={`${name}-${i}`}
+                  className="inline-flex items-center gap-1.5 text-xs font-mono text-[#ffd700] border border-[#ffd700]/40 bg-[#ffd700]/10 px-2 py-1 max-w-[220px]"
+                  data-testid={`attachment-chip-${message.id}-${i}`}
+                >
+                  <Paperclip className="w-3 h-3 flex-shrink-0" />
+                  <span className="truncate">{name}</span>
+                </span>
+              ))}
             </div>
           )}
           <div className="bg-[#ffd700] text-black border-2 border-black p-4 font-medium rounded-br-none shadow-[4px_4px_0_0_#ff2a6d] whitespace-pre-wrap break-words">
@@ -203,10 +213,17 @@ export default function ChatMessage({
             >
               {message.content}
             </ReactMarkdown>
+            {message.streaming && (
+              <span
+                className="inline-block w-2 h-4 align-middle bg-[#05d9e8] stream-caret"
+                data-testid="stream-caret"
+              />
+            )}
           </div>
         </div>
 
         {/* Action bar */}
+        {!message.streaming && (
         <div
           className="flex items-center gap-1 mt-2"
           data-testid={`msg-actions-${message.id}`}
@@ -266,7 +283,16 @@ export default function ChatMessage({
               {ts}
             </span>
           )}
+          {message.stopped && (
+            <span
+              className="ml-2 text-[10px] font-mono uppercase tracking-wider text-[#ff2a6d] border border-[#ff2a6d]/50 px-1.5 py-0.5"
+              data-testid={`stopped-badge-${message.id}`}
+            >
+              arrêté
+            </span>
+          )}
         </div>
+        )}
       </div>
     </div>
   );

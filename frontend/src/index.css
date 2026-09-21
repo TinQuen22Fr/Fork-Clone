@@ -37,6 +37,16 @@ body,
     }
 }
 
+/* Curseur clignotant pendant la génération en flux. */
+.stream-caret {
+    animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+    to {
+        visibility: hidden;
+    }
+}
+
 /* Respiration sous le dock sur iPhone (barre de geste home). */
 .safe-bottom {
     padding-bottom: max(1.5rem, env(safe-area-inset-bottom));

@@ -227,6 +227,95 @@ et le dock se retrouvait tout en bas, hors écran, inatteignable à cause de
 - 844×390 (téléphone paysage) et 820×1100 (tablette portrait) : dock visible, aucun débordement.
 - Tiroir mobile : ouverture, fond cliquable, fermeture OK.
 
+## Implémenté (2026-06) — PWA, streaming SSE, glisser-déposer, quota Go
+Fichiers: `backend/server.py`, `frontend/index.html`, `frontend/src/main.jsx`,
+`frontend/public/{manifest.webmanifest,sw.js,icon-*.png,maskable-*.png,apple-touch-icon.png,favicon-32.png}`,
+`frontend/src/lib/api.js`, `frontend/src/pages/Chat.jsx`,
+`frontend/src/components/ChatMessage.jsx`, `frontend/src/index.css`.
+
+### 1. Installable (PWA)
+- `manifest.webmanifest` (display standalone, start_url /chat, thème #050505) + icônes
+  192/512 + maskable 192/512 + apple-touch-icon 180 (icône flamme générée).
+- Métas iOS (`apple-mobile-web-app-*`) et `sw.js` **volontairement sans cache**
+  (réseau uniquement) : un SW cachant le bundle avait déjà piégé la prod. Enregistré
+  seulement en HTTPS depuis `main.jsx`.
+
+### 2. Streaming SSE (`POST /api/chat/stream`)
+- Événements : `user_message`, `start` (provider+modèle réels), `delta`, `tool`, `done`, `error`.
+- Headers : `Cache-Control: no-transform` et **`X-Accel-Buffering: no`** (indispensable derrière Nginx).
+- Parseur SSE Anthropic partagé (`_stream_anthropic_turn`) : reconstruit les blocs texte+tool_use
+  → **la boucle d'outils Claude fonctionne en streaming** (bash/read_file exécutés entre deux tours).
+- Streaming natif : Claude, Gemini (`client.aio...generate_content_stream`), Ollama local et Cloud
+  (NDJSON), OpenCode transports `chat` (SSE OpenAI) et `messages` (SSE Anthropic).
+  Transport `responses` → repli non-stream (une seule salve).
+- Cascade conservée : bascule provider possible **tant qu'aucun mot n'a été émis** ; après, l'erreur
+  est remontée telle quelle. Repli intra-provider conservé (ex. ollama_cloud deepseek → gpt-oss:120b).
+- **Arrêt = instantané** : couper la connexion annule le générateur. Le texte déjà produit est
+  sauvegardé avec `stopped: true` via une **tâche détachée** (`_spawn`/`_persist_stopped`) — on ne peut
+  pas `await` dans le `finally` d'un générateur en fermeture (GeneratorExit), les écritures étaient
+  silencieusement perdues. Badge « ARRÊTÉ » sur le message.
+- Front : `postSSE()` dans `lib/api.js` (fetch + ReadableStream, EventSource ne gère pas POST),
+  bulle en cours avec curseur clignotant `stream-caret`, barre d'actions masquée pendant le flux.
+- `/api/chat/send` (non-stream) conservé pour compatibilité ; `regenerate` l'utilise toujours.
+
+### 3. Glisser-déposer global
+- Écouteurs `dragenter/dragover/dragleave/drop` sur `window` avec compteur de profondeur,
+  overlay `drop-overlay` plein écran, `acceptFile()` partagé avec le trombone.
+
+### 4. Quota OpenCode Go
+- Endpoint découvert : `GET /zen/go/v1/usage` → `{rolling, weekly, monthly: {status, percent, resetsAt}}`.
+- Exposé par `GET /api/opencode/usage` (renvoie `available:false` + raison si clé absente/erreur,
+  jamais d'erreur bloquante). Rafraîchi au chargement et après chaque envoi.
+- `UsageBadge` dans l'en-tête : 3 mini-jauges 5H / SEM / MOIS, couleur cyan → jaune (70%) → rose (90%),
+  infobulle avec les dates de reset.
+
+### Tests (curl + navigateur)
+- Streaming : Claude (10 deltas), Claude+outil bash (événement `tool` puis réponse finale),
+  Gemini, OpenCode chat (deepseek-v4-flash) et messages (qwen3.8-max), Ollama Cloud avec repli gpt-oss:120b.
+- Navigateur : texte qui grandit (408 → 825 caractères en 2 s), curseur visible, STOP → texte partiel
+  conservé + badge ARRÊTÉ **persistant après rechargement**.
+- PWA : manifeste servi, 4 icônes, `display: standalone`, service worker enregistré.
+- Glisser-déposer : overlay affiché, fichier attaché, envoi en flux et marqueur retrouvé par Gemini.
+- Quota : badge affiché avec 0% sur les 3 fenêtres.
+
+## Implémenté (2026-06) — Multi-fichiers, favoris, icône « unchained »
+Fichiers: `backend/server.py`, `frontend/src/pages/Chat.jsx`,
+`frontend/src/components/ChatMessage.jsx`, `frontend/src/pages/Login.jsx`,
+`frontend/public/*` (icônes régénérées), `evolutions-futures-possible.md` (nouveau).
+
+### Multi-fichiers
+- Couche de génération refactorée : `image_b64/image_mime` → **`images: list[dict]`**
+  ({data, mime}) dans `_build_messages`, `_gemini_contents`, `_generate_*`, `_stream_*`,
+  `_dispatch_provider`, `generate_ai_response`, `stream_ai_response`. Multi-images
+  transmis nativement (Claude, Gemini, Ollama Cloud `images[]`, OpenCode `image_url[]`).
+- `process_uploads()` lit N pièces jointes ; `build_attachments_prompt()` **partage le
+  budget `MAX_FILE_CHARS` entre les fichiers** (plancher 2000 car/fichier).
+- Endpoints : champ `files` (répété). ⚠️ `Optional[list[UploadFile]] = File(None)` est
+  rejeté par Pydantic → utiliser **`files: list[UploadFile] = File(default=[])`**.
+  `file`/`image` restent acceptés pour compatibilité. `MAX_ATTACHMENTS=10`, 16 Mo cumulés.
+- Document message : `attachments[]` (métadonnées), `images_b64[]` et `prompt_override`
+  (exclus des GET). `_images_from_message()` assure la compat des anciens messages.
+  `regenerate` réutilise `prompt_override` tel quel.
+- Front : état `attachments[]`, input `multiple`, drop multiple, bandeau de vignettes
+  horizontal avec retrait unitaire + « tout retirer », puces multiples sur le message.
+
+### Favoris de modèles
+- localStorage `forge_favorites` : jusqu'à 6 entrées `{provider, model, label}`.
+- Bouton étoile dans les contrôles (épingle la sélection courante), barre de puces
+  au-dessus du composer, clic = applique provider + modèle en un coup.
+
+### Identité visuelle
+- Nouvelle icône : maillon de chaîne brisé (sigle « unchained ») au cœur de flammes
+  géométriques cyan/magenta/or, style cyberpunk. Régénérée en 192/512/maskable/apple-touch/
+  favicon/logo-64 et utilisée **partout** : PWA, favicon, logo sidebar, avatar assistant,
+  écran vide, page de connexion (remplace l'icône lucide `Flame` et l'ancien avatar distant).
+
+### Tests
+- curl : 3 fichiers (`a.txt`, `b.txt`, `c.py`) en streaming Gemini → les 3 marqueurs
+  correctement listés avec attribution au bon fichier.
+- Navigateur : 2 favoris épinglés (gemini-3.6-flash, glm-5.3-flash), clic → provider appliqué ;
+  dépôt de 3 fichiers → 3 vignettes ; envoi OK.
+
 ## Backlog
 - FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
 - FAIT (2026-09-07): lien "Register" masqué (instance admin-only).
