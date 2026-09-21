@@ -774,7 +774,12 @@ export default function Chat() {
         </div>
       </aside>
 
-      {githubOpen && <GithubSaveDialog onClose={() => setGithubOpen(false)} />}
+      {githubOpen && (
+        <GithubSaveDialog
+          conversationId={activeId}
+          onClose={() => setGithubOpen(false)}
+        />
+      )}
 
       {/* Superposition glisser-déposer */}      {dragging && (
         <div

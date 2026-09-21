@@ -262,7 +262,11 @@ class Settings:
         # Jeton personnel (classic ou fine-grained, portee "repo"). Accepte les
         # deux noms de variable ; surchargeable depuis l'interface.
         self.github_pat: str = _env("GITHUB_PAT") or _env("GITHUB_TOKEN")
-        # Repertoire pousse sur GitHub : la racine du projet par defaut.
+        # Racine contenant un sous-dossier par projet : /var/www/forge/workspace/<projet>
+        self.workspace_root: str = _env(
+            "WORKSPACE_ROOT", str(ROOT_DIR.parent / "workspace")
+        )
+        # Repli mono-projet (dev local) si la racine ci-dessus n'existe pas.
         self.workspace_dir: str = _env("WORKSPACE_DIR", str(ROOT_DIR.parent))
         self.git_author_name: str = _env("GIT_AUTHOR_NAME", "Claude Unchained Forge")
         self.git_author_email: str = _env(
@@ -3667,6 +3671,8 @@ class GithubPushRequest(BaseModel):
     repo: str  # "owner/name"
     branch: str
     message: Optional[str] = None
+    project: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 async def _github_token(user_id: str) -> tuple[str, str]:
@@ -3686,15 +3692,66 @@ def _redact(text: str, token: str) -> str:
     return text.replace(token, "***") if token else text
 
 
-def _git(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
+def _git(args: list[str], cwd: str, timeout: int = 300) -> subprocess.CompletedProcess:
     # safe.directory=* : le workspace peut appartenir a un autre utilisateur
     # que celui qui fait tourner le service.
     return subprocess.run(
         ["git", "-c", "safe.directory=*", *args],
-        cwd=settings.workspace_dir,
+        cwd=cwd,
         capture_output=True,
         text=True,
         timeout=timeout,
+    )
+
+
+def _workspace_root() -> Optional[Path]:
+    root = Path(settings.workspace_root)
+    return root if root.is_dir() else None
+
+
+def list_workspace_projects() -> list[dict]:
+    """Sous-dossiers de WORKSPACE_ROOT (un par projet), les plus recents d'abord."""
+    root = _workspace_root()
+    out: list[dict] = []
+    if root:
+        for d in sorted(
+            [p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            out.append({"name": d.name, "path": str(d), "is_git_repo": (d / ".git").exists()})
+    elif Path(settings.workspace_dir).is_dir():
+        # Repli mono-projet (dev local / sandbox).
+        d = Path(settings.workspace_dir)
+        out.append({"name": d.name, "path": str(d), "is_git_repo": (d / ".git").exists()})
+    return out
+
+
+async def resolve_project_dir(
+    project: Optional[str], conversation_id: Optional[str], user_id: str
+) -> tuple[str, Optional[str]]:
+    """Repertoire cible : projet demande > projet lie a la conversation > repli."""
+    name = (project or "").strip()
+    if not name and conversation_id:
+        conv = await get_db().conversations.find_one(
+            {"id": conversation_id, "user_id": user_id}, {"project": 1}
+        )
+        name = ((conv or {}).get("project") or "").strip()
+
+    projects = list_workspace_projects()
+    known = {p["name"]: p["path"] for p in projects}
+    if name:
+        if name not in known:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Projet inconnu dans {settings.workspace_root} : {name}",
+            )
+        return known[name], name
+    if len(projects) == 1:
+        return projects[0]["path"], projects[0]["name"]
+    raise HTTPException(
+        status_code=409,
+        detail="Aucun projet associe a cette session. Choisis le dossier cible.",
     )
 
 
@@ -3721,13 +3778,25 @@ async def _gh_api(token: str, path: str, params: Optional[dict] = None):
     return resp.json()
 
 
+@api_router.get("/workspace/projects")
+async def workspace_projects(current_user: dict = Depends(get_current_user)):
+    return {"root": settings.workspace_root, "projects": list_workspace_projects()}
+
+
 @api_router.get("/github/status")
-async def github_status(current_user: dict = Depends(get_current_user)):
+async def github_status(
+    project: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
     token, source = await _github_token(current_user["id"])
     out = {
         "configured": bool(token),
         "source": source,
-        "workspace": settings.workspace_dir,
+        "root": settings.workspace_root,
+        "projects": [p["name"] for p in list_workspace_projects()],
+        "project": None,
+        "workspace": None,
         "login": None,
         "branch": None,
         "changes": 0,
@@ -3741,13 +3810,25 @@ async def github_status(current_user: dict = Depends(get_current_user)):
             out["configured"] = False
 
     try:
-        head = _git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=15)
+        work, name = await resolve_project_dir(
+            project, conversation_id, current_user["id"]
+        )
+        out["workspace"] = work
+        out["project"] = name
+        # Depot propre au projet uniquement : on ne remonte jamais vers un
+        # depot parent (sinon git status du parent fausserait tout).
+        if not (Path(work) / ".git").exists():
+            return out
+        head = _git(["rev-parse", "--abbrev-ref", "HEAD"], work, timeout=15)
         if head.returncode == 0:
             out["is_git_repo"] = True
             out["branch"] = head.stdout.strip()
-        st = _git(["status", "--porcelain"], timeout=60)
+        st = _git(["status", "--porcelain"], work, timeout=60)
         if st.returncode == 0:
             out["changes"] = len([l for l in st.stdout.splitlines() if l.strip()])
+    except HTTPException as e:
+        out["needs_project"] = True
+        out["error"] = str(e.detail)
     except Exception as e:  # noqa: BLE001
         out["error"] = f"git indisponible: {str(e)[:200]}"
     return out
@@ -3834,26 +3915,34 @@ async def github_push(
         f"Sauvegarde depuis Claude Unchained Forge — {now_iso()[:19]}"
     )
     remote = f"https://x-access-token:{token}@github.com/{repo}.git"
+    work_dir, project_name = await resolve_project_dir(
+        payload.project, payload.conversation_id, current_user["id"]
+    )
+    # Memorise le projet sur la conversation pour les prochains push.
+    if payload.conversation_id and project_name:
+        await get_db().conversations.update_one(
+            {"id": payload.conversation_id, "user_id": current_user["id"]},
+            {"$set": {"project": project_name}},
+        )
 
     def _run() -> dict:
-        work = Path(settings.workspace_dir)
+        work = Path(work_dir)
         if not work.is_dir():
             raise HTTPException(
-                status_code=500,
-                detail=f"WORKSPACE_DIR introuvable: {settings.workspace_dir}",
+                status_code=500, detail=f"Repertoire projet introuvable: {work_dir}"
             )
         if not (work / ".git").exists():
-            init = _git(["init", "-b", branch])
+            init = _git(["init", "-b", branch], work_dir)
             if init.returncode != 0:
                 raise HTTPException(
                     status_code=500, detail=f"git init: {init.stderr[:300]}"
                 )
 
-        add = _git(["add", "-A"])
+        add = _git(["add", "-A"], work_dir)
         if add.returncode != 0:
             raise HTTPException(status_code=500, detail=f"git add: {add.stderr[:300]}")
 
-        staged = _git(["diff", "--cached", "--name-only"])
+        staged = _git(["diff", "--cached", "--name-only"], work_dir)
         files = [f for f in staged.stdout.splitlines() if f.strip()]
         commit_sha = ""
         if files:
@@ -3861,15 +3950,15 @@ async def github_push(
                 "-c", f"user.name={settings.git_author_name}",
                 "-c", f"user.email={settings.git_author_email}",
                 "commit", "-m", message,
-            ])
+            ], work_dir)
             if commit.returncode != 0:
                 raise HTTPException(
                     status_code=500, detail=f"git commit: {commit.stderr[:300]}"
                 )
-        rev = _git(["rev-parse", "--short", "HEAD"])
+        rev = _git(["rev-parse", "--short", "HEAD"], work_dir)
         commit_sha = rev.stdout.strip()
 
-        push = _git(["push", remote, f"HEAD:refs/heads/{branch}"], timeout=600)
+        push = _git(["push", remote, f"HEAD:refs/heads/{branch}"], work_dir, timeout=600)
         if push.returncode != 0:
             err = _redact(push.stderr or push.stdout, token)[:600]
             if "rejected" in err or "non-fast-forward" in err:
@@ -3887,6 +3976,8 @@ async def github_push(
             "ok": True,
             "repo": repo,
             "branch": branch,
+            "project": project_name,
+            "workspace": work_dir,
             "commit": commit_sha,
             "files_committed": len(files),
             "url": f"https://github.com/{repo}/tree/{branch}",

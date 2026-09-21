@@ -454,3 +454,14 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` ajoutes a env.example.
 - Verifie : status/repos(400 sans jeton)/fork par curl, menu + fenetre par navigateur.
   NON verifie faute de jeton reel dans le sandbox : liste des depots/branches et push effectif.
+
+## Correctif (2026-09-21) — ciblage dynamique du projet
+
+- `WORKSPACE_ROOT` (defaut /var/www/forge/workspace) : un sous-dossier par projet.
+- `GET /api/workspace/projects`, `GET /api/github/status?project=&conversation_id=` :
+  resolution projet demande > projet lie a la conversation (champ `project`) > repli
+  mono-projet ; sinon 409/needs_project et l UI impose le choix du dossier.
+- `POST /api/github/push` prend `project` + `conversation_id`, execute git add/commit/push
+  exclusivement dans le dossier du projet, et memorise le projet sur la conversation.
+- Isolation : un projet sans `.git` propre n est jamais rattache au depot parent.
+- UI : selecteur « Projet » dans la fenetre GitHub (`github-project-select`).

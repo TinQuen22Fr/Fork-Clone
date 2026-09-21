@@ -11,12 +11,15 @@ import {
   CheckCircle2,
   AlertTriangle,
   GitBranch,
+  FolderGit2,
   UploadCloud,
 } from "lucide-react";
 
-export const GithubSaveDialog = ({ onClose }) => {
+export const GithubSaveDialog = ({ onClose, conversationId }) => {
   const [status, setStatus] = useState(null);
   const [token, setToken] = useState("");
+  const [projects, setProjects] = useState([]);
+  const [project, setProject] = useState("");
   const [repos, setRepos] = useState([]);
   const [repo, setRepo] = useState("");
   const [branches, setBranches] = useState([]);
@@ -27,11 +30,18 @@ export const GithubSaveDialog = ({ onClose }) => {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
 
-  const loadStatus = async () => {
+  const loadStatus = async (proj) => {
     try {
-      const { data } = await api.get("/github/status");
+      const { data } = await api.get("/github/status", {
+        params: {
+          ...(proj ? { project: proj } : {}),
+          ...(conversationId ? { conversation_id: conversationId } : {}),
+        },
+      });
       setStatus(data);
-      if (data.configured) loadRepos();
+      setProjects(data.projects || []);
+      if (data.project) setProject(data.project);
+      if (data.configured && !repos.length) loadRepos();
     } catch (e) {
       setError(formatApiError(e));
     }
@@ -102,6 +112,8 @@ export const GithubSaveDialog = ({ onClose }) => {
         repo,
         branch: target,
         message: message.trim(),
+        project,
+        conversation_id: conversationId || null,
       });
       setResult(data);
       loadStatus();
@@ -136,7 +148,10 @@ export const GithubSaveDialog = ({ onClose }) => {
           {status && (
             <div className="font-mono text-[11px] text-gray-500 space-y-1">
               <div data-testid="github-workspace">
-                workspace : <span className="text-gray-300">{status.workspace}</span>
+                dossier cible :{" "}
+                <span className="text-gray-300">
+                  {status.workspace || "à choisir"}
+                </span>
               </div>
               <div>
                 jeton :{" "}
@@ -150,6 +165,32 @@ export const GithubSaveDialog = ({ onClose }) => {
                 <span className="text-[#ffd700]">{status.changes}</span>
               </div>
             </div>
+          )}
+
+          {projects.length > 0 && (
+            <label className="block space-y-1">
+              <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold flex items-center gap-1">
+                <FolderGit2 className="w-3 h-3" /> Projet ({status?.root})
+              </span>
+              <select
+                value={project}
+                onChange={(e) => {
+                  setProject(e.target.value);
+                  setResult(null);
+                  setError("");
+                  loadStatus(e.target.value);
+                }}
+                className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
+                data-testid="github-project-select"
+              >
+                <option value="">— choisir le dossier projet —</option>
+                {projects.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
 
           {status && !status.configured && (
@@ -295,7 +336,7 @@ export const GithubSaveDialog = ({ onClose }) => {
           </button>
           <button
             onClick={push}
-            disabled={busy || !status?.configured || !repo}
+            disabled={busy || !status?.configured || !repo || !status?.workspace}
             className="btn-primary flex items-center gap-2 text-xs disabled:opacity-40"
             data-testid="github-push-btn"
           >
