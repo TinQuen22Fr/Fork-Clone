@@ -738,7 +738,7 @@ export default function Chat() {
               GPLv3
             </a>
             <a
-              href="https://www.gnu.org/licenses/gpl-3.0.html#howto"
+              href="https://github.com/TinQuen22Fr/Fork-Clone/tree/claude-ai"
               target="_blank"
               rel="noreferrer"
               className="hover:text-[#ffd700] transition-colors"

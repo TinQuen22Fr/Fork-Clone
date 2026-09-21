@@ -16,6 +16,7 @@ WorkingDirectory=/var/www/forge/backend
 
 # Chemin vers l'environnement virtuel dans backend
 Environment="PATH=/var/www/forge/backend/venv/bin"
+Environment="PLAYWRIGHT_BROWSERS_PATH=/var/www/forge/.playwright"
 EnvironmentFile=/var/www/forge/backend/.env
 
 ExecStart=/var/www/forge/backend/venv/bin/uvicorn server:app \

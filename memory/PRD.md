@@ -419,3 +419,12 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Pied de page de la sidebar : badge « GPLv3 » (lien gnu.org) + lien « Code source »
   (`data-testid="license-badge"` / `source-code-link`). L`URL du dépôt Git reste
   à renseigner quand le dépôt public existera.
+
+## Git + Playwright (2026-09-21)
+
+- Lien « Code source » du pied de page -> https://github.com/TinQuen22Fr/Fork-Clone/tree/claude-ai (aussi dans le README).
+- `deploy/install-playwright.sh` : installation idempotente de Chromium headless ciblee Ubuntu 26.04 LTS (paquets t64 detectes via apt-cache), module playwright dans le venv, cache partage `/var/www/forge/.playwright` chown www-data, verification par lancement headless reel.
+- `deploy/forge-backend.service` : ajout de `Environment="PLAYWRIGHT_BROWSERS_PATH=/var/www/forge/.playwright"`.
+- `backend/env.example` : nouvelle variable PLAYWRIGHT_BROWSERS_PATH + doc mise a jour.
+- `screenshot_url` : message d erreur explicite pointant vers le script si Chromium est absent.
+- README : section « Captures d ecran de l agent (Playwright) » + renvoi vers NOTICE.

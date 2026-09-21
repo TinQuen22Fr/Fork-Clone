@@ -87,9 +87,41 @@ Ce projet est distribué sous licence **GNU General Public License v3 (GPLv3)**.
 
 Copyright (C) 2026 Quentin Dumont
 
+Code source : <https://github.com/TinQuen22Fr/Fork-Clone/tree/claude-ai>
+
 Vous êtes libre de l'utiliser, de l'étudier, de le modifier et de le redistribuer,
 y compris modifié, à condition que toute redistribution reste sous la même licence
 GPLv3 et conserve le code source disponible.
 
 Ce programme est fourni SANS AUCUNE GARANTIE. Voir le fichier [LICENSE](./LICENSE)
 pour le texte intégral officiel de la licence, ou <https://www.gnu.org/licenses/gpl-3.0.html>.
+
+Les licences des dépendances tierces (Python et npm) sont recensées dans
+[NOTICE](./NOTICE).
+
+## Captures d'écran de l'agent (Playwright)
+
+L'outil `screenshot_url` a besoin de Chromium headless. Sur le serveur
+(**Ubuntu 26.04 LTS**, paquets `t64` gérés automatiquement) :
+
+```bash
+cd /var/www/forge
+sudo bash deploy/install-playwright.sh
+```
+
+Le script est idempotent : il installe les dépendances système, le module
+`playwright` dans le venv du backend, télécharge Chromium dans un cache partagé
+(`/var/www/forge/.playwright`, accessible à `www-data`) puis vérifie un lancement
+headless réel. Variables surchargeables : `APP_DIR`, `VENV_DIR`,
+`PLAYWRIGHT_BROWSERS_PATH`, `SERVICE_USER`.
+
+Ensuite, dans `backend/.env` :
+
+```ini
+ENABLE_SCREENSHOT=true
+PLAYWRIGHT_BROWSERS_PATH=/var/www/forge/.playwright
+```
+
+L'unité `deploy/forge-backend.service` exporte déjà `PLAYWRIGHT_BROWSERS_PATH`.
+Sur une petite machine (Atom C2338, 4 Go), garde `ENABLE_SCREENSHOT=false` et
+privilégie `fetch_url` : une capture consomme ~300 Mo de RAM.

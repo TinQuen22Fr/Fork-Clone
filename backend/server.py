@@ -854,7 +854,15 @@ def _tool_screenshot_url(url: str, full_page: bool = False) -> str:
             page.screenshot(path=str(path), full_page=bool(full_page))
             browser.close()
     except Exception as e:  # noqa: BLE001
-        return f"Erreur de capture: {str(e)[:300]}"
+        msg = str(e)
+        if "Executable doesn't exist" in msg or "playwright install" in msg:
+            return (
+                "Erreur: le navigateur Chromium de Playwright n'est pas installe sur ce "
+                "serveur. Lance le script d'installation : "
+                "sudo bash deploy/install-playwright.sh (Ubuntu 26.04), puis redemarre le "
+                "backend. Verifie aussi PLAYWRIGHT_BROWSERS_PATH dans le .env."
+            )
+        return f"Erreur de capture: {msg[:300]}"
 
     public = f"/api/screenshots/{name}"
     return (
