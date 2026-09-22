@@ -19,6 +19,7 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 VENV_DIR="${VENV_DIR:-$APP_DIR/backend/venv}"
 SERVICE="${SERVICE:-forge-backend}"
+SERVICE_USER="${SERVICE_USER:-quentin}"
 BRANCH="${BRANCH:-}"
 DO_PULL=1
 DO_BACKEND=1
@@ -84,9 +85,9 @@ fi
 if [ -f backend/.env ] && [ -f backend/env.example ]; then
   c_step "Nouvelles variables de configuration"
   MISSING="$(
-    comm -23 \
-      <(grep -oE '^[A-Z0-9_]+=' backend/env.example | sort -u) \
-      <(grep -oE '^[A-Z0-9_]+=' backend/.env        | sort -u)
+    LC_ALL=C comm -23 --nocheck-order \
+      <(grep -oE '^[A-Z0-9_]+=' "$APP_DIR/backend/env.example" | LC_ALL=C sort -u) \
+      <(grep -oE '^[A-Z0-9_]+=' "$APP_DIR/backend/.env"        | LC_ALL=C sort -u)
   )"
   if [ -n "$MISSING" ]; then
     {
@@ -180,18 +181,39 @@ fi
 # 8. Redemarrage + verification
 # ---------------------------------------------------------------------------
 if [ "$DO_BACKEND" -eq 1 ]; then
+  c_step "Chemins inscriptibles exiges par systemd (ReadWritePaths)"
+  # Si un chemin de ReadWritePaths n'existe pas, systemd echoue avec
+  # status=226/NAMESPACE des le restart.
+  mkdir -p "$APP_DIR/workspace" "$APP_DIR/.playwright" \
+           "$APP_DIR/backend/static/screenshots"
+  chown -R "$SERVICE_USER":"$SERVICE_USER" \
+    "$APP_DIR/workspace" "$APP_DIR/.playwright" \
+    "$APP_DIR/backend/static/screenshots" 2>/dev/null \
+    || c_warn "chown impossible (utilisateur $SERVICE_USER inconnu ?)"
+  c_ok "workspace/, .playwright/, backend/static/screenshots/ prets"
+
   c_step "Redemarrage de $SERVICE"
   systemctl restart "$SERVICE"
-  sleep 4
+  systemctl is-active --quiet "$SERVICE" || sleep 3
   systemctl is-active --quiet "$SERVICE" || {
     journalctl -u "$SERVICE" -n 40 --no-pager
     die "$SERVICE ne demarre pas (journal ci-dessus)"
   }
   c_ok "service actif"
 
-  PORT="$(grep -m1 -oE '^PORT=[0-9]+' backend/.env 2>/dev/null | cut -d= -f2 || true)"
-  CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT:-8001}/api/" || true)"
-  [ "$CODE" = "200" ] && c_ok "API repond 200" || c_warn "API repond $CODE (verifie le journal)"
+  PORT="$(grep -m1 -oE '^PORT=[0-9]+' "$APP_DIR/backend/.env" 2>/dev/null | cut -d= -f2 || true)"
+  URL="http://127.0.0.1:${PORT:-8001}/api/health"
+  CODE=000
+  for _ in $(seq 1 10); do
+    CODE="$(curl -s -o /dev/null -w '%{http_code}' -X GET "$URL" || echo 000)"
+    [ "$CODE" = "200" ] && break
+    sleep 1
+  done
+  if [ "$CODE" = "200" ]; then
+    c_ok "API /api/health repond 200"
+  else
+    c_warn "API /api/health repond $CODE — inspecte : journalctl -u $SERVICE -n 50"
+  fi
 fi
 
 c_step "Mise a jour terminee"

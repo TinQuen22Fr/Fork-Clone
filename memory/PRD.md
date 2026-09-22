@@ -495,3 +495,8 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   de production (After mongodb.service, PATH + PLAYWRIGHT_BROWSERS_PATH, uvicorn
   --proxy-headers, isolation ProtectSystem/ProtectHome/PrivateTmp, ReadWritePaths).
   install.sh et upgrade.sh ne remplacent jamais une unite en place.
+
+- Correctifs scripts (2026-09-21) : comm -23 --nocheck-order avec LC_ALL=C et chemins
+  absolus ; creation+chown de workspace/, .playwright/, backend/static/screenshots avant
+  tout restart (evite status=226/NAMESPACE) ; health check en boucle (10 x 1 s) sur
+  GET /api/health dans upgrade.sh ET install.sh.

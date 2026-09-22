@@ -110,10 +110,33 @@ fi
 # ---------------------------------------------------------------------------
 read -r -p "Redémarrer ${SERVICE_NAME} maintenant ? [Y/n] " reply
 if [[ ! "$reply" =~ ^[Nn]$ ]]; then
+    # Chemins de ReadWritePaths : absents, systemd echoue en 226/NAMESPACE.
+    SERVICE_USER="${SERVICE_USER:-quentin}"
+    sudo mkdir -p "$APP_DIR/workspace" "$APP_DIR/.playwright" \
+                  "$APP_DIR/backend/static/screenshots"
+    sudo chown -R "$SERVICE_USER":"$SERVICE_USER" \
+        "$APP_DIR/workspace" "$APP_DIR/.playwright" \
+        "$APP_DIR/backend/static/screenshots" 2>/dev/null \
+        || c_warn "chown impossible (utilisateur $SERVICE_USER inconnu ?)"
+    c_ok "Chemins inscriptibles prêts (workspace, .playwright, screenshots)."
+
     sudo systemctl restart "$SERVICE_NAME"
-    sleep 1
     sudo systemctl --no-pager status "$SERVICE_NAME" | head -5
-    c_ok "Backend redémarré."
+
+    PORT="$(grep -m1 -oE '^PORT=[0-9]+' "$APP_DIR/backend/.env" 2>/dev/null | cut -d= -f2 || true)"
+    CODE=000
+    for _ in $(seq 1 10); do
+        CODE="$(curl -s -o /dev/null -w '%{http_code}' -X GET \
+            "http://127.0.0.1:${PORT:-8001}/api/health" || echo 000)"
+        [ "$CODE" = "200" ] && break
+        sleep 1
+    done
+    if [ "$CODE" = "200" ]; then
+        c_ok "Backend redémarré — /api/health répond 200."
+    else
+        c_warn "Backend redémarré mais /api/health répond $CODE."
+        c_info "  journalctl -u $SERVICE_NAME -n 50 --no-pager"
+    fi
 else
     c_warn "Redémarrage laissé de côté — pensez-y avant de tester."
 fi
