@@ -1,0 +1,25 @@
+{
+  "summary": "Validation post-restauration de backend/requirements.txt (33 lignes). Aucune régression détectée. Backend: 14/14 tests pytest passent (imports edge_tts/anthropic/google-genai/pypdf/playwright OK, /api/health 200, login admin OK, /api/conversations OK, /api/models retourne bien 'claude' dans providers, /api/tts/voices?locale=fr retourne 'edge-tts' avec DeniseNeural présente, POST /api/tts renvoie ~binaire MP3 valide (>1KB, magic ID3/0xFF FB) avec header X-TTS-Provider: edge-tts, DELETE granulaire message renvoie 200 puis 404, redact_secrets masque bien clefs, _tool_read_file refuse /app/backend/.env). Chat /chat/send a même fonctionné → au moins un provider LLM est joignable dans le sandbox. Frontend: login admin OK, sidebar liste 51 conversations, menu '+' expose menu-attach-file/menu-save-github/menu-fork-chat (tous visibles), sélecteur de voix ouvre bien un panneau 'VOIX DE LECTURE · EDGE-TTS' avec voice-select + voice-test-btn (bouton 'Écouter un extrait'), icônes delete-msg-* présentes sous les messages (3 dans la conversation ouverte). Le fix pip resolution-too-deep n'a rien cassé.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_deps_regression.py",
+    "/app/test_reports/pytest/deps_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py fait maintenant 4407 lignes — bien au-delà du seuil de 700 recommandé; à découper en modules (auth, chat, tts, providers, github, tools) pour la maintenabilité.",
+    "Le test /api/tts/voices dépend d'un accès sortant vers speech.platform.bing.com; en environnement air-gap l'endpoint retourne 200 avec voices=[] et un champ 'error'. À documenter côté ops."
+  ],
+  "updated_files": ["/app/backend/tests/test_deps_regression.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% sur le périmètre demandé"},
+  "test_credentials": "admin@forge.dev / ForgeAdmin2026!",
+  "seed_data_creation": "Une conversation 'TEST_del_msg' créée puis supprimée par les tests (cleanup automatique).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Le fichier /app/backend/requirements.txt est propre (33 lignes, bornes >= sauf pins volontaires fastapi==0.110.1, uvicorn==0.25.0, pymongo==4.5.0, motor==3.3.1, bcrypt==4.1.3). edge-tts>=7.0.0 est installé et fonctionne. Tous les endpoints critiques /api/health, /api/auth/login, /api/conversations, /api/models, /api/tts/voices, /api/tts, DELETE /api/conversations/{id}/messages/{id} sont OK. Pour rejouer: `REACT_APP_BACKEND_URL=https://fork-clone-1.preview.emergentagent.com pytest /app/backend/tests/test_deps_regression.py -v`."
+}

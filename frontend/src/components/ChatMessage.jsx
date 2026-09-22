@@ -53,7 +53,7 @@ function ActionButton({ onClick, title, active, testId, children }) {
   );
 }
 
-export default function ChatMessage({
+function ChatMessage({
   message,
   isLast = false,
   onRegenerate,
@@ -430,3 +430,12 @@ export default function ChatMessage({
     </div>
   );
 }
+
+// Evite de re-rendre tous les messages a chaque fragment recu en streaming.
+export default React.memo(ChatMessage, (a, b) =>
+  a.message.id === b.message.id &&
+  a.message.content === b.message.content &&
+  a.message.tool_steps === b.message.tool_steps &&
+  a.isLast === b.isLast &&
+  a.regenerating === b.regenerating
+);

@@ -531,3 +531,16 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   dans localStorage `forge_tts_voice`, bouton « Ecouter un extrait ».
 - Verifie : /api/tts renvoie un MP3 de 19 Ko (provider edge-tts), catalogue 15 voix fr,
   selecteur fonctionnel en UI.
+
+## Correctif critique (2026-09-22) — requirements.txt
+
+- CAUSE : un `pip freeze > requirements.txt` execute dans le sandbox avait ecrase le
+  fichier avec 138 lignes de l environnement sandbox (litellm depuis une URL Emergent,
+  stripe, reportlab, tokenizers, grpcio... tout en ==), provoquant
+  `error: resolution-too-deep` a l upgrade sur la Dedibox (Python 3.14).
+- FIX : restauration du fichier propre de 33 lignes (bornes >= sauf pins volontaires)
+  + `edge-tts>=7.0.0`. upgrade.sh utilise desormais `--upgrade-strategy only-if-needed`.
+- REGLE : ne JAMAIS relancer pip freeze sur ce projet ; ajouter la dependance a la main.
+- Valide par testing_agent (iteration_8.json) : 14/14 backend, frontend OK, aucune regression.
+- Perf : ChatMessage encapsule dans React.memo (comparateur sur id/content/tool_steps/
+  isLast/regenerating) pour ne plus re-rendre tous les messages a chaque fragment SSE.
