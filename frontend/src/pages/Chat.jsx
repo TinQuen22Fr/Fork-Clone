@@ -36,6 +36,7 @@ import {
   GitFork,
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
+import VoicePicker from "@/components/VoicePicker";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -1153,6 +1154,7 @@ export default function Chat() {
                     <Mic className="w-5 h-5" />
                   )}
                 </button>
+                <VoicePicker />
                 <div className="relative flex-shrink-0">
                   <button
                     type="button"

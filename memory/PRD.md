@@ -515,3 +515,19 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   CLE=valeur contenant KEY/TOKEN/SECRET/PASSWORD/PAT/MONGO_URL. Applique aux sorties
   d outils et au contenu assistant enregistre (streaming inclus).
 - Verifie : DELETE ok + 404 au second appel, regex testees, 3 boutons supprimer en UI.
+
+## Implemente (2026-09-22) — Voix neurale (FreeTTS + edge-tts)
+
+- Backend : `GET /api/tts/voices?locale=fr` (catalogue, champ `provider`) et
+  `POST /api/tts` -> MP3 (audio/mpeg). FreeTTS (freetts.org, en-tete x-api-key,
+  flux POST /v1/tts -> GET /audio/{file_id}) si FREETTS_API_KEY present, sinon repli
+  automatique sur edge-tts (meme moteur Microsoft, sans cle ni quota).
+- .env : FREETTS_API_KEY, FREETTS_BASE_URL, TTS_VOICE (defaut fr-FR-DeniseNeural),
+  TTS_RATE, TTS_PITCH, TTS_MAX_CHARS. `edge-tts==7.2.8` ajoute a requirements.txt.
+- Frontend : le bouton haut-parleur lit desormais le MP3 neural (Blob + Audio),
+  repli Web Speech uniquement si le serveur echoue. Nouveau `VoicePicker.jsx`
+  (icone haut-parleur dans la barre de saisie) : selection de la voix (fr-FR-Denise:
+  DragonLatestNeural et fr-FR-CelesteNeural epinglees en tete + catalogue), memorisee
+  dans localStorage `forge_tts_voice`, bouton « Ecouter un extrait ».
+- Verifie : /api/tts renvoie un MP3 de 19 Ko (provider edge-tts), catalogue 15 voix fr,
+  selecteur fonctionnel en UI.

@@ -269,6 +269,18 @@ class Settings:
         ]
         self.enable_fallback: bool = _env_bool("ENABLE_FALLBACK", True)
 
+        # --- Synthese vocale (lecture a voix haute) ---
+        # FreeTTS (freetts.org) : voix neurales Microsoft/Azure. Sans cle, repli
+        # automatique sur edge-tts (meme moteur, sans cle, sans quota).
+        self.freetts_api_key: str = _env("FREETTS_API_KEY")
+        self.freetts_base_url: str = _env(
+            "FREETTS_BASE_URL", "https://freetts.org/api"
+        ).rstrip("/")
+        self.tts_voice: str = _env("TTS_VOICE", "fr-FR-DeniseNeural")
+        self.tts_rate: str = _env("TTS_RATE", "+0%")
+        self.tts_pitch: str = _env("TTS_PITCH", "+0Hz")
+        self.tts_max_chars: int = int(_env("TTS_MAX_CHARS", "4000"))
+
         # --- Sauvegarde du workspace sur GitHub ---
         # Jeton personnel (classic ou fine-grained, portee "repo"). Accepte les
         # deux noms de variable ; surchargeable depuis l'interface.
@@ -4184,6 +4196,165 @@ async def fork_conversation(
 
     doc.pop("_id", None)
     return {**doc, "messages_copied": len(msgs)}
+
+
+# =========================================================================
+# Synthese vocale — FreeTTS (cle) ou edge-tts (sans cle)
+# =========================================================================
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    rate: Optional[str] = None
+    pitch: Optional[str] = None
+
+
+def _tts_provider() -> str:
+    return "freetts" if settings.freetts_api_key else "edge-tts"
+
+
+async def _freetts_voices() -> list[dict]:
+    async with httpx.AsyncClient(timeout=25.0) as http:
+        r = await http.get(f"{settings.freetts_base_url}/voices")
+        r.raise_for_status()
+        data = r.json()
+    items = data.get("voices") if isinstance(data, dict) else data
+    return [
+        {
+            "short_name": v.get("ShortName") or v.get("shortName") or v.get("Name"),
+            "gender": v.get("Gender") or v.get("gender"),
+            "locale": v.get("Locale") or v.get("locale"),
+        }
+        for v in (items or [])
+        if (v.get("ShortName") or v.get("shortName") or v.get("Name"))
+    ]
+
+
+async def _edge_voices() -> list[dict]:
+    import edge_tts
+
+    return [
+        {
+            "short_name": v.get("ShortName"),
+            "gender": v.get("Gender"),
+            "locale": v.get("Locale"),
+        }
+        for v in await edge_tts.list_voices()
+        if v.get("ShortName")
+    ]
+
+
+@api_router.get("/tts/voices")
+async def tts_voices(
+    locale: str = "fr", current_user: dict = Depends(get_current_user)
+):
+    """Catalogue de voix neurales, filtre par langue (ex. 'fr')."""
+    try:
+        voices = (
+            await _freetts_voices()
+            if settings.freetts_api_key
+            else await _edge_voices()
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Catalogue TTS indisponible: %s", e)
+        return {
+            "provider": _tts_provider(),
+            "default": settings.tts_voice,
+            "voices": [],
+            "error": str(e)[:200],
+        }
+
+    if locale:
+        low = locale.lower()
+        voices = [v for v in voices if (v.get("locale") or "").lower().startswith(low)]
+    voices.sort(key=lambda v: v["short_name"])
+    return {
+        "provider": _tts_provider(),
+        "default": settings.tts_voice,
+        "voices": voices,
+    }
+
+
+async def _synth_freetts(text: str, voice: str, rate: str, pitch: str) -> bytes:
+    async with httpx.AsyncClient(timeout=90.0) as http:
+        r = await http.post(
+            f"{settings.freetts_base_url}/v1/tts",
+            headers={"x-api-key": settings.freetts_api_key},
+            json={
+                "text": text,
+                "voice": voice,
+                "rate": rate,
+                "pitch": pitch,
+                "output_format": "mp3",
+            },
+        )
+        if r.status_code == 429:
+            raise HTTPException(status_code=429, detail="Quota FreeTTS atteint.")
+        if r.status_code >= 400:
+            raise HTTPException(
+                status_code=502, detail=f"FreeTTS {r.status_code}: {r.text[:200]}"
+            )
+        body = r.json()
+        if isinstance(body, dict) and body.get("audio_url"):
+            audio = await http.get(body["audio_url"])
+        else:
+            file_id = (body or {}).get("file_id") or (body or {}).get("id")
+            if not file_id:
+                raise HTTPException(status_code=502, detail="FreeTTS: file_id absent.")
+            audio = await http.get(f"{settings.freetts_base_url}/audio/{file_id}")
+        audio.raise_for_status()
+        return audio.content
+
+
+async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
+    import edge_tts
+
+    buf = bytearray()
+    comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    async for chunk in comm.stream():
+        if chunk["type"] == "audio":
+            buf.extend(chunk["data"])
+    if not buf:
+        raise HTTPException(status_code=502, detail="edge-tts: audio vide.")
+    return bytes(buf)
+
+
+@api_router.post("/tts")
+async def tts_speak(
+    payload: TTSRequest, current_user: dict = Depends(get_current_user)
+):
+    """Retourne un MP3 de la voix neurale choisie."""
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Texte vide.")
+    text = text[: settings.tts_max_chars]
+    voice = (payload.voice or settings.tts_voice).strip()
+    if len(voice) > 160 or not re.fullmatch(r"[A-Za-z0-9:\-_()]+", voice):
+        raise HTTPException(status_code=400, detail="Nom de voix invalide.")
+    rate = payload.rate or settings.tts_rate
+    pitch = payload.pitch or settings.tts_pitch
+
+    try:
+        if settings.freetts_api_key:
+            audio = await _synth_freetts(text, voice, rate, pitch)
+        else:
+            audio = await _synth_edge(text, voice, rate, pitch)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Echec TTS (%s): %s", _tts_provider(), e)
+        raise HTTPException(
+            status_code=502, detail=f"Synthese vocale echouee: {str(e)[:200]}"
+        )
+
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": 'inline; filename="speech.mp3"',
+            "X-TTS-Provider": _tts_provider(),
+            "X-TTS-Voice": voice,
+        },
+    )
 
 
 @api_router.get("/")
