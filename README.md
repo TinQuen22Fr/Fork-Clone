@@ -119,6 +119,13 @@ que l'API répond `200`.
 
 Options : `--no-pull`, `--backend-only`, `--frontend-only`, `--branch <nom>`.
 
+> **Service systemd** : `upgrade.sh` n'écrase **jamais** une unité déjà installée
+> (ton durcissement `ProtectSystem=strict` / `ReadWritePaths` reste intact). Il se
+> contente de signaler un écart avec le modèle du dépôt. L'unité n'est copiée que
+> si aucune n'existe. Avec `ReadOnlyPaths=/var/www/forge`, seuls les projets sous
+> `workspace/` sont inscriptibles : le push GitHub doit donc cibler
+> `WORKSPACE_ROOT=/var/www/forge/workspace`.
+
 ## Enregistrer le workspace sur GitHub
 
 Dans la barre de saisie, le bouton **+** ouvre un menu : « Joindre un fichier »,

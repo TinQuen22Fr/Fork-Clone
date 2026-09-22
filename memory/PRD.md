@@ -479,3 +479,8 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   alerte si la conf Nginx differe, restart + verification HTTP 200.
   Options : --no-pull, --backend-only, --frontend-only, --branch <nom>.
   install.sh reste reserve a la premiere installation / reinstallation.
+
+- Correctif (2026-09-21) : upgrade.sh ne remplace plus jamais une unite systemd
+  existante (durcissement ProtectSystem/ReadWritePaths preserve) ; il copie le modele
+  seulement si aucune unite n existe, et signale sinon un simple diff. Le modele
+  deploy/forge-backend.service reprend desormais le durcissement par namespaces.

@@ -1,40 +1,23 @@
-# =============================================================================
-# Claude Unchained Forge — service systemd
-# Déposer dans /etc/systemd/system/forge-backend.service
-# =============================================================================
-
 [Unit]
 Description=Claude Unchained Forge - backend FastAPI
-After=network.target mongod.service
-Wants=mongod.service
+After=network.target
 
 [Service]
 Type=simple
 User=quentin
 Group=quentin
 WorkingDirectory=/var/www/forge/backend
-
-# Chemin vers l'environnement virtuel dans backend
-Environment="PATH=/var/www/forge/backend/venv/bin"
-Environment="PLAYWRIGHT_BROWSERS_PATH=/var/www/forge/.playwright"
+ExecStart=/var/www/forge/backend/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8001 --workers 2
+Restart=always
+RestartSec=3
 EnvironmentFile=/var/www/forge/backend/.env
 
-ExecStart=/var/www/forge/backend/venv/bin/uvicorn server:app \
-    --host 127.0.0.1 \
-    --port 8001 \
-    --workers 2 \
-    --proxy-headers \
-    --forwarded-allow-ips=127.0.0.1
-
-Restart=on-failure
-RestartSec=5
-
-# Durcissement de base
-NoNewPrivileges=true
-PrivateTmp=true
+# Durcissement et isolation
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/www/forge
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/var/www/forge
+ReadWritePaths=/var/www/forge/workspace /var/www/forge/.playwright /var/www/forge/backend/static/screenshots /dev/shm
 
 [Install]
 WantedBy=multi-user.target

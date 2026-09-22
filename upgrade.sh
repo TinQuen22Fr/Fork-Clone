@@ -149,13 +149,20 @@ fi
 if [ "$DO_BACKEND" -eq 1 ] && [ -f deploy/forge-backend.service ]; then
   c_step "Service systemd"
   UNIT="/etc/systemd/system/$SERVICE.service"
-  if [ -f "$UNIT" ] && cmp -s deploy/forge-backend.service "$UNIT"; then
-    c_ok "unite deja a jour"
+  if [ -f "$UNIT" ]; then
+    # JAMAIS d'ecrasement : l'unite en place peut contenir du durcissement
+    # (ProtectSystem, ReadWritePaths, namespaces Playwright...) absent du modele.
+    c_ok "unite existante conservee intacte ($UNIT)"
+    if ! cmp -s deploy/forge-backend.service "$UNIT"; then
+      c_warn "le modele du depot differe de ton unite — rien n'a ete touche."
+      echo "      Compare si tu veux recuperer une nouveaute :"
+      echo "      diff -u $UNIT deploy/forge-backend.service"
+    fi
   else
-    cp "$UNIT" "$UNIT.bak-$STAMP" 2>/dev/null || true
     cp deploy/forge-backend.service "$UNIT"
     systemctl daemon-reload
-    c_ok "unite mise a jour (ancienne version : $UNIT.bak-$STAMP)"
+    systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+    c_ok "unite installee depuis le modele (aucune n'existait)"
   fi
 fi
 
