@@ -484,3 +484,9 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   existante (durcissement ProtectSystem/ReadWritePaths preserve) ; il copie le modele
   seulement si aucune unite n existe, et signale sinon un simple diff. Le modele
   deploy/forge-backend.service reprend desormais le durcissement par namespaces.
+
+- Correctif (2026-09-21) : install.sh ne remplace plus jamais une unite systemd
+  existante (plus de prompt de remplacement) ; il installe le gabarit durci
+  uniquement si aucune unite n existe, sinon il affiche juste la commande de diff.
+  Meme comportement que upgrade.sh. Le gabarit deploy/forge-backend.service est
+  identique a l unite qui tourne sur la Dedibox.

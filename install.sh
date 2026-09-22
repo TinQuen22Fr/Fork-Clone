@@ -80,7 +80,7 @@ c_info "Frontend : build de production..."
 c_ok "Build généré dans $FRONTEND_DIR/build/"
 
 # ---------------------------------------------------------------------------
-# 4. Service systemd — n'écrase qu'après confirmation si le contenu diffère
+# 4. Service systemd — jamais d'écrasement d'une unité existante
 # ---------------------------------------------------------------------------
 NEW_SERVICE="$APP_DIR/deploy/forge-backend.service"
 
@@ -91,23 +91,18 @@ if [ ! -f "$SERVICE_FILE" ]; then
         sudo cp "$NEW_SERVICE" "$SERVICE_FILE"
         sudo systemctl daemon-reload
         sudo systemctl enable "$SERVICE_NAME"
-        c_ok "Service installé et activé."
+        c_ok "Service installé et activé (gabarit durci : namespaces + ReadWritePaths)."
     else
         c_warn "Service non installé — démarrez le backend manuellement."
     fi
 elif ! diff -q "$NEW_SERVICE" "$SERVICE_FILE" >/dev/null 2>&1; then
-    c_warn "Le service installé diffère du gabarit du dépôt :"
-    diff -u "$SERVICE_FILE" "$NEW_SERVICE" || true
-    read -r -p "Remplacer le service existant par celui du dépôt ? [y/N] " reply
-    if [[ "$reply" =~ ^[Yy]$ ]]; then
-        sudo cp "$NEW_SERVICE" "$SERVICE_FILE"
-        sudo systemctl daemon-reload
-        c_ok "Service mis à jour."
-    else
-        c_warn "Service existant conservé tel quel."
-    fi
+    # L'unité en place peut contenir un durcissement local (ProtectSystem,
+    # ReadWritePaths, isolation Playwright...) : on ne la remplace jamais.
+    c_ok "Service systemd existant conservé intact (durcissement préservé)."
+    c_warn "Il diffère du gabarit du dépôt. Pour comparer sans rien changer :"
+    c_info "  diff -u $SERVICE_FILE $NEW_SERVICE"
 else
-    c_ok "Service systemd déjà à jour."
+    c_ok "Service systemd déjà identique au gabarit."
 fi
 
 # ---------------------------------------------------------------------------
