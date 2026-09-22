@@ -544,3 +544,7 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Valide par testing_agent (iteration_8.json) : 14/14 backend, frontend OK, aucune regression.
 - Perf : ChatMessage encapsule dans React.memo (comparateur sur id/content/tool_steps/
   isLast/regenerating) pour ne plus re-rendre tous les messages a chaque fragment SSE.
+
+- Correctif (2026-09-22) install-playwright.sh : SERVICE_USER par defaut = proprietaire
+  de APP_DIR (stat -c %U) au lieu de www-data ; verification headless en memoire
+  (page.screenshot() sans path) pour eviter PermissionError sur /tmp.

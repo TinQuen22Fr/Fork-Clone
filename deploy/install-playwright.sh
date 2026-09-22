@@ -14,14 +14,16 @@
 #     APP_DIR=/var/www/forge                 racine de l'application
 #     VENV_DIR=$APP_DIR/backend/venv         virtualenv du backend
 #     PLAYWRIGHT_BROWSERS_PATH=$APP_DIR/.playwright
-#     SERVICE_USER=www-data                  proprietaire du cache navigateur
+#     SERVICE_USER=<owner de APP_DIR>        proprietaire du cache navigateur
 #
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/var/www/forge}"
 VENV_DIR="${VENV_DIR:-$APP_DIR/backend/venv}"
 PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$APP_DIR/.playwright}"
-SERVICE_USER="${SERVICE_USER:-www-data}"
+# Par defaut : le proprietaire du dossier de l'app (= l'utilisateur du service),
+# et non www-data, sinon le cache navigateur est attribue au mauvais compte.
+SERVICE_USER="${SERVICE_USER:-$(stat -c %U "$APP_DIR" 2>/dev/null || echo root)}"
 export PLAYWRIGHT_BROWSERS_PATH
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -146,23 +148,23 @@ log "Verification du lancement headless"
 if sudo -u "$SERVICE_USER" -H \
      env PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
      "$PY" - <<'PYCHECK'
-import sys, tempfile, pathlib
+import sys
 from playwright.sync_api import sync_playwright
 
-out = pathlib.Path(tempfile.gettempdir()) / "forge_playwright_check.png"
+# Capture en memoire : aucun fichier temporaire, donc aucun probleme de droits.
 with sync_playwright() as pw:
     b = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
     p = b.new_page(viewport={"width": 800, "height": 600})
     p.set_content("<h1>forge ok</h1>")
-    p.screenshot(path=str(out))
+    data = p.screenshot()
     b.close()
-print("capture test ecrite:", out, out.stat().st_size, "octets")
-sys.exit(0)
+print("capture test:", len(data), "octets")
+sys.exit(0 if len(data) > 500 else 1)
 PYCHECK
 then
   log "Chromium headless operationnel"
 else
-  die "le lancement headless a echoue — relis les messages apt ci-dessus"
+  die "le lancement headless a echoue — verifie les droits sur $PLAYWRIGHT_BROWSERS_PATH"
 fi
 
 # ----------------------------------------------------------------------------
