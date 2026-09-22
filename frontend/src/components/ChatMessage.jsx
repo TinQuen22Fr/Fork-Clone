@@ -13,7 +13,7 @@ import ReactMarkdown from "react-markdown";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/fr";
-import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal, Paperclip } from "lucide-react";
+import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal, Paperclip, Trash2 } from "lucide-react";
 
 dayjs.extend(relativeTime);
 dayjs.locale("fr");
@@ -57,6 +57,7 @@ export default function ChatMessage({
   isLast = false,
   onRegenerate,
   onFeedback,
+  onDelete,
   regenerating = false,
 }) {
   const isUser = message.role === "user";
@@ -104,16 +105,30 @@ export default function ChatMessage({
           <div className="bg-[#ffd700] text-black border-2 border-black p-4 font-medium rounded-br-none shadow-[4px_4px_0_0_#ff2a6d] whitespace-pre-wrap break-words">
             {message.content}
           </div>
-          <button
-            type="button"
-            onClick={copyUser}
-            title={copied ? "Copié" : "Copier"}
-            aria-label={copied ? "Copié" : "Copier"}
-            data-testid={`copy-user-msg-${message.id}`}
-            className="mt-1 p-1 text-gray-600 hover:text-[#ffd700] opacity-0 group-hover:opacity-100 transition-opacity"
-          >
-            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
+          <div className="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              type="button"
+              onClick={copyUser}
+              title={copied ? "Copié" : "Copier"}
+              aria-label={copied ? "Copié" : "Copier"}
+              data-testid={`copy-user-msg-${message.id}`}
+              className="p-1 text-gray-600 hover:text-[#ffd700]"
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+            {onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(message.id)}
+                title="Supprimer ce message"
+                aria-label="Supprimer ce message"
+                data-testid={`delete-msg-${message.id}`}
+                className="p-1 text-gray-600 hover:text-[#ff2a6d]"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -350,6 +365,16 @@ export default function ChatMessage({
               testId={`regenerate-${message.id}`}
             >
               <RotateCcw className={`w-4 h-4 ${regenerating ? "animate-spin" : ""}`} />
+            </ActionButton>
+          )}
+
+          {onDelete && (
+            <ActionButton
+              onClick={() => onDelete(message.id)}
+              title="Supprimer ce message"
+              testId={`delete-msg-${message.id}`}
+            >
+              <Trash2 className="w-4 h-4" />
             </ActionButton>
           )}
 

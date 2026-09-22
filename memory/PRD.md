@@ -500,3 +500,18 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   absolus ; creation+chown de workspace/, .playwright/, backend/static/screenshots avant
   tout restart (evite status=226/NAMESPACE) ; health check en boucle (10 x 1 s) sur
   GET /api/health dans upgrade.sh ET install.sh.
+
+## Implemente (2026-09-22) — Suppression granulaire + garde-fou secrets
+
+- `DELETE /api/conversations/{conv_id}/messages/{message_id}` : suppression definitive
+  d un message (404 si inconnu, verification du proprietaire de la conversation).
+- Frontend : icone poubelle sous chaque message, utilisateur ET assistant
+  (`delete-msg-{id}`), avec confirmation ; barre d actions homogene (copier + supprimer).
+- Securite : system prompt complete par des regles non negociables (interdiction
+  de lire .env/*.key, de divulguer une cle, de contourner via shell).
+- `_tool_read_file` refuse .env*, *.key/.pem/.p12, id_rsa, .netrc, .git-credentials.
+- `redact_secrets()` : masque prefixes connus (sk-, sk-or-v1-, sk-ant-, gsk_, csk-,
+  nvapi-, ghp_/github_pat_, AIza, xox*, cles privees PEM) + toute affectation
+  CLE=valeur contenant KEY/TOKEN/SECRET/PASSWORD/PAT/MONGO_URL. Applique aux sorties
+  d outils et au contenu assistant enregistre (streaming inclus).
+- Verifie : DELETE ok + 404 au second appel, regex testees, 3 boutons supprimer en UI.

@@ -223,6 +223,17 @@ export default function Chat() {
     }
   };
 
+  const deleteMessage = async (messageId) => {
+    if (!activeId) return;
+    if (!window.confirm("Supprimer définitivement ce message ?")) return;
+    try {
+      await api.delete(`/conversations/${activeId}/messages/${messageId}`);
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    } catch (e) {
+      setError(formatApiError(e));
+    }
+  };
+
   const deleteConversation = async (cid) => {
     if (!window.confirm("Delete this conversation?")) return;
     try {
@@ -884,6 +895,7 @@ export default function Chat() {
                 isLast={m.id === lastAssistantId}
                 onRegenerate={regenerate}
                 onFeedback={submitFeedback}
+                onDelete={deleteMessage}
                 regenerating={regenerating}
               />
             ))}

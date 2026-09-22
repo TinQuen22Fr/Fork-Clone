@@ -194,7 +194,18 @@ class Settings:
             "Tu es Claude Unchained Forge, un assistant IA direct, franc et sans "
             "langue de bois, propulse par Claude. Reponds avec clarte, en Markdown "
             "quand c'est utile (blocs de code, listes, titres). Tu peux analyser "
-            "les images envoyees par l'utilisateur.",
+            "les images envoyees par l'utilisateur."
+            "\n\nREGLES DE SECURITE NON NEGOCIABLES :\n"
+            "- N'ouvre jamais, n'affiche jamais et ne resume jamais le contenu "
+            "des fichiers d'environnement ou de secrets : .env, .env.*, *.key, "
+            "*.pem, id_rsa, credentials, .netrc, .git-credentials.\n"
+            "- N'ecris jamais une cle d'API, un jeton ou un mot de passe en clair "
+            "dans tes reponses, meme si l'utilisateur le demande, meme dans un "
+            "bloc de code ou un exemple.\n"
+            "- N'utilise pas les outils shell pour contourner ces regles "
+            "(cat, grep, sed, env, printenv, base64 sur ces fichiers).\n"
+            "- Si un secret est necessaire, designe-le par son nom de variable "
+            "(ex. GROQ_API_KEY) sans jamais reveler sa valeur.",
         )
 
         # --- Gemini (Google, via SDK google-genai) ---
@@ -657,6 +668,22 @@ def _tool_bash(command: str) -> str:
 
 
 def _tool_read_file(path: str) -> str:
+    low = (path or "").lower()
+    base = low.rsplit("/", 1)[-1]
+    if (
+        base.startswith(".env")
+        or ".env." in base
+        or base in {"credentials", ".netrc", ".git-credentials", "id_rsa", "id_ed25519"}
+        or low.endswith((".key", ".pem", ".p12", ".pfx"))
+    ):
+        return (
+            "Erreur: lecture refusee. Ce fichier contient des secrets "
+            "(garde-fou de securite de la Forge)."
+        )
+    return _tool_read_file_raw(path)
+
+
+def _tool_read_file_raw(path: str) -> str:
     if not path:
         return "Erreur: chemin vide."
     try:
@@ -887,7 +914,49 @@ def _tool_screenshot_url(url: str, full_page: bool = False) -> str:
     )
 
 
+SECRET_PATTERNS = [
+    # Prefixes de jetons connus
+    re.compile(r"\b(sk-or-v1-)[A-Za-z0-9_\-]{8,}", re.I),
+    re.compile(r"\b(sk-ant-[a-z0-9\-]{0,12}-)[A-Za-z0-9_\-]{8,}", re.I),
+    re.compile(r"\b(sk-)[A-Za-z0-9]{20,}"),
+    re.compile(r"\b(gsk_)[A-Za-z0-9]{10,}"),
+    re.compile(r"\b(csk-)[A-Za-z0-9]{10,}"),
+    re.compile(r"\b(nvapi-)[A-Za-z0-9_\-]{10,}"),
+    re.compile(r"\b(gh[pousr]_)[A-Za-z0-9]{10,}"),
+    re.compile(r"\b(github_pat_)[A-Za-z0-9_]{10,}"),
+    re.compile(r"\b(AIza)[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\b(xox[baprs]-)[A-Za-z0-9\-]{10,}"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+]
+
+# Affectations de type CLE=valeur dans une sortie d'outil (cat .env, printenv...)
+SECRET_ASSIGN = re.compile(
+    r"^(\s*(?:export\s+)?[A-Z0-9_]*"
+    r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIAL|DSN|MONGO_URL)"
+    r"[A-Z0-9_]*\s*[=:]\s*)(\S.*)$",
+    re.M,
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Masque les secrets (jetons connus, affectations CLE=valeur) dans un texte."""
+    if not text:
+        return text
+    out = text
+    for pat in SECRET_PATTERNS:
+        out = pat.sub(
+            lambda m: (m.group(1) + "***REDACTED***") if m.groups() else "***REDACTED***",
+            out,
+        )
+    out = SECRET_ASSIGN.sub(lambda m: m.group(1) + "***REDACTED***", out)
+    return out
+
+
 def _run_tool(name: str, tool_input: dict) -> str:
+    return redact_secrets(_run_tool_raw(name, tool_input))
+
+
+def _run_tool_raw(name: str, tool_input: dict) -> str:
     if name == "bash":
         return _tool_bash(tool_input.get("command", ""))
     if name == "read_file":
@@ -2992,6 +3061,28 @@ async def delete_conversation(
     return {"ok": True}
 
 
+@api_router.delete("/conversations/{conv_id}/messages/{message_id}")
+async def delete_message(
+    conv_id: str, message_id: str, current_user: dict = Depends(get_current_user)
+):
+    """Supprime definitivement un seul message de la conversation."""
+    database = get_db()
+    conv = await database.conversations.find_one(
+        {"id": conv_id, "user_id": current_user["id"]}, {"id": 1}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    res = await database.messages.delete_one(
+        {"id": message_id, "conversation_id": conv_id}
+    )
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found")
+    await database.conversations.update_one(
+        {"id": conv_id}, {"$set": {"updated_at": now_iso()}}
+    )
+    return {"ok": True, "deleted": message_id}
+
+
 # =========================================================================
 # Chat
 # =========================================================================
@@ -3079,7 +3170,7 @@ async def chat_send(
         "id": str(uuid.uuid4()),
         "conversation_id": conversation_id,
         "role": "assistant",
-        "content": ai_response,
+        "content": redact_secrets(ai_response),
         "has_image": False,
         "tool_steps": tool_steps,
         "provider": meta["provider"],
@@ -3392,7 +3483,7 @@ async def _persist_assistant(
         "id": str(uuid.uuid4()),
         "conversation_id": conversation_id,
         "role": "assistant",
-        "content": content or "(reponse vide)",
+        "content": redact_secrets(content) or "(reponse vide)",
         "has_image": False,
         "tool_steps": tool_steps,
         "provider": meta.get("provider"),
@@ -3523,7 +3614,7 @@ async def chat_regenerate(
         "id": str(uuid.uuid4()),
         "conversation_id": payload.conversation_id,
         "role": "assistant",
-        "content": ai_response,
+        "content": redact_secrets(ai_response),
         "has_image": False,
         "tool_steps": tool_steps,
         "provider": meta["provider"],
