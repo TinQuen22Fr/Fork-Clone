@@ -1,0 +1,22 @@
+{
+  "summary": "TTS bug fixes fully validated. Backend: 7/7 pytest OK (health, conversations, /api/tts/voices provider=edge-tts, voice normalization Denise:Dragon->DeniseNeural, DeniseNeural/CelesteNeural return >5KB audio with correct X-TTS-Voice, bogus voice falls back to non-empty audio). Frontend Playwright: BUG 1 stop works (aria-label toggles back to 'Lire à voix haute', no extra /api/tts request after stop), BUG 2 confirmed (POST /api/tts fires and window.speechSynthesis.speak stub reports __spoke=false), single-stream verified (clicking another message's TTS button flips aria: first msg 'Lire', second 'Arrêter'), VoicePicker lists 14 fr voices with fr-FR-DeniseNeural + fr-FR-CelesteNeural pinned first and NO 'fr-FR-Denise:DragonLatestNeural' present, provider label 'edge-tts' shown, voice-test-btn fires POST /api/tts, changing voice via voice-select works.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_tts_bugs.py",
+    "/app/test_reports/pytest/tts_bugs.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "tts.js uses new Audio() (detached from DOM) so document.querySelector('audio') can't observe playback state from tests. This is fine functionally but note that any future e2e assertion of paused/src must use module state, not DOM. Current tests use aria-label + network log which is reliable.",
+    "In tts.js if speak() throws before audio is attached (e.g. axios error), stopSpeech() is not called and onStopCb is never invoked; ChatMessage handles this by setting speaking=false in its own catch block, so state stays consistent. OK."
+  ],
+  "updated_files": ["/app/backend/tests/test_tts_bugs.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@forge.dev / ForgeAdmin2026!",
+  "seed_data_creation": "None. Reused existing conversation 44be4246-ebb7-48c6-b0b8-dfd5db24730e with two assistant messages.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "TTS provider is edge-tts (keyless). Fixture must extract 'token' from /api/auth/login (not 'access_token'). Audio element in tts.js is created via new Audio() so it is NOT in DOM — use aria-label of tts-msg-{id} and network requests to /api/tts as the source of truth for state.",
+  "rca of the issue": "All 3 reported TTS bugs are fixed: (1) stopSpeech aborts fetch + pauses audio + clears src -> button flips back and no extra request fires; (2) ChatMessage.toggleSpeak calls speak() which POSTs /api/tts, no SpeechSynthesis path remains; (3) backend _normalize_voice strips ':' suffix and edge-tts serves proper MP3 for both DeniseNeural and CelesteNeural, bogus voice falls back to default rather than returning 0-byte stream."
+}

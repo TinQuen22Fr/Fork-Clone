@@ -548,3 +548,20 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Correctif (2026-09-22) install-playwright.sh : SERVICE_USER par defaut = proprietaire
   de APP_DIR (stat -c %U) au lieu de www-data ; verification headless en memoire
   (page.screenshot() sans path) pour eviter PermissionError sur /tmp.
+
+## Correctifs TTS (2026-09-22) — valides par testing_agent (iteration_9.json)
+
+1. Arret immediat : nouveau `frontend/src/lib/tts.js` = lecteur audio UNIQUE.
+   `stopSpeech()` = abort du fetch en cours + pause + currentTime=0 +
+   removeAttribute(src) + load() + revokeObjectURL + reset d etat.
+   Un seul flux a la fois : lancer un autre message coupe le precedent.
+2. Plus aucun repli SpeechSynthesis : ChatMessage lit uniquement /api/tts
+   (blob audio/mpeg) et affiche « Synthese vocale indisponible » en cas d echec.
+   Verifie par stub : window.speechSynthesis.speak n est jamais appele.
+3. Voix Denise : `_normalize_voice()` cote backend convertit tout identifiant
+   contenant « : » (variantes Azure HD type fr-FR-Denise:DragonLatestNeural, non
+   servies par FreeTTS/edge-tts -> flux muet) vers la syntaxe standard
+   fr-FR-DeniseNeural. En-tete X-TTS-Voice expose la voix reellement utilisee.
+   `_synth_edge` retombe sur TTS_VOICE si la voix demandee est absente du catalogue.
+   PINNED du VoicePicker = fr-FR-DeniseNeural + fr-FR-CelesteNeural.
+- Tests ajoutes par le testing agent : backend/tests/test_tts_bugs.py (7/7).
