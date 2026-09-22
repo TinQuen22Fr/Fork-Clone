@@ -61,6 +61,8 @@ export default function ChatMessage({
 }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
+  const [copiedTools, setCopiedTools] = useState(false);
+  const [copiedStep, setCopiedStep] = useState(null);
   const [speaking, setSpeaking] = useState(false);
 
   const copyUser = async () => {
@@ -122,6 +124,33 @@ export default function ChatMessage({
       await navigator.clipboard.writeText(message.content || "");
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const formatStep = (s) =>
+    `→ ${s.tool}(${
+      s.input ? s.input.command || s.input.path || JSON.stringify(s.input) : ""
+    })\n${s.output || ""}`;
+
+  const copyToolStep = async (s, i) => {
+    try {
+      await navigator.clipboard.writeText(formatStep(s));
+      setCopiedStep(i);
+      setTimeout(() => setCopiedStep(null), 1500);
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const copyTools = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        (message.tool_steps || []).map(formatStep).join("\n\n")
+      );
+      setCopiedTools(true);
+      setTimeout(() => setCopiedTools(false), 1500);
     } catch (_) {
       // ignore
     }
@@ -190,12 +219,51 @@ export default function ChatMessage({
             <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 text-[#ffd700] font-mono text-xs uppercase tracking-wider">
               <Terminal className="w-4 h-4" />
               {message.tool_steps.length} outil(s) utilisé(s)
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.preventDefault();
+                  copyTools();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    copyTools();
+                  }
+                }}
+                className="ml-auto flex items-center gap-1 border border-[#ffd700]/40 px-1.5 py-0.5 text-[10px] normal-case hover:bg-[#ffd700]/15 transition-colors"
+                title="Copier tous les blocs d'outils"
+                data-testid={`copy-tools-${message.id}`}
+              >
+                {copiedTools ? (
+                  <Check className="w-3 h-3" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
+                {copiedTools ? "Copié" : "Copier"}
+              </span>
             </summary>
             <div className="px-3 pb-3 space-y-3">
               {message.tool_steps.map((s, i) => (
                 <div key={i} className="border-l-2 border-[#05d9e8]/50 pl-3">
-                  <div className="text-[#05d9e8] font-mono text-xs mb-1">
-                    → {s.tool}({s.input && (s.input.command || s.input.path || JSON.stringify(s.input))})
+                  <div className="text-[#05d9e8] font-mono text-xs mb-1 flex items-start gap-2">
+                    <span className="flex-1 break-all">
+                      → {s.tool}({s.input && (s.input.command || s.input.path || JSON.stringify(s.input))})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyToolStep(s, i)}
+                      className="flex-shrink-0 text-gray-500 hover:text-[#ffd700] transition-colors"
+                      title="Copier ce bloc"
+                      data-testid={`copy-tool-step-${message.id}-${i}`}
+                    >
+                      {copiedStep === i ? (
+                        <Check className="w-3.5 h-3.5 text-[#ffd700]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
                   </div>
                   <pre className="bg-black/50 p-2 text-[11px] text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
                     {s.output}
