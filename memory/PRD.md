@@ -580,3 +580,18 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   n existe pas dans edge-tts (cas du sandbox sans cle).
 - Verifie : voix par defaut/Celeste/Denise:Dragon -> 200 avec mp3 non vide ;
   tests/test_tts_bugs.py 7/7 OK.
+
+## Voix FreeTTS gratuites (2026-09-22)
+
+- Verifie sur freetts.org/text-to-speech/french : les voix « Signature » (Celeste,
+  Nova, Maya, Atlas, Felix, Theo) sont PRO -> 402. Voix FR gratuites :
+  fr-FR-DeniseNeural, fr-FR-HenriNeural, fr-FR-VivienneMultilingualNeural,
+  fr-FR-RemyMultilingualNeural, fr-CA-SylvieNeural, fr-CA-AntoineNeural,
+  fr-BE-CharlineNeural, fr-CH-ArianeNeural.
+- TTS_VOICE par defaut remis a fr-FR-DeniseNeural (gratuite).
+- FREETTS_FREE_FR_VOICES expose par GET /api/tts/voices (champ free_voices).
+- Si FreeTTS renvoie 402 sur une voix PRO, le backend rejoue automatiquement une
+  fois avec la voix gratuite par defaut (en-tete X-TTS-Voice mis a jour).
+- VoicePicker : les 8 voix gratuites epinglees en tete de liste.
+- Verifie : les 4 voix gratuites testees renvoient 200 avec mp3 15-16 Ko ;
+  tests/test_tts_bugs.py 7/7.

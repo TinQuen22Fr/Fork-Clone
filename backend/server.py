@@ -276,7 +276,7 @@ class Settings:
         self.freetts_base_url: str = _env(
             "FREETTS_BASE_URL", "https://freetts.org/api"
         ).rstrip("/")
-        self.tts_voice: str = _env("TTS_VOICE", "fr-FR-CelesteNeural")
+        self.tts_voice: str = _env("TTS_VOICE", "fr-FR-DeniseNeural")
         self.tts_style: str = _env("TTS_STYLE")
         self.tts_rate: str = _env("TTS_RATE", "+0%")
         self.tts_pitch: str = _env("TTS_PITCH", "+0Hz")
@@ -4248,6 +4248,20 @@ async def _edge_voices() -> list[dict]:
 # FreeTTS/Azure (ex. fr-FR-CelesteNeural) n'y existent pas.
 EDGE_FALLBACK_VOICE = "fr-FR-DeniseNeural"
 
+# Voix francaises GRATUITES de FreeTTS.org (verifie sur freetts.org/voices).
+# Les voix « Signature » (Nova, Maya, Celeste, Atlas, Felix, Theo) sont PRO et
+# renvoient un 402.
+FREETTS_FREE_FR_VOICES = [
+    "fr-FR-DeniseNeural",
+    "fr-FR-HenriNeural",
+    "fr-FR-VivienneMultilingualNeural",
+    "fr-FR-RemyMultilingualNeural",
+    "fr-CA-SylvieNeural",
+    "fr-CA-AntoineNeural",
+    "fr-BE-CharlineNeural",
+    "fr-CH-ArianeNeural",
+]
+
 
 def _normalize_voice(voice: str) -> str:
     """Corrige les identifiants de voix non servis par FreeTTS / edge-tts.
@@ -4291,6 +4305,7 @@ async def tts_voices(
     return {
         "provider": _tts_provider(),
         "default": settings.tts_voice,
+        "free_voices": FREETTS_FREE_FR_VOICES,
         "voices": voices,
     }
 
@@ -4419,7 +4434,15 @@ async def tts_speak(
 
     try:
         if settings.freetts_api_key:
-            audio = await _synth_freetts(text, voice, rate, pitch)
+            try:
+                audio = await _synth_freetts(text, voice, rate, pitch)
+            except HTTPException as e:
+                # Voix PRO (402) : on rejoue une fois avec une voix gratuite.
+                if e.status_code != 402 or voice == settings.tts_voice:
+                    raise
+                logger.warning("Voix PRO %s refusee (402), repli sur %s", voice, settings.tts_voice)
+                audio = await _synth_freetts(text, settings.tts_voice, rate, pitch)
+                voice = settings.tts_voice
         else:
             audio = await _synth_edge(text, voice, rate, pitch)
     except HTTPException:

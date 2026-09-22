@@ -7,8 +7,18 @@ import api from "@/lib/api";
 import { speak, stopSpeech, getVoice, setVoice as persistVoice } from "@/lib/tts";
 import { Volume2, Loader2 } from "lucide-react";
 
-// Voix francaise gratuite de FreeTTS (les voix PRO renvoient un 402).
-const PINNED = ["fr-FR-CelesteNeural"];
+// Voix francaises GRATUITES de FreeTTS (les « Signature » comme Celeste sont
+// PRO et renvoient un 402).
+const PINNED = [
+  "fr-FR-DeniseNeural",
+  "fr-FR-HenriNeural",
+  "fr-FR-VivienneMultilingualNeural",
+  "fr-FR-RemyMultilingualNeural",
+  "fr-CA-SylvieNeural",
+  "fr-CA-AntoineNeural",
+  "fr-BE-CharlineNeural",
+  "fr-CH-ArianeNeural",
+];
 
 export const VoicePicker = () => {
   const [open, setOpen] = useState(false);
