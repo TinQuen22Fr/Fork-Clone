@@ -1,23 +1,33 @@
 [Unit]
 Description=Claude Unchained Forge - backend FastAPI
-After=network.target
+After=network.target mongodb.service
 
 [Service]
 Type=simple
 User=quentin
 Group=quentin
 WorkingDirectory=/var/www/forge/backend
-ExecStart=/var/www/forge/backend/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8001 --workers 2
-Restart=always
-RestartSec=3
+
+# Environnement et binaires systeme
+Environment="PATH=/var/www/forge/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PLAYWRIGHT_BROWSERS_PATH=/var/www/forge/.playwright"
 EnvironmentFile=/var/www/forge/backend/.env
 
-# Durcissement et isolation
+ExecStart=/var/www/forge/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --workers 2 --proxy-headers
+
+# Isolation du systeme
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadOnlyPaths=/var/www/forge
+
+# Chemins autorises en ecriture
 ReadWritePaths=/var/www/forge/workspace /var/www/forge/.playwright /var/www/forge/backend/static/screenshots /dev/shm
+
+# Chemins en lecture seule indispensables
+ReadOnlyPaths=/var/www/forge
+
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

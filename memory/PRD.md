@@ -490,3 +490,8 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   uniquement si aucune unite n existe, sinon il affiche juste la commande de diff.
   Meme comportement que upgrade.sh. Le gabarit deploy/forge-backend.service est
   identique a l unite qui tourne sur la Dedibox.
+
+- 2026-09-21 : deploy/forge-backend.service synchronise a l identique avec l unite
+  de production (After mongodb.service, PATH + PLAYWRIGHT_BROWSERS_PATH, uvicorn
+  --proxy-headers, isolation ProtectSystem/ProtectHome/PrivateTmp, ReadWritePaths).
+  install.sh et upgrade.sh ne remplacent jamais une unite en place.
