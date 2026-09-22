@@ -565,3 +565,18 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
    `_synth_edge` retombe sur TTS_VOICE si la voix demandee est absente du catalogue.
    PINNED du VoicePicker = fr-FR-DeniseNeural + fr-FR-CelesteNeural.
 - Tests ajoutes par le testing agent : backend/tests/test_tts_bugs.py (7/7).
+
+## FreeTTS aligne sur la doc dashboard (2026-09-22)
+
+- `_synth_freetts` : POST {FREETTS_BASE_URL}/v1/tts, en-tetes x-api-key +
+  Content-Type: application/json, corps {text, voice, style (si TTS_STYLE), 
+  output_format: "mp3"}, lecture de r.json()["audio_url"] puis GET du mp3.
+- Erreurs interceptees et renvoyees en JSON explicite : 402 (voix PRO), 401 (cle
+  refusee), 429 (quota), 4xx/5xx generique, timeout (504), JSON invalide, reseau.
+  Plus de crash/502 opaque.
+- TTS_VOICE par defaut = fr-FR-CelesteNeural (voix gratuite). Denise retiree des
+  voix epinglees du VoicePicker (402 sur FreeTTS). TTS_STYLE ajoute a env.example.
+- Repli keyless : EDGE_FALLBACK_VOICE=fr-FR-DeniseNeural quand la voix demandee
+  n existe pas dans edge-tts (cas du sandbox sans cle).
+- Verifie : voix par defaut/Celeste/Denise:Dragon -> 200 avec mp3 non vide ;
+  tests/test_tts_bugs.py 7/7 OK.

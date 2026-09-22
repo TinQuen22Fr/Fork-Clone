@@ -7,9 +7,8 @@ import api from "@/lib/api";
 import { speak, stopSpeech, getVoice, setVoice as persistVoice } from "@/lib/tts";
 import { Volume2, Loader2 } from "lucide-react";
 
-// Voix mises en avant. Les variantes Azure HD (":DragonLatestNeural") ne sont
-// pas servies par FreeTTS.org (flux muet) : on utilise la syntaxe standard.
-const PINNED = ["fr-FR-DeniseNeural", "fr-FR-CelesteNeural"];
+// Voix francaise gratuite de FreeTTS (les voix PRO renvoient un 402).
+const PINNED = ["fr-FR-CelesteNeural"];
 
 export const VoicePicker = () => {
   const [open, setOpen] = useState(false);

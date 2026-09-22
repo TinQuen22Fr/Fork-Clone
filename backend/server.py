@@ -276,7 +276,8 @@ class Settings:
         self.freetts_base_url: str = _env(
             "FREETTS_BASE_URL", "https://freetts.org/api"
         ).rstrip("/")
-        self.tts_voice: str = _env("TTS_VOICE", "fr-FR-DeniseNeural")
+        self.tts_voice: str = _env("TTS_VOICE", "fr-FR-CelesteNeural")
+        self.tts_style: str = _env("TTS_STYLE")
         self.tts_rate: str = _env("TTS_RATE", "+0%")
         self.tts_pitch: str = _env("TTS_PITCH", "+0Hz")
         self.tts_max_chars: int = int(_env("TTS_MAX_CHARS", "4000"))
@@ -4243,6 +4244,11 @@ async def _edge_voices() -> list[dict]:
     ]
 
 
+# Voix de secours du catalogue edge-tts (repli sans cle) : certaines voix
+# FreeTTS/Azure (ex. fr-FR-CelesteNeural) n'y existent pas.
+EDGE_FALLBACK_VOICE = "fr-FR-DeniseNeural"
+
+
 def _normalize_voice(voice: str) -> str:
     """Corrige les identifiants de voix non servis par FreeTTS / edge-tts.
 
@@ -4290,34 +4296,77 @@ async def tts_voices(
 
 
 async def _synth_freetts(text: str, voice: str, rate: str, pitch: str) -> bytes:
-    async with httpx.AsyncClient(timeout=90.0) as http:
-        r = await http.post(
-            f"{settings.freetts_base_url}/v1/tts",
-            headers={"x-api-key": settings.freetts_api_key},
-            json={
-                "text": text,
-                "voice": voice,
-                "rate": rate,
-                "pitch": pitch,
-                "output_format": "mp3",
-            },
-        )
-        if r.status_code == 429:
-            raise HTTPException(status_code=429, detail="Quota FreeTTS atteint.")
-        if r.status_code >= 400:
-            raise HTTPException(
-                status_code=502, detail=f"FreeTTS {r.status_code}: {r.text[:200]}"
+    """Appel FreeTTS.org conforme a la doc du dashboard :
+    POST /api/v1/tts (x-api-key) -> {"audio_url": ...} -> telechargement du mp3.
+    """
+    payload = {"text": text, "voice": voice, "output_format": "mp3"}
+    if settings.tts_style:
+        payload["style"] = settings.tts_style
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as http:
+            r = await http.post(
+                f"{settings.freetts_base_url}/v1/tts",
+                headers={
+                    "x-api-key": settings.freetts_api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
             )
-        body = r.json()
-        if isinstance(body, dict) and body.get("audio_url"):
-            audio = await http.get(body["audio_url"])
-        else:
-            file_id = (body or {}).get("file_id") or (body or {}).get("id")
-            if not file_id:
-                raise HTTPException(status_code=502, detail="FreeTTS: file_id absent.")
-            audio = await http.get(f"{settings.freetts_base_url}/audio/{file_id}")
-        audio.raise_for_status()
-        return audio.content
+
+            if r.status_code == 402:
+                raise HTTPException(
+                    status_code=402,
+                    detail=(
+                        f"FreeTTS : la voix {voice} est reservee aux comptes PRO "
+                        "(402). Choisis une voix gratuite, par exemple "
+                        "fr-FR-CelesteNeural."
+                    ),
+                )
+            if r.status_code == 401:
+                raise HTTPException(
+                    status_code=401,
+                    detail="FreeTTS : cle API refusee (401). Verifie FREETTS_API_KEY.",
+                )
+            if r.status_code == 429:
+                raise HTTPException(
+                    status_code=429,
+                    detail="FreeTTS : quota atteint (429). Reessaie plus tard.",
+                )
+            if r.status_code >= 400:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"FreeTTS a repondu {r.status_code} : {r.text[:200]}",
+                )
+
+            body = r.json()
+            audio_url = (body or {}).get("audio_url")
+            if not audio_url:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"FreeTTS : audio_url absent ({str(body)[:200]}).",
+                )
+
+            audio = await http.get(audio_url)
+            if audio.status_code >= 400 or not audio.content:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"FreeTTS : mp3 non telechargeable ({audio.status_code}).",
+                )
+            return audio.content
+
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="FreeTTS : delai depasse.")
+    except ValueError:
+        raise HTTPException(
+            status_code=502, detail="FreeTTS : reponse illisible (JSON invalide)."
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502, detail=f"FreeTTS injoignable : {str(e)[:200]}"
+        )
 
 
 async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
@@ -4333,11 +4382,21 @@ async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
 
     try:
         audio = await _stream(voice)
-    except Exception:  # voix absente du catalogue edge-tts
-        if voice == settings.tts_voice:
+    except Exception:  # voix absente du catalogue edge-tts (ex. voix FreeTTS only)
+        fallback = (
+            settings.tts_voice if voice != settings.tts_voice else EDGE_FALLBACK_VOICE
+        )
+        if fallback == voice:
             raise
-        logger.warning("Voix %s indisponible sur edge-tts, repli sur %s", voice, settings.tts_voice)
-        audio = await _stream(settings.tts_voice)
+        logger.warning(
+            "Voix %s indisponible sur edge-tts, repli sur %s", voice, fallback
+        )
+        try:
+            audio = await _stream(fallback)
+        except Exception:
+            if fallback == EDGE_FALLBACK_VOICE:
+                raise
+            audio = await _stream(EDGE_FALLBACK_VOICE)
     if not audio:
         raise HTTPException(status_code=502, detail="edge-tts: audio vide.")
     return audio
