@@ -8,8 +8,8 @@
  * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState, useRef } from "react";
-import api from "@/lib/api";
+import React, { useState } from "react";
+import { speak, stopSpeech } from "@/lib/tts";
 import ReactMarkdown from "react-markdown";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -20,9 +20,6 @@ dayjs.extend(relativeTime);
 dayjs.locale("fr");
 
 const AI_AVATAR = "/logo-64.png";
-
-const ttsAvailable =
-  typeof window !== "undefined" && "speechSynthesis" in window;
 
 function stripMarkdown(md) {
   return (md || "")
@@ -63,7 +60,7 @@ function ChatMessage({
 }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
-  const audioRef = useRef(null);
+  const [ttsError, setTtsError] = useState("");
   const [copiedTools, setCopiedTools] = useState(false);
   const [copiedStep, setCopiedStep] = useState(null);
   const [speaking, setSpeaking] = useState(false);
@@ -174,46 +171,25 @@ function ChatMessage({
   };
 
   const toggleSpeak = async () => {
-    const audio = audioRef.current;
     if (speaking) {
-      if (audio) {
-        audio.pause();
-        audio.src = "";
-      }
+      stopSpeech();
       setSpeaking(false);
       return;
     }
     const text = stripMarkdown(message.content);
     if (!text) return;
     setSpeaking(true);
+    setTtsError("");
     try {
-      const res = await api.post(
-        "/tts",
-        {
-          text,
-          voice: localStorage.getItem("forge_tts_voice") || undefined,
-        },
-        { responseType: "blob" }
-      );
-      const url = URL.createObjectURL(res.data);
-      const el = audio || new Audio();
-      audioRef.current = el;
-      el.src = url;
-      el.onended = () => {
-        setSpeaking(false);
-        URL.revokeObjectURL(url);
-      };
-      el.onerror = () => setSpeaking(false);
-      await el.play();
+      await speak(text, {
+        id: message.id,
+        onEnd: () => setSpeaking(false),
+      });
     } catch (e) {
       setSpeaking(false);
-      // Repli sur la voix du navigateur si le serveur ne peut pas synthetiser.
-      if (ttsAvailable) {
-        const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = "fr-FR";
-        utter.onend = () => setSpeaking(false);
-        window.speechSynthesis.speak(utter);
-        setSpeaking(true);
+      if (e.name !== "CanceledError" && e.code !== "ERR_CANCELED") {
+        setTtsError("Synthèse vocale indisponible");
+        setTimeout(() => setTtsError(""), 4000);
       }
     }
   };
@@ -363,12 +339,22 @@ function ChatMessage({
 
           <ActionButton
             onClick={toggleSpeak}
-            title={speaking ? "Arrêter la lecture" : "Lire à voix haute"}
+            title={
+              ttsError || (speaking ? "Arrêter la lecture" : "Lire à voix haute")
+            }
             active={speaking}
             testId={`tts-msg-${message.id}`}
           >
             {speaking ? <Square className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </ActionButton>
+          {ttsError && (
+            <span
+              className="text-[10px] font-mono text-[#ff2a6d]"
+              data-testid={`tts-error-${message.id}`}
+            >
+              {ttsError}
+            </span>
+          )}
 
           <ActionButton
             onClick={() => onFeedback && onFeedback(message, "up")}

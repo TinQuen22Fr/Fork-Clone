@@ -4,19 +4,18 @@
  */
 import React, { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { speak, stopSpeech, getVoice, setVoice as persistVoice } from "@/lib/tts";
 import { Volume2, Loader2 } from "lucide-react";
 
-const STORAGE_KEY = "forge_tts_voice";
-// Voix mises en avant (FreeTTS / Azure / edge-tts).
-const PINNED = ["fr-FR-Denise:DragonLatestNeural", "fr-FR-CelesteNeural"];
+// Voix mises en avant. Les variantes Azure HD (":DragonLatestNeural") ne sont
+// pas servies par FreeTTS.org (flux muet) : on utilise la syntaxe standard.
+const PINNED = ["fr-FR-DeniseNeural", "fr-FR-CelesteNeural"];
 
 export const VoicePicker = () => {
   const [open, setOpen] = useState(false);
   const [voices, setVoices] = useState([]);
   const [provider, setProvider] = useState("");
-  const [voice, setVoice] = useState(
-    () => localStorage.getItem(STORAGE_KEY) || ""
-  );
+  const [voice, setVoice] = useState(() => getVoice() || "");
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
 
@@ -39,24 +38,19 @@ export const VoicePicker = () => {
 
   const pick = (v) => {
     setVoice(v);
-    localStorage.setItem(STORAGE_KEY, v);
+    persistVoice(v);
+    stopSpeech();
   };
 
   const test = async () => {
     setTesting(true);
     try {
-      const res = await api.post(
-        "/tts",
-        { text: "Bonjour, je suis la voix de la Forge.", voice: voice || undefined },
-        { responseType: "blob" }
-      );
-      const url = URL.createObjectURL(res.data);
-      const el = new Audio(url);
-      el.onended = () => URL.revokeObjectURL(url);
-      await el.play();
+      await speak("Bonjour, je suis la voix de la Forge.", {
+        id: "preview",
+        voice: voice || undefined,
+        onEnd: () => setTesting(false),
+      });
     } catch (_) {
-      // silencieux : le bouton de lecture du message affichera l'erreur
-    } finally {
       setTesting(false);
     }
   };

@@ -4243,6 +4243,21 @@ async def _edge_voices() -> list[dict]:
     ]
 
 
+def _normalize_voice(voice: str) -> str:
+    """Corrige les identifiants de voix non servis par FreeTTS / edge-tts.
+
+    Les variantes Azure HD (`fr-FR-Denise:DragonLatestNeural`,
+    `:DragonHDLatestNeural`) n'existent pas cote FreeTTS.org : la requete est
+    acceptee mais renvoie un flux muet. On retombe sur la voix neurale standard
+    (`fr-FR-DeniseNeural`), seule syntaxe valide.
+    """
+    v = (voice or "").strip()
+    if ":" in v:
+        base = v.split(":", 1)[0]
+        return base if base.lower().endswith("neural") else f"{base}Neural"
+    return v
+
+
 @api_router.get("/tts/voices")
 async def tts_voices(
     locale: str = "fr", current_user: dict = Depends(get_current_user)
@@ -4308,14 +4323,24 @@ async def _synth_freetts(text: str, voice: str, rate: str, pitch: str) -> bytes:
 async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
     import edge_tts
 
-    buf = bytearray()
-    comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    async for chunk in comm.stream():
-        if chunk["type"] == "audio":
-            buf.extend(chunk["data"])
-    if not buf:
+    async def _stream(v: str) -> bytes:
+        buf = bytearray()
+        comm = edge_tts.Communicate(text, v, rate=rate, pitch=pitch)
+        async for chunk in comm.stream():
+            if chunk["type"] == "audio":
+                buf.extend(chunk["data"])
+        return bytes(buf)
+
+    try:
+        audio = await _stream(voice)
+    except Exception:  # voix absente du catalogue edge-tts
+        if voice == settings.tts_voice:
+            raise
+        logger.warning("Voix %s indisponible sur edge-tts, repli sur %s", voice, settings.tts_voice)
+        audio = await _stream(settings.tts_voice)
+    if not audio:
         raise HTTPException(status_code=502, detail="edge-tts: audio vide.")
-    return bytes(buf)
+    return audio
 
 
 @api_router.post("/tts")
@@ -4327,8 +4352,8 @@ async def tts_speak(
     if not text:
         raise HTTPException(status_code=400, detail="Texte vide.")
     text = text[: settings.tts_max_chars]
-    voice = (payload.voice or settings.tts_voice).strip()
-    if len(voice) > 160 or not re.fullmatch(r"[A-Za-z0-9:\-_()]+", voice):
+    voice = _normalize_voice(payload.voice or settings.tts_voice)
+    if len(voice) > 160 or not re.fullmatch(r"[A-Za-z0-9\-_()]+", voice):
         raise HTTPException(status_code=400, detail="Nom de voix invalide.")
     rate = payload.rate or settings.tts_rate
     pitch = payload.pitch or settings.tts_pitch
