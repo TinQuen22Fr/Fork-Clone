@@ -115,7 +115,8 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     c_ok "requirements.txt inchange, installation sautee"
   else
     "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null
-    "$VENV_DIR/bin/pip" install -r backend/requirements.txt
+    "$VENV_DIR/bin/pip" install --upgrade-strategy only-if-needed \
+      -r backend/requirements.txt
     echo "$NEW_HASH" > "$HASH_FILE"
     c_ok "dependances a jour"
   fi
