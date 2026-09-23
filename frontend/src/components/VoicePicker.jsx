@@ -7,17 +7,13 @@ import api from "@/lib/api";
 import { speak, stopSpeech, getVoice, setVoice as persistVoice } from "@/lib/tts";
 import { Volume2, Loader2 } from "lucide-react";
 
-// Voix francaises GRATUITES de FreeTTS (les « Signature » comme Celeste sont
-// PRO et renvoient un 402).
+// Voix mises en avant : Kokoro (local) puis voix neurales edge-tts gratuites.
 const PINNED = [
+  "kokoro:ff_siwis",
   "fr-FR-DeniseNeural",
   "fr-FR-HenriNeural",
   "fr-FR-VivienneMultilingualNeural",
-  "fr-FR-RemyMultilingualNeural",
   "fr-CA-SylvieNeural",
-  "fr-CA-AntoineNeural",
-  "fr-BE-CharlineNeural",
-  "fr-CH-ArianeNeural",
 ];
 
 export const VoicePicker = () => {
@@ -35,7 +31,11 @@ export const VoicePicker = () => {
       .get("/tts/voices", { params: { locale: "fr" } })
       .then(({ data }) => {
         const names = (data.voices || []).map((v) => v.short_name);
-        const merged = [...new Set([...PINNED, ...names])];
+        const engines = data.engines || [];
+        const pinned = engines.includes("kokoro")
+          ? PINNED
+          : PINNED.filter((v) => !v.startsWith("kokoro:"));
+        const merged = [...new Set([...pinned, ...names])];
         setVoices(merged);
         setProvider(data.provider || "");
         if (!voice) setVoice(data.default || merged[0] || "");

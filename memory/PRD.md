@@ -595,3 +595,22 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - VoicePicker : les 8 voix gratuites epinglees en tete de liste.
 - Verifie : les 4 voix gratuites testees renvoient 200 avec mp3 15-16 Ko ;
   tests/test_tts_bugs.py 7/7.
+
+## TTS refonte (2026-09-22) — FreeTTS supprime
+
+- FreeTTS totalement retire (settings, appels, cles, env.example) : 100% des voix FR
+  y sont en realite PRO (402).
+- Moteur 1 : Kokoro local via kokoro-onnx (voix FR ff_siwis, WAV, CPU, timeout
+  KOKORO_TIMEOUT=45s) ; Moteur 2 : edge-tts (voix neurales fr-FR/CA/BE/CH, MP3).
+  Bascule automatique et transparente si Kokoro echoue, depasse le delai ou si les
+  modeles sont absents.
+- .env : TTS_ENGINE (auto|kokoro|edge), KOKORO_MODEL_PATH, KOKORO_VOICES_PATH,
+  KOKORO_VOICE, KOKORO_TIMEOUT, TTS_VOICE=fr-FR-DeniseNeural.
+- requirements.txt : edge-tts, kokoro-onnx, soundfile (installes par upgrade.sh).
+- deploy/install-kokoro.sh : telechargement idempotent des modeles (~340 Mo) dans
+  backend/models/ + droits. backend/models/ ajoute au .gitignore.
+- /api/tts renvoie audio/wav (Kokoro) ou audio/mpeg (edge) avec X-TTS-Provider.
+  /api/tts/voices expose engines + voix Kokoro prefixees "kokoro:".
+- VoicePicker : voix Kokoro affichee seulement si le moteur est actif.
+- Verifie : voices -> engines [edge-tts] 13 voix ; POST /tts (Denise et kokoro:ff_siwis
+  sans modeles) -> 200, 18 Ko, provider edge-tts ; tests TTS 7/7.

@@ -269,15 +269,18 @@ class Settings:
         ]
         self.enable_fallback: bool = _env_bool("ENABLE_FALLBACK", True)
 
-        # --- Synthese vocale (lecture a voix haute) ---
-        # FreeTTS (freetts.org) : voix neurales Microsoft/Azure. Sans cle, repli
-        # automatique sur edge-tts (meme moteur, sans cle, sans quota).
-        self.freetts_api_key: str = _env("FREETTS_API_KEY")
-        self.freetts_base_url: str = _env(
-            "FREETTS_BASE_URL", "https://freetts.org/api"
-        ).rstrip("/")
+        # --- Synthese vocale : 100% gratuit, sans cle, sans quota ---
+        # Moteur 1 : Kokoro en local (kokoro-onnx, CPU). Moteur 2 : edge-tts.
+        self.tts_engine: str = _env("TTS_ENGINE", "auto").lower()  # auto|kokoro|edge
+        self.kokoro_model_path: str = _env(
+            "KOKORO_MODEL_PATH", str(ROOT_DIR / "models" / "kokoro-v1.0.onnx")
+        )
+        self.kokoro_voices_path: str = _env(
+            "KOKORO_VOICES_PATH", str(ROOT_DIR / "models" / "voices-v1.0.bin")
+        )
+        self.kokoro_voice: str = _env("KOKORO_VOICE", "ff_siwis")
+        self.kokoro_timeout: int = int(_env("KOKORO_TIMEOUT", "45"))
         self.tts_voice: str = _env("TTS_VOICE", "fr-FR-DeniseNeural")
-        self.tts_style: str = _env("TTS_STYLE")
         self.tts_rate: str = _env("TTS_RATE", "+0%")
         self.tts_pitch: str = _env("TTS_PITCH", "+0Hz")
         self.tts_max_chars: int = int(_env("TTS_MAX_CHARS", "4000"))
@@ -4209,49 +4212,11 @@ class TTSRequest(BaseModel):
     pitch: Optional[str] = None
 
 
-def _tts_provider() -> str:
-    return "freetts" if settings.freetts_api_key else "edge-tts"
+# Voix Kokoro (modeles locaux, 100% gratuit). Prefixe "kokoro:" cote API.
+KOKORO_FR_VOICES = ["ff_siwis"]
 
-
-async def _freetts_voices() -> list[dict]:
-    async with httpx.AsyncClient(timeout=25.0) as http:
-        r = await http.get(f"{settings.freetts_base_url}/voices")
-        r.raise_for_status()
-        data = r.json()
-    items = data.get("voices") if isinstance(data, dict) else data
-    return [
-        {
-            "short_name": v.get("ShortName") or v.get("shortName") or v.get("Name"),
-            "gender": v.get("Gender") or v.get("gender"),
-            "locale": v.get("Locale") or v.get("locale"),
-        }
-        for v in (items or [])
-        if (v.get("ShortName") or v.get("shortName") or v.get("Name"))
-    ]
-
-
-async def _edge_voices() -> list[dict]:
-    import edge_tts
-
-    return [
-        {
-            "short_name": v.get("ShortName"),
-            "gender": v.get("Gender"),
-            "locale": v.get("Locale"),
-        }
-        for v in await edge_tts.list_voices()
-        if v.get("ShortName")
-    ]
-
-
-# Voix de secours du catalogue edge-tts (repli sans cle) : certaines voix
-# FreeTTS/Azure (ex. fr-FR-CelesteNeural) n'y existent pas.
-EDGE_FALLBACK_VOICE = "fr-FR-DeniseNeural"
-
-# Voix francaises GRATUITES de FreeTTS.org (verifie sur freetts.org/voices).
-# Les voix « Signature » (Nova, Maya, Celeste, Atlas, Felix, Theo) sont PRO et
-# renvoient un 402.
-FREETTS_FREE_FR_VOICES = [
+# Voix francaises neurales d'edge-tts (gratuit, sans cle ni quota).
+EDGE_FR_VOICES = [
     "fr-FR-DeniseNeural",
     "fr-FR-HenriNeural",
     "fr-FR-VivienneMultilingualNeural",
@@ -4262,126 +4227,66 @@ FREETTS_FREE_FR_VOICES = [
     "fr-CH-ArianeNeural",
 ]
 
+EDGE_FALLBACK_VOICE = "fr-FR-DeniseNeural"
+
+_kokoro_instance = None
+
+
+def _kokoro_ready() -> bool:
+    """Modeles presents sur le disque et bibliotheque installee ?"""
+    if settings.tts_engine == "edge":
+        return False
+    if not (
+        Path(settings.kokoro_model_path).is_file()
+        and Path(settings.kokoro_voices_path).is_file()
+    ):
+        return False
+    try:
+        import kokoro_onnx  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
 
 def _normalize_voice(voice: str) -> str:
-    """Corrige les identifiants de voix non servis par FreeTTS / edge-tts.
-
-    Les variantes Azure HD (`fr-FR-Denise:DragonLatestNeural`,
-    `:DragonHDLatestNeural`) n'existent pas cote FreeTTS.org : la requete est
-    acceptee mais renvoie un flux muet. On retombe sur la voix neurale standard
-    (`fr-FR-DeniseNeural`), seule syntaxe valide.
-    """
+    """Nettoie l'identifiant de voix (variantes Azure HD non servies)."""
     v = (voice or "").strip()
+    if v.startswith("kokoro:"):
+        return v
     if ":" in v:
         base = v.split(":", 1)[0]
         return base if base.lower().endswith("neural") else f"{base}Neural"
     return v
 
 
-@api_router.get("/tts/voices")
-async def tts_voices(
-    locale: str = "fr", current_user: dict = Depends(get_current_user)
-):
-    """Catalogue de voix neurales, filtre par langue (ex. 'fr')."""
-    try:
-        voices = (
-            await _freetts_voices()
-            if settings.freetts_api_key
-            else await _edge_voices()
+def _kokoro_sync(text: str, voice: str) -> bytes:
+    """Synthese locale Kokoro -> WAV (execute dans un thread)."""
+    global _kokoro_instance
+    import io
+
+    import soundfile as sf
+    from kokoro_onnx import Kokoro
+
+    if _kokoro_instance is None:
+        _kokoro_instance = Kokoro(
+            settings.kokoro_model_path, settings.kokoro_voices_path
         )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Catalogue TTS indisponible: %s", e)
-        return {
-            "provider": _tts_provider(),
-            "default": settings.tts_voice,
-            "voices": [],
-            "error": str(e)[:200],
-        }
-
-    if locale:
-        low = locale.lower()
-        voices = [v for v in voices if (v.get("locale") or "").lower().startswith(low)]
-    voices.sort(key=lambda v: v["short_name"])
-    return {
-        "provider": _tts_provider(),
-        "default": settings.tts_voice,
-        "free_voices": FREETTS_FREE_FR_VOICES,
-        "voices": voices,
-    }
+    samples, rate = _kokoro_instance.create(text, voice=voice, speed=1.0, lang="fr-fr")
+    buf = io.BytesIO()
+    sf.write(buf, samples, rate, format="WAV")
+    return buf.getvalue()
 
 
-async def _synth_freetts(text: str, voice: str, rate: str, pitch: str) -> bytes:
-    """Appel FreeTTS.org conforme a la doc du dashboard :
-    POST /api/v1/tts (x-api-key) -> {"audio_url": ...} -> telechargement du mp3.
-    """
-    payload = {"text": text, "voice": voice, "output_format": "mp3"}
-    if settings.tts_style:
-        payload["style"] = settings.tts_style
-
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as http:
-            r = await http.post(
-                f"{settings.freetts_base_url}/v1/tts",
-                headers={
-                    "x-api-key": settings.freetts_api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-
-            if r.status_code == 402:
-                raise HTTPException(
-                    status_code=402,
-                    detail=(
-                        f"FreeTTS : la voix {voice} est reservee aux comptes PRO "
-                        "(402). Choisis une voix gratuite, par exemple "
-                        "fr-FR-CelesteNeural."
-                    ),
-                )
-            if r.status_code == 401:
-                raise HTTPException(
-                    status_code=401,
-                    detail="FreeTTS : cle API refusee (401). Verifie FREETTS_API_KEY.",
-                )
-            if r.status_code == 429:
-                raise HTTPException(
-                    status_code=429,
-                    detail="FreeTTS : quota atteint (429). Reessaie plus tard.",
-                )
-            if r.status_code >= 400:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"FreeTTS a repondu {r.status_code} : {r.text[:200]}",
-                )
-
-            body = r.json()
-            audio_url = (body or {}).get("audio_url")
-            if not audio_url:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"FreeTTS : audio_url absent ({str(body)[:200]}).",
-                )
-
-            audio = await http.get(audio_url)
-            if audio.status_code >= 400 or not audio.content:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"FreeTTS : mp3 non telechargeable ({audio.status_code}).",
-                )
-            return audio.content
-
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="FreeTTS : delai depasse.")
-    except ValueError:
-        raise HTTPException(
-            status_code=502, detail="FreeTTS : reponse illisible (JSON invalide)."
-        )
-    except httpx.HTTPError as e:
-        raise HTTPException(
-            status_code=502, detail=f"FreeTTS injoignable : {str(e)[:200]}"
-        )
+async def _synth_kokoro(text: str, voice: str) -> bytes:
+    v = voice.split("kokoro:", 1)[-1] if voice.startswith("kokoro:") else settings.kokoro_voice
+    if v not in KOKORO_FR_VOICES:
+        v = settings.kokoro_voice
+    audio = await asyncio.wait_for(
+        asyncio.to_thread(_kokoro_sync, text, v), timeout=settings.kokoro_timeout
+    )
+    if not audio:
+        raise RuntimeError("Kokoro : audio vide.")
+    return audio
 
 
 async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
@@ -4389,76 +4294,131 @@ async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
 
     async def _stream(v: str) -> bytes:
         buf = bytearray()
-        comm = edge_tts.Communicate(text, v, rate=rate, pitch=pitch)
-        async for chunk in comm.stream():
+        async for chunk in edge_tts.Communicate(text, v, rate=rate, pitch=pitch).stream():
             if chunk["type"] == "audio":
                 buf.extend(chunk["data"])
         return bytes(buf)
 
+    target = voice if voice in EDGE_FR_VOICES or "-" in voice else settings.tts_voice
     try:
-        audio = await _stream(voice)
-    except Exception:  # voix absente du catalogue edge-tts (ex. voix FreeTTS only)
-        fallback = (
-            settings.tts_voice if voice != settings.tts_voice else EDGE_FALLBACK_VOICE
-        )
-        if fallback == voice:
+        audio = await _stream(target)
+    except Exception:  # voix absente du catalogue edge-tts
+        if target == EDGE_FALLBACK_VOICE:
             raise
-        logger.warning(
-            "Voix %s indisponible sur edge-tts, repli sur %s", voice, fallback
-        )
-        try:
-            audio = await _stream(fallback)
-        except Exception:
-            if fallback == EDGE_FALLBACK_VOICE:
-                raise
-            audio = await _stream(EDGE_FALLBACK_VOICE)
+        logger.warning("Voix %s indisponible sur edge-tts, repli sur %s", target, EDGE_FALLBACK_VOICE)
+        audio = await _stream(EDGE_FALLBACK_VOICE)
     if not audio:
-        raise HTTPException(status_code=502, detail="edge-tts: audio vide.")
+        raise HTTPException(status_code=502, detail="edge-tts : audio vide.")
     return audio
+
+
+async def _edge_voices() -> list[dict]:
+    import edge_tts
+
+    return [
+        {
+            "short_name": v.get("ShortName"),
+            "gender": v.get("Gender"),
+            "locale": v.get("Locale"),
+            "engine": "edge-tts",
+        }
+        for v in await edge_tts.list_voices()
+        if v.get("ShortName")
+    ]
+
+
+@api_router.get("/tts/voices")
+async def tts_voices(
+    locale: str = "fr", current_user: dict = Depends(get_current_user)
+):
+    """Catalogue de voix gratuites : Kokoro (local) + edge-tts."""
+    kokoro_on = _kokoro_ready()
+    voices: list[dict] = [
+        {
+            "short_name": f"kokoro:{v}",
+            "locale": "fr-FR",
+            "gender": "Female",
+            "engine": "kokoro",
+        }
+        for v in (KOKORO_FR_VOICES if kokoro_on else [])
+    ]
+    error = None
+    try:
+        edge = await _edge_voices()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Catalogue edge-tts indisponible: %s", e)
+        edge = [
+            {"short_name": v, "locale": v[:5], "gender": None, "engine": "edge-tts"}
+            for v in EDGE_FR_VOICES
+        ]
+        error = str(e)[:200]
+
+    if locale:
+        low = locale.lower()
+        edge = [v for v in edge if (v.get("locale") or "").lower().startswith(low)]
+    edge.sort(key=lambda v: v["short_name"])
+
+    out = {
+        "provider": "kokoro" if kokoro_on else "edge-tts",
+        "engines": (["kokoro"] if kokoro_on else []) + ["edge-tts"],
+        "default": settings.tts_voice,
+        "voices": voices + edge,
+    }
+    if error:
+        out["error"] = error
+    return out
 
 
 @api_router.post("/tts")
 async def tts_speak(
     payload: TTSRequest, current_user: dict = Depends(get_current_user)
 ):
-    """Retourne un MP3 de la voix neurale choisie."""
+    """Genere l'audio localement (Kokoro) ou via edge-tts. Aucun service payant."""
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Texte vide.")
     text = text[: settings.tts_max_chars]
     voice = _normalize_voice(payload.voice or settings.tts_voice)
-    if len(voice) > 160 or not re.fullmatch(r"[A-Za-z0-9\-_()]+", voice):
+    if len(voice) > 160 or not re.fullmatch(r"[A-Za-z0-9:\-_()]+", voice):
         raise HTTPException(status_code=400, detail="Nom de voix invalide.")
     rate = payload.rate or settings.tts_rate
     pitch = payload.pitch or settings.tts_pitch
 
-    try:
-        if settings.freetts_api_key:
-            try:
-                audio = await _synth_freetts(text, voice, rate, pitch)
-            except HTTPException as e:
-                # Voix PRO (402) : on rejoue une fois avec une voix gratuite.
-                if e.status_code != 402 or voice == settings.tts_voice:
-                    raise
-                logger.warning("Voix PRO %s refusee (402), repli sur %s", voice, settings.tts_voice)
-                audio = await _synth_freetts(text, settings.tts_voice, rate, pitch)
-                voice = settings.tts_voice
-        else:
-            audio = await _synth_edge(text, voice, rate, pitch)
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Echec TTS (%s): %s", _tts_provider(), e)
-        raise HTTPException(
-            status_code=502, detail=f"Synthese vocale echouee: {str(e)[:200]}"
-        )
+    wants_kokoro = voice.startswith("kokoro:") or settings.tts_engine == "kokoro"
+    engine = None
+    audio = b""
 
+    if (wants_kokoro or settings.tts_engine == "auto") and _kokoro_ready():
+        try:
+            audio = await _synth_kokoro(text, voice)
+            engine = "kokoro"
+        except asyncio.TimeoutError:
+            logger.warning("Kokoro : delai depasse, bascule sur edge-tts")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Kokoro indisponible (%s), bascule sur edge-tts", str(e)[:200])
+
+    if not audio:
+        edge_voice = settings.tts_voice if voice.startswith("kokoro:") else voice
+        try:
+            audio = await _synth_edge(text, edge_voice, rate, pitch)
+            engine = "edge-tts"
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Echec edge-tts: %s", e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Synthese vocale indisponible : {str(e)[:200]}",
+            )
+
+    media = "audio/wav" if engine == "kokoro" else "audio/mpeg"
+    ext = "wav" if engine == "kokoro" else "mp3"
     return Response(
         content=audio,
-        media_type="audio/mpeg",
+        media_type=media,
         headers={
-            "Content-Disposition": 'inline; filename="speech.mp3"',
-            "X-TTS-Provider": _tts_provider(),
+            "Content-Disposition": f'inline; filename="speech.{ext}"',
+            "X-TTS-Provider": engine or "none",
             "X-TTS-Voice": voice,
         },
     )
