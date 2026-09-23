@@ -34,9 +34,13 @@ import {
   Loader2,
   Github,
   GitFork,
+  ExternalLink,
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
+
+// Instance Preview (facultative) : renseigne VITE_PREVIEW_URL dans frontend/.env.
+const PREVIEW_URL = import.meta.env.VITE_PREVIEW_URL || "";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -841,6 +845,25 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
+            {activeId && PREVIEW_URL && (
+              <a
+                href={
+                  activeConv?.project
+                    ? `${PREVIEW_URL}?project=${encodeURIComponent(activeConv.project)}`
+                    : PREVIEW_URL
+                }
+                target="_blank"
+                rel="noreferrer"
+                title={`Ouvrir l'instance Preview${
+                  activeConv?.project ? ` — ${activeConv.project}` : ""
+                }`}
+                className="flex items-center gap-1.5 border-2 border-white/20 px-2 py-1 text-[10px] font-mono uppercase tracking-[0.15em] text-gray-400 hover:border-[#05d9e8] hover:text-[#05d9e8] transition-colors"
+                data-testid="preview-btn"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Preview</span>
+              </a>
+            )}
             {usage && <UsageBadge usage={usage} />}
             <div
               className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[220px] lg:max-w-[420px] text-right"

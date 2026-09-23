@@ -626,3 +626,19 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   `upgrade.sh` signale seulement la presence/absence de Kokoro, sans jamais echouer.
 - Valide par testing_agent (iteration_10.json) : 13/13, 0 probleme. Tests ajoutes :
   backend/tests/test_kokoro_optional.py.
+
+## Instance Preview (2026-09-23)
+
+- `deploy/setup-preview.sh` : installe une instance parallele dans /var/www/forge-dev
+  (clone/pull de la branche, venv dedie, .env avec PORT=8002 + DB_NAME=forge_preview +
+  WORKSPACE_ROOT/PLAYWRIGHT dedies, build frontend, service systemd
+  forge-backend-preview durci, health check, generation du vhost Nginx).
+  Ne touche jamais /var/www/forge ni le port 8001. Sans Docker.
+- `deploy/upgrade-preview.sh` : mise a jour a la demande (--no-pull, --backend-only,
+  --branch). Refuse de tourner sur /var/www/forge.
+- `deploy/nginx-forge-preview.conf` : modele de reverse proxy vers 127.0.0.1:8002
+  (SSE sans buffering, sw.js non cache, noindex, SPA fallback).
+- Frontend : bouton « Preview » discret dans l en-tete (data-testid preview-btn),
+  visible des qu une conversation est active, ouvre VITE_PREVIEW_URL dans un nouvel
+  onglet (+ ?project=<nom> si la conversation est liee a un projet).
+  ATTENTION : ce projet est en Vite -> `import.meta.env.VITE_*`, jamais `process.env`.
