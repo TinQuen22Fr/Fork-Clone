@@ -33,6 +33,7 @@ import time
 from html import unescape
 import asyncio
 import base64
+import shlex
 import subprocess
 import uuid
 import logging
@@ -302,6 +303,17 @@ class Settings:
         ).strip().strip(".")
         self.preview_port_base: int = int(_env("PREVIEW_PORT_BASE", "8090"))
         self.preview_port_max: int = int(_env("PREVIEW_PORT_MAX", "8189"))
+        # Regeneration automatique de la map Nginx des sous-domaines de preview.
+        self.preview_map_auto_refresh: bool = _env(
+            "PREVIEW_MAP_AUTO_REFRESH", "1"
+        ).strip().lower() not in ("0", "false", "no", "off", "")
+        self.preview_map_refresh_cmd: str = _env(
+            "PREVIEW_MAP_REFRESH_CMD",
+            "sudo /usr/bin/bash /var/www/forge/deploy/setup-preview-domain.sh --map-only",
+        ).strip()
+        self.preview_map_refresh_timeout: int = int(
+            _env("PREVIEW_MAP_REFRESH_TIMEOUT", "120")
+        )
         self.git_author_email: str = _env(
             "GIT_AUTHOR_EMAIL", "forge@localhost"
         )
@@ -3931,6 +3943,69 @@ def _default_preview_url(name: str) -> str:
     return f"https://{name}.{settings.preview_domain}" if settings.preview_domain else ""
 
 
+_preview_map_lock = asyncio.Lock()
+_preview_map_pending = False
+
+
+async def _run_preview_map_refresh() -> None:
+    """Regenere la map Nginx des previews. Ne leve jamais : log uniquement."""
+    global _preview_map_pending
+    cmd = settings.preview_map_refresh_cmd
+    if not cmd:
+        return
+    if _preview_map_lock.locked():
+        # Une execution est deja en cours : on demande juste un re-run apres.
+        _preview_map_pending = True
+        return
+    async with _preview_map_lock:
+        while True:
+            _preview_map_pending = False
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *shlex.split(cmd),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                try:
+                    out, _ = await asyncio.wait_for(
+                        proc.communicate(), timeout=settings.preview_map_refresh_timeout
+                    )
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    logger.warning(
+                        "Preview map: timeout apres %ss sur '%s'",
+                        settings.preview_map_refresh_timeout,
+                        cmd,
+                    )
+                    out = b""
+                else:
+                    if proc.returncode == 0:
+                        logger.info("Preview map Nginx regeneree avec succes.")
+                    else:
+                        logger.warning(
+                            "Preview map: '%s' a echoue (code %s) : %s",
+                            cmd,
+                            proc.returncode,
+                            (out or b"").decode("utf-8", "replace")[-500:],
+                        )
+            except FileNotFoundError:
+                logger.warning("Preview map: commande introuvable ('%s').", cmd)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Preview map: erreur inattendue : %s", exc)
+            if not _preview_map_pending:
+                return
+
+
+def _schedule_preview_map_refresh() -> None:
+    """Declenche la regeneration de la map Nginx en tache de fond (non bloquant)."""
+    if not settings.preview_map_auto_refresh:
+        return
+    try:
+        asyncio.get_running_loop().create_task(_run_preview_map_refresh())
+    except RuntimeError:
+        logger.warning("Preview map: aucune boucle asyncio active, refresh ignore.")
+
+
 async def _assign_project_meta(
     user_id: str, name: str, preview_url: Optional[str] = None
 ) -> dict:
@@ -3944,6 +4019,7 @@ async def _assign_project_meta(
                 {"$set": {"preview_url": preview_url, "updated_at": now_iso()}},
             )
             doc["preview_url"] = preview_url
+            _schedule_preview_map_refresh()
         return doc
 
     port = (doc or {}).get("preview_port")
@@ -3971,6 +4047,8 @@ async def _assign_project_meta(
         },
         upsert=True,
     )
+    # Nouveau projet / nouveau port / nouvelle URL -> map Nginx a regenerer.
+    _schedule_preview_map_refresh()
     return {"name": name, "preview_url": url, "preview_port": port}
 
 
@@ -4039,6 +4117,18 @@ async def update_project(
         "preview_url": meta.get("preview_url", ""),
         "preview_port": meta.get("preview_port"),
     }
+
+
+@api_router.post("/workspace/preview-map/refresh")
+async def refresh_preview_map(current_user: dict = Depends(get_current_user)):
+    """Force la regeneration de la map Nginx des sous-domaines de preview."""
+    if not settings.preview_map_refresh_cmd:
+        raise HTTPException(
+            status_code=400,
+            detail="PREVIEW_MAP_REFRESH_CMD n'est pas configure.",
+        )
+    asyncio.create_task(_run_preview_map_refresh())
+    return {"scheduled": True, "command": settings.preview_map_refresh_cmd}
 
 
 @api_router.post("/conversations/{conv_id}/project")

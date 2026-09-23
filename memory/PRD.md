@@ -683,3 +683,19 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   certbot DNS-01 wildcard ou HTTP-01 par projet), puis `nginx -t` + reload.
 - Verifie : creation projet -> URL https://storm-monitor.preview... + port 8090 ;
   build Vite OK ; bash -n OK.
+
+## Map Nginx auto-regeneree en tache de fond (2026-09-23)
+
+- `_run_preview_map_refresh()` (server.py) lance `PREVIEW_MAP_REFRESH_CMD`
+  (defaut `sudo /usr/bin/bash /var/www/forge/deploy/setup-preview-domain.sh --map-only`)
+  via asyncio.create_subprocess_exec, timeout PREVIEW_MAP_REFRESH_TIMEOUT=120s,
+  coalescence (asyncio.Lock + flag pending : une seule execution a la fois, re-run
+  unique si demandes multiples). Tout echec -> logger.warning, jamais d exception HTTP.
+- `_schedule_preview_map_refresh()` est appele dans `_assign_project_meta()` apres
+  l ecriture Mongo (creation de projet, attribution de port, changement d URL) :
+  couvre POST/PUT /api/workspace/projects, GET (completion) et
+  POST /api/conversations/{id}/project. Desactivable via PREVIEW_MAP_AUTO_REFRESH=0.
+- Endpoint de secours : POST /api/workspace/preview-map/refresh (auth) -> {scheduled:true}.
+- Prerequis serveur : regle sudoers NOPASSWD sur la commande exacte (deja en place).
+- Verifie en local : creation projet -> 200 + warning code 127 (script absent du pod),
+  endpoint refresh -> 200, aucune requete cassee ; compileall OK.
