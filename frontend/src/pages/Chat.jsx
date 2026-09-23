@@ -38,9 +38,8 @@ import {
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
-
-// Instance Preview (facultative) : renseigne VITE_PREVIEW_URL dans frontend/.env.
-const PREVIEW_URL = import.meta.env.VITE_PREVIEW_URL || "";
+import ProjectHub from "@/components/ProjectHub";
+import PreviewButton from "@/components/PreviewButton";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -85,6 +84,7 @@ export default function Chat() {
   const [plusOpen, setPlusOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
   const [forking, setForking] = useState(false);
+  const [projectUrls, setProjectUrls] = useState({});
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -96,6 +96,7 @@ export default function Chat() {
   useEffect(() => {
     if (user && user !== false && user !== null) {
       fetchConversations();
+      fetchProjectUrls();
       api
         .get("/models")
         .then(({ data }) => {
@@ -176,12 +177,24 @@ export default function Chat() {
     );
   }
 
+  const fetchProjectUrls = async () => {
+    try {
+      const { data } = await api.get("/workspace/projects");
+      const map = {};
+      (data.projects || []).forEach((p) => {
+        if (p.preview_url) map[p.name] = p.preview_url;
+      });
+      setProjectUrls(map);
+    } catch (_) {
+      /* non bloquant */
+    }
+  };
+
   const fetchConversations = async () => {
     try {
       const { data } = await api.get("/conversations");
       const list = Array.isArray(data) ? data : (data?.conversations || []);
       setConversations(list);
-      if (list.length > 0 && !activeId) setActiveId(list[0].id);
     } catch (e) {
       setError(formatApiError(e));
     }
@@ -206,6 +219,44 @@ export default function Chat() {
       setActiveId(data.id);
       setMessages([]);
       setSidebarOpen(false);
+    } catch (e) {
+      setError(formatApiError(e));
+    }
+  };
+
+  const startTask = async (prompt, project) => {
+    try {
+      const { data } = await api.post("/conversations", {
+        title: prompt.slice(0, 60),
+        project: project || null,
+      });
+      setConversations((prev) => [data, ...prev]);
+      setActiveId(data.id);
+      setMessages([]);
+      await sendMessage(null, { text: prompt, convId: data.id });
+    } catch (e) {
+      setError(formatApiError(e));
+    }
+  };
+
+  const openProject = async (project) => {
+    if (project?.preview_url) {
+      setProjectUrls((prev) => ({ ...prev, [project.name]: project.preview_url }));
+    }
+    const existing = conversations.find((c) => c.project === project.name);
+    if (existing) {
+      setActiveId(existing.id);
+      setSidebarOpen(false);
+      return;
+    }
+    try {
+      const { data } = await api.post("/conversations", {
+        title: project.name,
+        project: project.name,
+      });
+      setConversations((prev) => [data, ...prev]);
+      setActiveId(data.id);
+      setMessages([]);
     } catch (e) {
       setError(formatApiError(e));
     }
@@ -374,14 +425,14 @@ export default function Chat() {
     abortRef.current = null;
   };
 
-  const sendMessage = async (e) => {
+  const sendMessage = async (e, overrides = {}) => {
     e?.preventDefault();
     if (sending) return;
-    const trimmed = text.trim();
+    const trimmed = (overrides.text ?? text).trim();
     if (!trimmed && !attachments.length) return;
     setError("");
 
-    let convId = activeId;
+    let convId = overrides.convId ?? activeId;
     if (!convId) {
       try {
         const { data } = await api.post("/conversations", { title: "New Chat" });
@@ -845,24 +896,16 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
-            {activeId && PREVIEW_URL && (
-              <a
-                href={
-                  activeConv?.project
-                    ? `${PREVIEW_URL}?project=${encodeURIComponent(activeConv.project)}`
-                    : PREVIEW_URL
+            {activeConv?.project && (
+              <PreviewButton
+                project={activeConv.project}
+                previewUrl={
+                  projectUrls[activeConv.project] ?? activeConv.preview_url ?? ""
                 }
-                target="_blank"
-                rel="noreferrer"
-                title={`Ouvrir l'instance Preview${
-                  activeConv?.project ? ` — ${activeConv.project}` : ""
-                }`}
-                className="flex items-center gap-1.5 border-2 border-white/20 px-2 py-1 text-[10px] font-mono uppercase tracking-[0.15em] text-gray-400 hover:border-[#05d9e8] hover:text-[#05d9e8] transition-colors"
-                data-testid="preview-btn"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Preview</span>
-              </a>
+                onSaved={(url) =>
+                  setProjectUrls((prev) => ({ ...prev, [activeConv.project]: url }))
+                }
+              />
             )}
             {usage && <UsageBadge usage={usage} />}
             <div
@@ -903,12 +946,15 @@ export default function Chat() {
           </div>
         </header>
 
+        {/* Hub d'accueil tant qu'aucune session n'est ouverte */}
+        {!activeId && (
+          <ProjectHub onStart={startTask} onOpenProject={openProject} />
+        )}
+
         {/* Messages */}
+        {activeId && (
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 lg:px-8 py-4 sm:py-6">
           <div className="max-w-4xl mx-auto" data-testid="messages-container">
-            {!activeId && (
-              <EmptyState onStart={newConversation} />
-            )}
             {activeId && messages.length === 0 && !loadingMsgs && (
               <EmptyChat />
             )}
@@ -967,6 +1013,7 @@ export default function Chat() {
             <div ref={messagesEndRef} />
           </div>
         </div>
+        )}
 
         {/* Error banner */}
         {error && (

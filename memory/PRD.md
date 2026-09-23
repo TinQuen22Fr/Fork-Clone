@@ -642,3 +642,22 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   visible des qu une conversation est active, ouvre VITE_PREVIEW_URL dans un nouvel
   onglet (+ ?project=<nom> si la conversation est liee a un projet).
   ATTENTION : ce projet est en Vite -> `import.meta.env.VITE_*`, jamais `process.env`.
+
+## Hub de projets + Preview par projet (2026-09-23)
+
+- Backend : `POST /api/workspace/projects` (cree workspace/<nom>, valide le nom),
+  `PUT /api/workspace/projects/{name}` (preview_url, validee http/https),
+  `GET /api/workspace/projects` enrichi (preview_url + nb de conversations),
+  `POST /api/conversations/{id}/project`, et `POST /api/conversations` accepte
+  `project` (cree le dossier et lie la session). Meta stockee dans la collection
+  Mongo `projects` {user_id, name, preview_url}.
+- Frontend : `components/ProjectHub.jsx` = ecran d accueil (prompt central qui cree
+  session + dossier projet, selecteur/creation de projet, cartes des projets avec
+  compteur de sessions, badge git et lien preview). Plus de chargement automatique
+  de la derniere conversation a la connexion.
+- `components/PreviewButton.jsx` : bouton d en-tete visible des qu un projet est
+  rattache a la session ; ouvre l URL exacte du projet dans un onglet, ou propose
+  une modale de saisie/edition si elle est vide (data-testid preview-btn,
+  preview-setup-btn, preview-url-input, preview-save-btn).
+- `sendMessage(e, overrides)` accepte un texte/convId pour envoyer le prompt du hub.
+- Build Vite OK ; hub verifie en navigateur.

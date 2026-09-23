@@ -452,6 +452,16 @@ class LoginRequest(BaseModel):
 
 class CreateConversationRequest(BaseModel):
     title: Optional[str] = "New Chat"
+    project: Optional[str] = None
+
+
+class CreateProjectRequest(BaseModel):
+    name: str
+    preview_url: Optional[str] = None
+
+
+class ProjectUpdateRequest(BaseModel):
+    preview_url: Optional[str] = None
 
 
 class RenameRequest(BaseModel):
@@ -3023,6 +3033,10 @@ async def create_conversation(
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+    if payload.project:
+        name = _valid_project_name(payload.project)
+        _ensure_project_dir(name)
+        doc["project"] = name
     await database.conversations.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -3887,9 +3901,106 @@ async def _gh_api(token: str, path: str, params: Optional[dict] = None):
     return resp.json()
 
 
+def _valid_project_name(name: str) -> str:
+    n = (name or "").strip().strip("/")
+    if not n or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", n) or n.startswith("."):
+        raise HTTPException(
+            status_code=400,
+            detail="Nom de projet invalide (lettres, chiffres, . _ - uniquement).",
+        )
+    return n
+
+
+def _ensure_project_dir(name: str) -> Path:
+    root = Path(settings.workspace_root)
+    root.mkdir(parents=True, exist_ok=True)
+    d = root / name
+    d.mkdir(exist_ok=True)
+    return d
+
+
+async def _projects_meta(user_id: str) -> dict:
+    docs = await get_db().projects.find({"user_id": user_id}, {"_id": 0}).to_list(500)
+    return {d["name"]: d for d in docs}
+
+
 @api_router.get("/workspace/projects")
 async def workspace_projects(current_user: dict = Depends(get_current_user)):
-    return {"root": settings.workspace_root, "projects": list_workspace_projects()}
+    """Projets du workspace + URL de preview et nb de conversations."""
+    database = get_db()
+    meta = await _projects_meta(current_user["id"])
+    projects = list_workspace_projects()
+    for p in projects:
+        m = meta.get(p["name"]) or {}
+        p["preview_url"] = m.get("preview_url") or ""
+        p["conversations"] = await database.conversations.count_documents(
+            {"user_id": current_user["id"], "project": p["name"]}
+        )
+    return {"root": settings.workspace_root, "projects": projects}
+
+
+@api_router.post("/workspace/projects")
+async def create_project(
+    payload: CreateProjectRequest, current_user: dict = Depends(get_current_user)
+):
+    """Cree le sous-dossier du projet dans WORKSPACE_ROOT."""
+    name = _valid_project_name(payload.name)
+    d = _ensure_project_dir(name)
+    await get_db().projects.update_one(
+        {"user_id": current_user["id"], "name": name},
+        {
+            "$set": {"preview_url": (payload.preview_url or "").strip(), "updated_at": now_iso()},
+            "$setOnInsert": {"created_at": now_iso()},
+        },
+        upsert=True,
+    )
+    return {
+        "name": name,
+        "path": str(d),
+        "preview_url": (payload.preview_url or "").strip(),
+        "is_git_repo": (d / ".git").exists(),
+        "conversations": 0,
+    }
+
+
+@api_router.put("/workspace/projects/{name}")
+async def update_project(
+    name: str,
+    payload: ProjectUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Met a jour l'URL de preview du projet (http(s)://... ou vide)."""
+    pname = _valid_project_name(name)
+    url = (payload.preview_url or "").strip()
+    if url and not re.match(r"^https?://[^\s]+$", url):
+        raise HTTPException(
+            status_code=400,
+            detail="URL de preview invalide (attendu http://... ou https://...).",
+        )
+    await get_db().projects.update_one(
+        {"user_id": current_user["id"], "name": pname},
+        {"$set": {"preview_url": url, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return {"name": pname, "preview_url": url}
+
+
+@api_router.post("/conversations/{conv_id}/project")
+async def link_conversation_project(
+    conv_id: str,
+    payload: CreateProjectRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Rattache une conversation a un projet (cree le dossier si besoin)."""
+    name = _valid_project_name(payload.name)
+    _ensure_project_dir(name)
+    res = await get_db().conversations.update_one(
+        {"id": conv_id, "user_id": current_user["id"]},
+        {"$set": {"project": name, "updated_at": now_iso()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"id": conv_id, "project": name}
 
 
 async def _gh_post(token: str, path: str, payload: dict):
