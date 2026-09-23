@@ -614,3 +614,15 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - VoicePicker : voix Kokoro affichee seulement si le moteur est actif.
 - Verifie : voices -> engines [edge-tts] 13 voix ; POST /tts (Denise et kokoro:ff_siwis
   sans modeles) -> 200, 18 Ko, provider edge-tts ; tests TTS 7/7.
+
+## Correctif (2026-09-23) — installation sous Python 3.14
+
+- CAUSE : kokoro-onnx declare « Requires-Python >=3.10,<3.14 » sur PyPI -> tout
+  `pip install -r requirements.txt` echouait sous Python 3.14 (Dedibox).
+- FIX : kokoro-onnx + soundfile sortis de requirements.txt vers le fichier OPTIONNEL
+  `backend/requirements-kokoro.txt`. `deploy/install-kokoro.sh` les installe avec
+  `--ignore-requires-python` et sort en exit 0 avec avertissement si l installation
+  ou l import echoue (TTS assure par edge-tts, aucune perte de service).
+  `upgrade.sh` signale seulement la presence/absence de Kokoro, sans jamais echouer.
+- Valide par testing_agent (iteration_10.json) : 13/13, 0 probleme. Tests ajoutes :
+  backend/tests/test_kokoro_optional.py.

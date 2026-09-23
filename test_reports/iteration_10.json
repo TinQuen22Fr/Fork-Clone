@@ -1,0 +1,26 @@
+{
+  "summary": "Validated the Python-3.14 install-crash fix (Kokoro moved out of requirements.txt) and full TTS non-regression. 13/13 pytest OK in /app/backend/tests/test_kokoro_optional.py: requirements.txt contains no kokoro/soundfile, `pip install --dry-run -r backend/requirements.txt` returns exit 0 without resolving kokoro; backend/requirements-kokoro.txt exists and pins kokoro-onnx + soundfile; deploy/install-kokoro.sh bash -n OK, uses --ignore-requires-python, and exits 0 with warning on failure; upgrade.sh bash -n OK and only reports Kokoro presence (no die on kokoro lines); no 'freetts' string anywhere (fixed a stale comment in server.py line 4206); backend /api/health, admin login, /api/conversations all 200; /api/tts/voices?locale=fr returns engines=['edge-tts'] with no kokoro engine and no 'kokoro:' short_name; POST /api/tts with voice='fr-FR-DeniseNeural' returns audio/mpeg >5 KB with X-TTS-Provider: edge-tts; POST /api/tts with voice='kokoro:ff_siwis' falls back transparently to edge-tts (200 + audio, never 5xx). Frontend Playwright: VoicePicker opens, provider label 'edge-tts' shown, 13 French voices with fr-FR-DeniseNeural first and ZERO kokoro: entries, voice-test-btn triggers exactly 1 POST /api/tts.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_kokoro_optional.py",
+    "/app/test_reports/pytest/kokoro_optional.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Stale comment '# Synthese vocale — FreeTTS (cle) ou edge-tts' in server.py:4206 was misleading (no FreeTTS in code); rewritten to reference Kokoro/edge-tts to match reality.",
+    "install-kokoro.sh gracefully exits 0 on install *and* on import failure — good; both branches are covered.",
+    "VoicePicker.jsx correctly hides kokoro: entries when data.engines does not contain 'kokoro' — validated with real backend response."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (single-line comment update)",
+    "/app/backend/tests/test_kokoro_optional.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@forge.dev / ForgeAdmin2026!",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Kokoro is now optional via backend/requirements-kokoro.txt + deploy/install-kokoro.sh (uses --ignore-requires-python, exits 0 on failure). requirements.txt MUST stay free of kokoro-onnx/soundfile. Runtime behaviour: /api/tts/voices returns engines=['edge-tts'] and VoicePicker filters kokoro: entries out. POST /api/tts with kokoro:* voice must never 5xx — silent fallback to edge-tts is contract-tested.",
+  "rca of the issue": "Root cause of the reported Dedibox install crash: kokoro-onnx PyPI metadata declares Requires-Python >=3.10,<3.14, so under Ubuntu 26.04 / Python 3.14 pip's resolver aborted `pip install -r backend/requirements.txt`. Mitigation applied (and now verified): kokoro-onnx + soundfile removed from requirements.txt, isolated in requirements-kokoro.txt installed only by deploy/install-kokoro.sh with --ignore-requires-python; both install failure and import failure branches call `exit 0` with a stderr warning so upgrade.sh cannot be broken by Kokoro. upgrade.sh's 'Dependances Python' section only probes `import kokoro_onnx` for informational logging (never die)."
+}

@@ -4203,7 +4203,7 @@ async def fork_conversation(
 
 
 # =========================================================================
-# Synthese vocale — FreeTTS (cle) ou edge-tts (sans cle)
+# Synthese vocale — Kokoro (local, optionnel) ou edge-tts (sans cle)
 # =========================================================================
 class TTSRequest(BaseModel):
     text: str
