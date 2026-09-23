@@ -661,3 +661,25 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   preview-setup-btn, preview-url-input, preview-save-btn).
 - `sendMessage(e, overrides)` accepte un texte/convId pour envoyer le prompt du hub.
 - Build Vite OK ; hub verifie en navigateur.
+
+## Preview automatique par projet (2026-09-23)
+
+- Backend : `_assign_project_meta()` attribue a la creation du projet (ou au
+  rattachement d une session) une URL `https://<projet>.PREVIEW_DOMAIN_SUFFIX`
+  (defaut preview.quentin-astro.fr, wildcard DNS deja en place) ET un port interne
+  dedie unique a partir de PREVIEW_PORT_BASE=8090 (jusqu a PREVIEW_PORT_MAX=8189),
+  stockes dans la collection `projects` (preview_url, preview_port).
+  GET /api/workspace/projects complete les projets existants au passage.
+  PUT avec preview_url vide revient a l URL automatique.
+- UI : le bouton Preview ouvre directement l URL HTTPS du projet, aucune saisie
+  necessaire ; la modale ne sert plus qu a surcharger l URL. Le hub affiche port +
+  domaine de chaque projet.
+- `deploy/setup-preview-domain.sh` : vhost Nginx wildcard avec capture regex
+  `~^(?<project>[a-z0-9._-]+)\.preview\.<domaine>$`, `map $project $forge_preview_port`
+  incluant /etc/nginx/forge-preview-ports.map genere depuis Mongo (venv + pymongo),
+  reverse proxy avec Upgrade/Connection (WebSockets), proxy_buffering off (SSE),
+  timeouts 900s, 503 explicite si projet inconnu, noindex. Options : --map-only
+  (regeneration rapide apres creation d un projet), --ssl (rappelle la commande
+  certbot DNS-01 wildcard ou HTTP-01 par projet), puis `nginx -t` + reload.
+- Verifie : creation projet -> URL https://storm-monitor.preview... + port 8090 ;
+  build Vite OK ; bash -n OK.

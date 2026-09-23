@@ -296,6 +296,12 @@ class Settings:
         # Repli mono-projet (dev local) si la racine ci-dessus n'existe pas.
         self.workspace_dir: str = _env("WORKSPACE_DIR", str(ROOT_DIR.parent))
         self.git_author_name: str = _env("GIT_AUTHOR_NAME", "Claude Unchained Forge")
+        # Preview automatique : wildcard DNS *.preview.<domaine> -> Dedibox.
+        self.preview_domain: str = _env(
+            "PREVIEW_DOMAIN_SUFFIX", "preview.quentin-astro.fr"
+        ).strip().strip(".")
+        self.preview_port_base: int = int(_env("PREVIEW_PORT_BASE", "8090"))
+        self.preview_port_max: int = int(_env("PREVIEW_PORT_MAX", "8189"))
         self.git_author_email: str = _env(
             "GIT_AUTHOR_EMAIL", "forge@localhost"
         )
@@ -3036,6 +3042,7 @@ async def create_conversation(
     if payload.project:
         name = _valid_project_name(payload.project)
         _ensure_project_dir(name)
+        await _assign_project_meta(current_user["id"], name)
         doc["project"] = name
     await database.conversations.insert_one(doc)
     doc.pop("_id", None)
@@ -3919,6 +3926,54 @@ def _ensure_project_dir(name: str) -> Path:
     return d
 
 
+def _default_preview_url(name: str) -> str:
+    """URL HTTPS automatique du projet (wildcard DNS deja en place)."""
+    return f"https://{name}.{settings.preview_domain}" if settings.preview_domain else ""
+
+
+async def _assign_project_meta(
+    user_id: str, name: str, preview_url: Optional[str] = None
+) -> dict:
+    """Cree/complete les metadonnees : URL de preview + port interne dedie."""
+    database = get_db()
+    doc = await database.projects.find_one({"user_id": user_id, "name": name}, {"_id": 0})
+    if doc and doc.get("preview_port") and (doc.get("preview_url") or not preview_url):
+        if preview_url and preview_url != doc.get("preview_url"):
+            await database.projects.update_one(
+                {"user_id": user_id, "name": name},
+                {"$set": {"preview_url": preview_url, "updated_at": now_iso()}},
+            )
+            doc["preview_url"] = preview_url
+        return doc
+
+    port = (doc or {}).get("preview_port")
+    if not port:
+        used = {
+            d.get("preview_port")
+            for d in await database.projects.find({}, {"preview_port": 1}).to_list(500)
+            if d.get("preview_port")
+        }
+        port = next(
+            (
+                p
+                for p in range(settings.preview_port_base, settings.preview_port_max + 1)
+                if p not in used
+            ),
+            settings.preview_port_base,
+        )
+
+    url = preview_url or (doc or {}).get("preview_url") or _default_preview_url(name)
+    await database.projects.update_one(
+        {"user_id": user_id, "name": name},
+        {
+            "$set": {"preview_url": url, "preview_port": port, "updated_at": now_iso()},
+            "$setOnInsert": {"created_at": now_iso()},
+        },
+        upsert=True,
+    )
+    return {"name": name, "preview_url": url, "preview_port": port}
+
+
 async def _projects_meta(user_id: str) -> dict:
     docs = await get_db().projects.find({"user_id": user_id}, {"_id": 0}).to_list(500)
     return {d["name"]: d for d in docs}
@@ -3932,7 +3987,10 @@ async def workspace_projects(current_user: dict = Depends(get_current_user)):
     projects = list_workspace_projects()
     for p in projects:
         m = meta.get(p["name"]) or {}
+        if not m.get("preview_url") or not m.get("preview_port"):
+            m = await _assign_project_meta(current_user["id"], p["name"])
         p["preview_url"] = m.get("preview_url") or ""
+        p["preview_port"] = m.get("preview_port")
         p["conversations"] = await database.conversations.count_documents(
             {"user_id": current_user["id"], "project": p["name"]}
         )
@@ -3946,18 +4004,14 @@ async def create_project(
     """Cree le sous-dossier du projet dans WORKSPACE_ROOT."""
     name = _valid_project_name(payload.name)
     d = _ensure_project_dir(name)
-    await get_db().projects.update_one(
-        {"user_id": current_user["id"], "name": name},
-        {
-            "$set": {"preview_url": (payload.preview_url or "").strip(), "updated_at": now_iso()},
-            "$setOnInsert": {"created_at": now_iso()},
-        },
-        upsert=True,
+    meta = await _assign_project_meta(
+        current_user["id"], name, (payload.preview_url or "").strip() or None
     )
     return {
         "name": name,
         "path": str(d),
-        "preview_url": (payload.preview_url or "").strip(),
+        "preview_url": meta.get("preview_url", ""),
+        "preview_port": meta.get("preview_port"),
         "is_git_repo": (d / ".git").exists(),
         "conversations": 0,
     }
@@ -3977,12 +4031,14 @@ async def update_project(
             status_code=400,
             detail="URL de preview invalide (attendu http://... ou https://...).",
         )
-    await get_db().projects.update_one(
-        {"user_id": current_user["id"], "name": pname},
-        {"$set": {"preview_url": url, "updated_at": now_iso()}},
-        upsert=True,
+    meta = await _assign_project_meta(
+        current_user["id"], pname, url or _default_preview_url(pname)
     )
-    return {"name": pname, "preview_url": url}
+    return {
+        "name": pname,
+        "preview_url": meta.get("preview_url", ""),
+        "preview_port": meta.get("preview_port"),
+    }
 
 
 @api_router.post("/conversations/{conv_id}/project")
@@ -3994,13 +4050,14 @@ async def link_conversation_project(
     """Rattache une conversation a un projet (cree le dossier si besoin)."""
     name = _valid_project_name(payload.name)
     _ensure_project_dir(name)
+    meta = await _assign_project_meta(current_user["id"], name)
     res = await get_db().conversations.update_one(
         {"id": conv_id, "user_id": current_user["id"]},
         {"$set": {"project": name, "updated_at": now_iso()}},
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return {"id": conv_id, "project": name}
+    return {"id": conv_id, "project": name, "preview_url": meta.get("preview_url", "")}
 
 
 async def _gh_post(token: str, path: str, payload: dict):

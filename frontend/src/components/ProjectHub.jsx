@@ -207,10 +207,11 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                       {p.conversations ?? 0}
                     </span>
                     {p.is_git_repo && <span className="text-[#ffd700]">git</span>}
-                    {p.preview_url ? (
-                      <span className="truncate text-[#05d9e8]">{p.preview_url}</span>
-                    ) : (
-                      <span>pas d'URL de preview</span>
+                    {p.preview_port && <span>:{p.preview_port}</span>}
+                    {p.preview_url && (
+                      <span className="truncate text-[#05d9e8]">
+                        {p.preview_url.replace(/^https?:\/\//, "")}
+                      </span>
                     )}
                   </div>
                 </div>

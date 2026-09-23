@@ -97,11 +97,14 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
                 <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
                   URL de l'application en dev
                 </span>
+                <span className="block text-[10px] font-mono text-gray-500">
+                  Laisse vide pour revenir à l'URL automatique du projet.
+                </span>
                 <input
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && save()}
-                  placeholder="http://localhost:5173 ou https://projet.domaine.fr"
+                  placeholder="https://projet.preview.quentin-astro.fr"
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
                   data-testid="preview-url-input"
                 />
