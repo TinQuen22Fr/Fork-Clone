@@ -1,0 +1,14 @@
+# Moteur TTS local Kokoro — OPTIONNEL.
+#
+# Volontairement separe de requirements.txt : kokoro-onnx declare
+# "Requires-Python >=3.10,<3.14" sur PyPI, ce qui fait echouer tout
+# `pip install -r requirements.txt` sous Python 3.14.
+#
+# Installation (contourne la contrainte de metadonnees) :
+#     backend/venv/bin/pip install --ignore-requires-python -r backend/requirements-kokoro.txt
+# ou simplement :
+#     sudo bash deploy/install-kokoro.sh
+#
+# Si Kokoro ne s'installe pas, la Forge utilise edge-tts : aucune perte de service.
+kokoro-onnx>=0.4.7
+soundfile>=0.13.0

@@ -120,6 +120,13 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     echo "$NEW_HASH" > "$HASH_FILE"
     c_ok "dependances a jour"
   fi
+  # Kokoro est optionnel (requirements-kokoro.txt) : jamais bloquant ici.
+  if "$VENV_DIR/bin/python" -c "import kokoro_onnx" >/dev/null 2>&1; then
+    c_ok "moteur TTS local Kokoro present"
+  else
+    c_ok "Kokoro absent — TTS assure par edge-tts (sudo bash deploy/install-kokoro.sh pour l'ajouter)"
+  fi
+
   "$VENV_DIR/bin/python" -c "import ast,sys;ast.parse(open('backend/server.py').read())" \
     || die "backend/server.py ne compile pas — mise a jour interrompue"
   c_ok "server.py compile"
