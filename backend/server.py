@@ -3991,12 +3991,24 @@ async def _run_preview_map_refresh() -> None:
                     if proc.returncode == 0:
                         logger.info("Preview map Nginx regeneree avec succes.")
                     else:
-                        logger.warning(
-                            "Preview map: '%s' a echoue (code %s) : %s",
-                            cmd,
-                            proc.returncode,
-                            (out or b"").decode("utf-8", "replace")[-500:],
-                        )
+                        out_txt = (out or b"").decode("utf-8", "replace")
+                        if "Read-only file system" in out_txt or "Permission denied" in out_txt:
+                            logger.warning(
+                                "Preview map : ecriture refusee (systeme monte en "
+                                "lecture seule). Ajoute /etc/nginx /run /var/log/nginx "
+                                "a ReadWritePaths= de forge-backend.service, ou lance "
+                                "`sudo bash deploy/fix-previews.sh` "
+                                "(cf. deploy/KNOWN_ISSUE_preview_map_readonly.md). "
+                                "Sans cela les previews repondent 503. Sortie : %s",
+                                out_txt[-300:],
+                            )
+                        else:
+                            logger.warning(
+                                "Preview map: '%s' a echoue (code %s) : %s",
+                                cmd,
+                                proc.returncode,
+                                out_txt[-500:],
+                            )
             except FileNotFoundError:
                 logger.warning("Preview map: commande introuvable ('%s').", cmd)
             except Exception as exc:  # noqa: BLE001

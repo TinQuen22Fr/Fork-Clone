@@ -9,10 +9,17 @@ Toutes les commandes sont copiables telles quelles, dans l'ordre.
 
 ## ⚡ Previews en 502 Bad Gateway — la procédure A → Z (à faire en premier)
 
-**Pourquoi c'était cassé.** Nginx renvoyait bien `https://<projet>.preview.quentin-astro.fr`
-vers `127.0.0.1:<port du projet>`, mais **aucune application n'écoutait sur ce port** :
-personne ne démarrait le serveur de dev des projets. Résultat : 502 sur tous les
-projets, quoi qu'on fasse côté Nginx.
+**Pourquoi c'était cassé.** Deux bugs distincts, corrigés tous les deux :
+
+- **503** = le projet n'était pas dans la map nginx. Cause racine :
+  `ProtectSystem=strict` monte tout le système en lecture seule pour le service
+  *et ses enfants* (même via `sudo`), et `ReadWritePaths=` ne contenait pas
+  `/etc/nginx`, `/run`, `/var/log/nginx` → la map ne pouvait pas être écrite,
+  silencieusement. Détail complet :
+  [`deploy/KNOWN_ISSUE_preview_map_readonly.md`](deploy/KNOWN_ISSUE_preview_map_readonly.md).
+- **502** = le projet était bien dans la map, mais **aucune application
+  n'écoutait sur son port** : personne ne démarrait le serveur de dev des
+  projets.
 
 **Ce qui est corrigé.** La Forge embarque désormais un vrai gestionnaire de
 previews (`backend/preview_runtime.py`) : elle détecte le type de projet et lance
@@ -44,7 +51,9 @@ manque quelque chose :
 5. complète `backend/.env` avec les nouvelles variables (`PREVIEW_AUTOSTART`,
    `PREVIEW_MAP_*`) et pointe la commande sudo sur le bon répertoire ;
 6. corrige l'unité systemd : **`--workers 1`** (plusieurs workers = plusieurs
-   gestionnaires de preview concurrents), `ReadWritePaths` avec `workspace`,
+   gestionnaires de preview concurrents), `ReadWritePaths` **complété via
+   `deploy/ensure-rwpaths.sh`** (ajoute `/etc/nginx`, `/run`, `/var/log/nginx`,
+   `workspace`… **sans jamais supprimer** un chemin que tu as ajouté),
    `KillMode=control-group` ; l'ancienne unité est sauvegardée en `.bak-<date>` ;
 7. met à jour les dépendances Python, rebuild le frontend ;
 8. redémarre `forge-backend` et vérifie `/api/health` ;

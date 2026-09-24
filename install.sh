@@ -105,6 +105,15 @@ else
     c_ok "Service systemd déjà identique au gabarit."
 fi
 
+# Chemins inscriptibles : complete l'unite en place SANS rien supprimer.
+# Sans /etc/nginx /run /var/log/nginx, la map des previews est illisible en
+# ecriture sous ProtectSystem=strict -> bouton PREVIEW en 503.
+# Voir deploy/KNOWN_ISSUE_preview_map_readonly.md
+if [ -f "$SERVICE_FILE" ]; then
+    sudo bash "$APP_DIR/deploy/ensure-rwpaths.sh" "$SERVICE_FILE" "$APP_DIR" \
+        && sudo systemctl daemon-reload
+fi
+
 # ---------------------------------------------------------------------------
 # 5. Redémarrage du backend
 # ---------------------------------------------------------------------------

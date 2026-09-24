@@ -173,8 +173,11 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 
-# Chemins autorises en ecriture
-ReadWritePaths=$PREVIEW_DIR/workspace $PREVIEW_DIR/.playwright $PREVIEW_DIR/backend/static/screenshots /dev/shm
+# Chemins autorises en ecriture — NE RIEN RETIRER.
+# /etc/nginx /run /var/log/nginx sont indispensables a la regeneration de la map
+# des previews sous ProtectSystem=strict (sinon PREVIEW en 503).
+# Voir deploy/KNOWN_ISSUE_preview_map_readonly.md
+ReadWritePaths=$PREVIEW_DIR/workspace $PREVIEW_DIR/.playwright $PREVIEW_DIR/backend/static/screenshots /dev/shm /etc/nginx /run /var/log/nginx
 
 # Chemins en lecture seule indispensables
 ReadOnlyPaths=$PREVIEW_DIR

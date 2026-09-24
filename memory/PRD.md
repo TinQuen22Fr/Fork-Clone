@@ -728,3 +728,28 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Verifie en local : projet statique (port 8091, HTML servi), projet vite
   (npm install auto puis 200 sur 8092), stop, autostart apres restart backend,
   Hub affichant les etats ; bash -n + compileall + build Vite OK.
+
+## ReadWritePaths / 503 des previews : correctif rendu permanent (2026-09-24)
+
+- Bug remonte par l utilisateur (corrige par lui sur la branche claude-ai) :
+  ProtectSystem=strict monte tout en lecture seule pour le service ET ses
+  enfants (meme via sudo) ; ReadWritePaths ne listait pas /etc/nginx /run
+  /var/log/nginx -> la map des previews ne pouvait pas etre ecrite -> vhost
+  renvoyait 503 pour tous les projets.
+- INTEGRE DE FACON PERMANENTE :
+  * `deploy/forge-backend.service` : ReadWritePaths = workspace .playwright
+    screenshots /dev/shm /etc/nginx /run /var/log/nginx, avec commentaire
+    « ne rien retirer » + --workers 1 + KillMode=control-group + TimeoutStopSec.
+  * `deploy/ensure-rwpaths.sh` (NOUVEAU) : source unique de verite de la liste.
+    Patch idempotent et ADDITIF (ne supprime jamais un chemin local), cree les
+    dossiers manquants (evite 226/NAMESPACE), option --print. Appele par
+    install.sh, upgrade.sh et deploy/fix-previews.sh -> aucune regeneration
+    future ne peut reintroduire une liste incomplete.
+  * `deploy/setup-preview.sh` : meme liste pour l unite forge-backend-preview.
+  * `deploy/KNOWN_ISSUE_preview_map_readonly.md` (copie canonique du diagnostic).
+  * backend : si la regeneration de la map echoue avec « Read-only file system »
+    ou « Permission denied », le log donne desormais le correctif exact.
+  * fix-previews.sh : controle final anti-503 (map non vide) avec instructions.
+- Verifie : bash -n sur tous les scripts, compileall backend, et test reel de
+  ensure-rwpaths.sh (fusion additive conservant un chemin perso, idempotence,
+  creation de la ligne quand elle est absente).

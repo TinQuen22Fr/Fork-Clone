@@ -109,7 +109,8 @@ mkdir -p "$APP_DIR/workspace/.forge-preview/home" \
          "$APP_DIR/workspace/.forge-preview/npm-cache" \
          "$APP_DIR/workspace/.forge-preview/cache" \
          "$APP_DIR/.playwright" \
-         "$APP_DIR/backend/static/screenshots"
+         "$APP_DIR/backend/static/screenshots" \
+         /var/log/nginx
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$APP_DIR/workspace" \
   "$APP_DIR/.playwright" "$APP_DIR/backend/static/screenshots" 2>/dev/null || \
   c_warn "chown partiel (utilisateur $SERVICE_USER inconnu ?)"
@@ -180,9 +181,13 @@ fi
 c_step "Unite systemd $SERVICE"
 if [ -f "$UNIT" ]; then
   cp "$UNIT" "$UNIT.bak-$STAMP"
-  python3 - "$UNIT" "$APP_DIR" <<'PY'
+  # Chemins inscriptibles : source unique de verite, patch additif.
+  # (Sans /etc/nginx /run /var/log/nginx, la map des previews ne peut pas etre
+  #  ecrite avec ProtectSystem=strict -> PREVIEW en 503.)
+  bash "$APP_DIR/deploy/ensure-rwpaths.sh" "$UNIT" "$APP_DIR"
+  python3 - "$UNIT" <<'PY'
 import re, sys
-path, app = sys.argv[1], sys.argv[2]
+path = sys.argv[1]
 text = open(path).read()
 changed = []
 
@@ -190,16 +195,6 @@ changed = []
 new, n = re.subn(r"--workers\s+\d+", "--workers 1", text)
 if n and new != text:
     text, _ = new, changed.append("--workers 1")
-
-ws = f"{app}/workspace"
-m = re.search(r"(?m)^ReadWritePaths=(.*)$", text)
-if m:
-    if ws not in m.group(1).split():
-        text = text[:m.start(1)] + f"{ws} " + text[m.start(1):]
-        changed.append("ReadWritePaths += workspace")
-else:
-    text = text.replace("[Install]", f"ReadWritePaths={ws}\n\n[Install]")
-    changed.append("ReadWritePaths ajoute")
 
 # Les serveurs de dev sont des process enfants : ils doivent mourir avec le service.
 if not re.search(r"(?m)^KillMode=", text):
@@ -210,7 +205,7 @@ if not re.search(r"(?m)^TimeoutStopSec=", text):
     changed.append("TimeoutStopSec=20")
 
 open(path, "w").write(text)
-print("  ok unite inchangee" if not changed else "  ok " + ", ".join(changed))
+print("  ok unite deja conforme" if not changed else "  ok " + ", ".join(changed))
 PY
   systemctl daemon-reload
 else
@@ -266,6 +261,19 @@ if [ "$DO_NGINX" -eq 1 ]; then
   c_step "Nginx (vhost wildcard + map projet -> port)"
   APP_DIR="$APP_DIR" bash "$APP_DIR/deploy/setup-preview-domain.sh" || \
     c_warn "setup-preview-domain.sh a signale une erreur (voir ci-dessus)"
+
+  # Controle anti-503 : la map doit etre ecrite ET lisible par nginx.
+  MAP_FILE="${MAP_FILE:-/etc/nginx/forge-preview-ports.map}"
+  if [ -s "$MAP_FILE" ] && grep -qvE '^#|^$' "$MAP_FILE"; then
+    c_ok "map des previews : $(grep -cvE '^#|^$' "$MAP_FILE") projet(s)"
+  else
+    c_warn "map vide ($MAP_FILE) : les previews repondront 503."
+    echo "      - aucun projet dans le workspace ? cree-en un depuis le Hub"
+    echo "      - sinon verifie les droits d'ecriture :"
+    echo "        systemctl cat $SERVICE | grep ReadWritePaths"
+    echo "        (doit contenir /etc/nginx /run /var/log/nginx"
+    echo "         — voir deploy/KNOWN_ISSUE_preview_map_readonly.md)"
+  fi
 fi
 
 c_step "Previews reparees"

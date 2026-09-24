@@ -13,18 +13,36 @@ Environment="PATH=/var/www/forge/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PLAYWRIGHT_BROWSERS_PATH=/var/www/forge/.playwright"
 EnvironmentFile=/var/www/forge/backend/.env
 
-ExecStart=/var/www/forge/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --workers 2 --proxy-headers
+# UN SEUL worker : plusieurs workers = plusieurs gestionnaires de preview
+# concurrents (ports en double, start/stop qui ne trouvent pas leur process).
+ExecStart=/var/www/forge/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --workers 1 --proxy-headers
 
 # Isolation du systeme
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 
-# Chemins autorises en ecriture
-ReadWritePaths=/var/www/forge/workspace /var/www/forge/.playwright /var/www/forge/backend/static/screenshots /dev/shm
+# ---------------------------------------------------------------------------
+# Chemins autorises en ecriture — LISTE MINIMALE, NE RIEN RETIRER.
+#
+# Avec ProtectSystem=strict, tout le systeme est monte en lecture seule pour
+# CE service ET TOUS SES ENFANTS (y compris ceux lances via sudo : le namespace
+# mount est herite). La regeneration de la map des previews
+# (deploy/setup-preview-domain.sh --map-only) ecrit /etc/nginx/forge-preview-ports.map,
+# lance `nginx -t` (qui ecrit dans /var/log/nginx) et recharge nginx (/run).
+# Sans /etc/nginx, /run et /var/log/nginx, cette regeneration echoue
+# silencieusement -> aucun projet dans la map -> PREVIEW en 503.
+# Voir deploy/KNOWN_ISSUE_preview_map_readonly.md
+# ---------------------------------------------------------------------------
+ReadWritePaths=/var/www/forge/workspace /var/www/forge/.playwright /var/www/forge/backend/static/screenshots /dev/shm /etc/nginx /run /var/log/nginx
 
 # Chemins en lecture seule indispensables
 ReadOnlyPaths=/var/www/forge
+
+# Les serveurs de dev des previews sont des process enfants : ils doivent
+# mourir avec le service, sinon ils gardent leurs ports occupes.
+KillMode=control-group
+TimeoutStopSec=20
 
 Restart=always
 RestartSec=3

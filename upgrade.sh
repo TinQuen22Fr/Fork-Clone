@@ -173,6 +173,12 @@ if [ "$DO_BACKEND" -eq 1 ] && [ -f deploy/forge-backend.service ]; then
     systemctl enable "$SERVICE" >/dev/null 2>&1 || true
     c_ok "unite installee depuis le modele (aucune n'existait)"
   fi
+  # Complete la liste ReadWritePaths sans jamais retirer un chemin existant :
+  # /etc/nginx /run /var/log/nginx sont requis par la map des previews
+  # (ProtectSystem=strict). Voir deploy/KNOWN_ISSUE_preview_map_readonly.md
+  if [ -f "$UNIT" ]; then
+    bash deploy/ensure-rwpaths.sh "$UNIT" "$APP_DIR" && systemctl daemon-reload
+  fi
 fi
 
 # ---------------------------------------------------------------------------
