@@ -33,7 +33,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/www/forge
+ReadWritePaths=/var/www/forge /etc/nginx /run /var/log/nginx
 
 [Install]
 WantedBy=multi-user.target
