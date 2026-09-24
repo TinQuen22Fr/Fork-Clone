@@ -7,6 +7,97 @@ Toutes les commandes sont copiables telles quelles, dans l'ordre.
 
 ---
 
+## ⚡ Previews en 502 Bad Gateway — la procédure A → Z (à faire en premier)
+
+**Pourquoi c'était cassé.** Nginx renvoyait bien `https://<projet>.preview.quentin-astro.fr`
+vers `127.0.0.1:<port du projet>`, mais **aucune application n'écoutait sur ce port** :
+personne ne démarrait le serveur de dev des projets. Résultat : 502 sur tous les
+projets, quoi qu'on fasse côté Nginx.
+
+**Ce qui est corrigé.** La Forge embarque désormais un vrai gestionnaire de
+previews (`backend/preview_runtime.py`) : elle détecte le type de projet et lance
+elle-même le serveur sur le port dédié, avec journal, arrêt/redémarrage, et
+relance automatique des previews actives au redémarrage du backend.
+
+### 1. Une seule commande sur le serveur
+
+```bash
+cd /var/www/forge
+sudo git -c safe.directory=* pull --ff-only origin claude-ai   # récupère le code
+sudo bash deploy/fix-previews.sh
+```
+
+Si Gemini (ou autre) a modifié des fichiers et que le `pull` refuse :
+
+```bash
+sudo bash deploy/fix-previews.sh --reset-code   # stash tes modifs puis reset sur origin
+```
+
+Le script fait tout, dans l'ordre, et s'arrête net avec un message clair s'il
+manque quelque chose :
+
+1. remet le dépôt propre (tes modifs locales sont mises de côté par `git stash`) ;
+2. installe `node`/`npm` s'ils manquent ;
+3. crée `workspace/.forge-preview/` (HOME + cache npm des projets — obligatoire
+   avec `ProtectHome=yes` / `PrivateTmp=yes`) et remet les droits ;
+4. pose `/etc/sudoers.d/forge-preview` (NOPASSWD sur `setup-preview-domain.sh --map-only`) ;
+5. complète `backend/.env` avec les nouvelles variables (`PREVIEW_AUTOSTART`,
+   `PREVIEW_MAP_*`) et pointe la commande sudo sur le bon répertoire ;
+6. corrige l'unité systemd : **`--workers 1`** (plusieurs workers = plusieurs
+   gestionnaires de preview concurrents), `ReadWritePaths` avec `workspace`,
+   `KillMode=control-group` ; l'ancienne unité est sauvegardée en `.bak-<date>` ;
+7. met à jour les dépendances Python, rebuild le frontend ;
+8. redémarre `forge-backend` et vérifie `/api/health` ;
+9. régénère le vhost wildcard + la map `projet → port` et recharge Nginx.
+
+### 2. Utilisation dans l'interface
+
+- Bouton **PREVIEW** (en-tête d'une conversation liée à un projet) :
+  - **1er clic = démarrage** du serveur de dev, l'onglet s'ouvre automatiquement
+    dès que le port répond ;
+  - le **point de couleur** donne l'état : gris `arrêtée`, jaune
+    `installation…`/`démarrage…`, cyan `en ligne`, rouge `erreur` ;
+  - icône **parchemin** = journal du serveur (l'erreur npm exacte y est) ;
+  - **carré** = arrêt (libère RAM + port), **flèche circulaire** = redémarrage.
+- Sur le **Hub**, chaque carte de projet affiche le même état et le même bouton.
+
+### 3. Ce qu'un projet doit contenir pour être prévisualisable
+
+| Détecté | Lancement |
+|---|---|
+| `package.json` avec `vite` | `npm run dev -- --host 127.0.0.1 --port <port> --strictPort` |
+| `package.json` avec `next` | `npm run dev -- -H 127.0.0.1 -p <port>` |
+| `package.json` avec `react-scripts` | `npm start` (`PORT`/`HOST` injectés) |
+| `index.html`, `dist/`, `build/`, `public/` | serveur statique Python sur le port |
+| `app.py` / `main.py` (+ `requirements.txt`) | venv `.venv` auto + `uvicorn`/`python` |
+
+`npm install` (ou la création du venv) est lancé automatiquement au premier
+démarrage : la première preview d'un projet peut prendre 1 à 2 minutes, l'état
+reste sur `installation…`.
+Si rien n'est détecté, l'état passe en **erreur** avec le motif exact — plus
+jamais de 502 muet.
+
+### 4. Diagnostic en ligne de commande
+
+```bash
+systemctl status forge-backend
+journalctl -u forge-backend -n 50 --no-pager
+tail -f /var/www/forge/workspace/.forge-preview/<projet>.log   # journal du projet
+cat /etc/nginx/forge-preview-ports.map                          # map projet -> port
+ss -ltnp | grep -E '809[0-9]|81[0-8][0-9]'                      # qui écoute vraiment
+```
+
+### 5. Certificat wildcard (si les previews répondent en HTTP mais pas en HTTPS)
+
+```bash
+sudo certbot certonly --manual --preferred-challenges dns \
+  -d '*.preview.quentin-astro.fr' -d 'preview.quentin-astro.fr'
+sudo bash deploy/setup-preview-domain.sh      # active le bloc TLS une fois le cert obtenu
+```
+
+---
+
+
 ## 0. Sauvegarde rapide (2 min, à ne pas sauter)
 
 ```bash

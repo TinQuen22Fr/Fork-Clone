@@ -699,3 +699,32 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Prerequis serveur : regle sudoers NOPASSWD sur la commande exacte (deja en place).
 - Verifie en local : creation projet -> 200 + warning code 127 (script absent du pod),
   endpoint refresh -> 200, aucune requete cassee ; compileall OK.
+
+## Runtime de preview : cause racine des 502 corrigee (2026-09-24)
+
+- CAUSE RACINE : Nginx proxifiait <projet>.preview.<domaine> -> 127.0.0.1:<port>
+  mais AUCUN composant ne demarrait l application du projet -> 502 systematique.
+- NOUVEAU `backend/preview_runtime.py` (PreviewManager) : detection auto du type
+  de projet (vite / next / react-scripts / script dev|start ; index.html|dist|
+  build|public -> http.server ; app.py|main.py + requirements -> venv + uvicorn
+  ou python), `npm install`/creation de venv automatique au 1er demarrage,
+  process en session detachee, journal dans workspace/.forge-preview/<projet>.log,
+  attente d ouverture du port (180 s), phases stopped/installing/starting/
+  running/error, HOME + caches npm rediriges dans le workspace (compatibilite
+  systemd ProtectHome=yes / PrivateTmp=yes).
+- API : POST /api/workspace/projects/{nom}/preview/start|restart|stop,
+  GET .../preview/status, GET .../preview/logs ; GET /api/workspace/projects
+  renvoie preview_phase + preview_message. Flag `preview_running` en base +
+  `_autostart_previews()` au lifespan (PREVIEW_AUTOSTART=1) -> plus de 502 apres
+  reboot ou `systemctl restart forge-backend` ; stop_all() a l arret.
+- UI : PreviewButton pilote (1er clic = demarrage puis ouverture auto de l onglet,
+  point de couleur d etat, restart, stop, panneau de logs) ; cartes du Hub avec
+  meme etat + start/stop.
+- `deploy/fix-previews.sh` : script unique A->Z (depot propre/--reset-code,
+  node/npm, dossiers .forge-preview, sudoers NOPASSWD, .env complete,
+  unite systemd corrigee en --workers 1 + ReadWritePaths workspace +
+  KillMode=control-group, pip, build frontend, restart + /api/health,
+  setup-preview-domain.sh). Procedure detaillee en tete de DEPLOIEMENT.md.
+- Verifie en local : projet statique (port 8091, HTML servi), projet vite
+  (npm install auto puis 200 sur 8092), stop, autostart apres restart backend,
+  Hub affichant les etats ; bash -n + compileall + build Vite OK.

@@ -59,6 +59,8 @@ from fastapi import (
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
+
+from preview_runtime import PreviewManager
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -314,6 +316,10 @@ class Settings:
         self.preview_map_refresh_timeout: int = int(
             _env("PREVIEW_MAP_REFRESH_TIMEOUT", "120")
         )
+        # Relance des previews actives au demarrage du backend.
+        self.preview_autostart: bool = _env(
+            "PREVIEW_AUTOSTART", "1"
+        ).strip().lower() not in ("0", "false", "no", "off", "")
         self.git_author_email: str = _env(
             "GIT_AUTHOR_EMAIL", "forge@localhost"
         )
@@ -406,6 +412,7 @@ async def lifespan(app: FastAPI):
         await db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
         await db.messages.create_index([("conversation_id", 1), ("created_at", 1)])
         await _seed_admin()
+        asyncio.create_task(_autostart_previews())
 
     logger.info("Origines CORS autorisées : %s", settings.frontend_urls or "(aucune)")
     logger.info(
@@ -421,6 +428,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await preview_mgr().stop_all()
     if mongo_client is not None:
         mongo_client.close()
         logger.info("Connexion MongoDB fermée.")
@@ -3945,6 +3953,7 @@ def _default_preview_url(name: str) -> str:
 
 _preview_map_lock = asyncio.Lock()
 _preview_map_pending = False
+_preview_manager: Optional[PreviewManager] = None
 
 
 async def _run_preview_map_refresh() -> None:
@@ -4072,6 +4081,10 @@ async def workspace_projects(current_user: dict = Depends(get_current_user)):
         p["conversations"] = await database.conversations.count_documents(
             {"user_id": current_user["id"], "project": p["name"]}
         )
+        if p["preview_port"]:
+            st = preview_mgr().status(p["name"], p["preview_port"])
+            p["preview_phase"] = st["phase"]
+            p["preview_message"] = st["message"]
     return {"root": settings.workspace_root, "projects": projects}
 
 
@@ -4117,6 +4130,108 @@ async def update_project(
         "preview_url": meta.get("preview_url", ""),
         "preview_port": meta.get("preview_port"),
     }
+
+
+def preview_mgr() -> PreviewManager:
+    """Gestionnaire de previews (un seul par racine de workspace)."""
+    global _preview_manager
+    if (
+        _preview_manager is None
+        or str(_preview_manager.workspace_root) != settings.workspace_root
+    ):
+        _preview_manager = PreviewManager(settings.workspace_root)
+    return _preview_manager
+
+
+async def _project_port(user_id: str, name: str) -> tuple[str, dict]:
+    pname = _valid_project_name(name)
+    if not (Path(settings.workspace_root) / pname).is_dir():
+        raise HTTPException(status_code=404, detail=f"Projet inconnu : {pname}")
+    meta = await _assign_project_meta(user_id, pname)
+    return pname, meta
+
+
+def _preview_payload(meta: dict, status: dict) -> dict:
+    return {**status, "preview_url": meta.get("preview_url", "")}
+
+
+@api_router.post("/workspace/projects/{name}/preview/start")
+async def preview_start(
+    name: str,
+    restart: bool = False,
+    current_user: dict = Depends(get_current_user),
+):
+    """Demarre (ou redemarre) l'application du projet sur son port dedie."""
+    pname, meta = await _project_port(current_user["id"], name)
+    status = await preview_mgr().start(pname, meta["preview_port"], restart=restart)
+    await get_db().projects.update_one(
+        {"user_id": current_user["id"], "name": pname},
+        {"$set": {"preview_running": status["phase"] != "error", "updated_at": now_iso()}},
+    )
+    return _preview_payload(meta, status)
+
+
+@api_router.post("/workspace/projects/{name}/preview/restart")
+async def preview_restart(name: str, current_user: dict = Depends(get_current_user)):
+    return await preview_start(name, restart=True, current_user=current_user)
+
+
+@api_router.post("/workspace/projects/{name}/preview/stop")
+async def preview_stop(name: str, current_user: dict = Depends(get_current_user)):
+    """Arrete l'application du projet (libere le port et la RAM)."""
+    pname, meta = await _project_port(current_user["id"], name)
+    status = await preview_mgr().stop(pname, meta["preview_port"])
+    await get_db().projects.update_one(
+        {"user_id": current_user["id"], "name": pname},
+        {"$set": {"preview_running": False, "updated_at": now_iso()}},
+    )
+    return _preview_payload(meta, status)
+
+
+@api_router.get("/workspace/projects/{name}/preview/status")
+async def preview_status(name: str, current_user: dict = Depends(get_current_user)):
+    """Etat de la preview : stopped / installing / starting / running / error."""
+    pname, meta = await _project_port(current_user["id"], name)
+    mgr = preview_mgr()
+    status = mgr.status(pname, meta["preview_port"])
+    if status["phase"] == "stopped" and not status["kind"]:
+        plan = mgr.detect(pname, meta["preview_port"])
+        status["kind"] = plan.get("kind", "")
+        status["message"] = plan.get("hint", "")
+    return _preview_payload(meta, status)
+
+
+@api_router.get("/workspace/projects/{name}/preview/logs")
+async def preview_logs(name: str, current_user: dict = Depends(get_current_user)):
+    """Journal du process de preview (derniers Ko)."""
+    pname, _ = await _project_port(current_user["id"], name)
+    return {"project": pname, "logs": preview_mgr().logs(pname)}
+
+
+async def _autostart_previews() -> None:
+    """Relance au demarrage du backend les previews qui tournaient (anti-502
+    apres reboot ou `systemctl restart forge-backend`)."""
+    if not settings.preview_autostart:
+        return
+    try:
+        docs = await db.projects.find(
+            {"preview_running": True}, {"name": 1, "preview_port": 1}
+        ).to_list(200)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Autostart previews : base illisible (%s)", exc)
+        return
+    mgr = preview_mgr()
+    for doc in docs:
+        name, port = doc.get("name"), doc.get("preview_port")
+        if not name or not port:
+            continue
+        if not (Path(settings.workspace_root) / name).is_dir():
+            continue
+        try:
+            st = await mgr.start(name, port)
+            logger.info("Autostart preview %s (port %s) : %s", name, port, st["phase"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Autostart preview %s impossible : %s", name, exc)
 
 
 @api_router.post("/workspace/preview-map/refresh")

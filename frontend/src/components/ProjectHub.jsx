@@ -11,6 +11,8 @@ import {
   ExternalLink,
   Loader2,
   MessageSquare,
+  Play,
+  Square,
 } from "lucide-react";
 
 /** Ecran d'accueil : prompt central + projets du workspace. */
@@ -23,6 +25,38 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [acting, setActing] = useState("");
+
+  const PHASES = {
+    stopped: { label: "arrêtée", color: "#6b7280" },
+    installing: { label: "installation…", color: "#ffd700" },
+    starting: { label: "démarrage…", color: "#ffd700" },
+    running: { label: "en ligne", color: "#05d9e8" },
+    error: { label: "erreur", color: "#ff2a6d" },
+  };
+
+  const previewAction = async (p, action) => {
+    setActing(`${p.name}:${action}`);
+    try {
+      const { data } = await api.post(
+        `/workspace/projects/${p.name}/preview/${action}`
+      );
+      setProjects((prev) =>
+        prev.map((x) =>
+          x.name === p.name
+            ? { ...x, preview_phase: data.phase, preview_message: data.message }
+            : x
+        )
+      );
+      if (data.phase === "running") {
+        window.open(data.preview_url || p.preview_url, "_blank", "noreferrer");
+      }
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setActing("");
+    }
+  };
 
   const load = async () => {
     try {
@@ -189,19 +223,60 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                       {p.name}
                     </button>
                     {p.preview_url && (
-                      <a
-                        href={p.preview_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`Ouvrir ${p.preview_url}`}
-                        className="text-gray-600 hover:text-[#ffd700]"
-                        data-testid={`hub-preview-${p.name}`}
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            p.preview_phase === "running"
+                              ? window.open(p.preview_url, "_blank", "noreferrer")
+                              : previewAction(p, "start")
+                          }
+                          disabled={acting.startsWith(`${p.name}:`)}
+                          title={
+                            p.preview_phase === "running"
+                              ? `Ouvrir ${p.preview_url}`
+                              : `Démarrer la preview de ${p.name}`
+                          }
+                          className="text-gray-600 hover:text-[#ffd700] disabled:opacity-40"
+                          data-testid={`hub-preview-${p.name}`}
+                        >
+                          {acting.startsWith(`${p.name}:`) ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : p.preview_phase === "running" ? (
+                            <ExternalLink className="w-4 h-4" />
+                          ) : (
+                            <Play className="w-4 h-4" />
+                          )}
+                        </button>
+                        {p.preview_phase === "running" && (
+                          <button
+                            type="button"
+                            onClick={() => previewAction(p, "stop")}
+                            title="Arrêter la preview"
+                            className="text-gray-600 hover:text-[#ff2a6d]"
+                            data-testid={`hub-preview-stop-${p.name}`}
+                          >
+                            <Square className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="mt-2 flex items-center gap-3 text-[10px] font-mono text-gray-500">
+                    <span
+                      className="flex items-center gap-1"
+                      style={{ color: (PHASES[p.preview_phase] || PHASES.stopped).color }}
+                      data-testid={`hub-preview-phase-${p.name}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{
+                          backgroundColor: (PHASES[p.preview_phase] || PHASES.stopped)
+                            .color,
+                        }}
+                      />
+                      {(PHASES[p.preview_phase] || PHASES.stopped).label}
+                    </span>
                     <span className="flex items-center gap-1">
                       <MessageSquare className="w-3 h-3" />
                       {p.conversations ?? 0}
