@@ -21,7 +21,7 @@ ProtectHome=yes
 PrivateTmp=yes
 
 # Chemins autorises en ecriture
-ReadWritePaths=/var/www/forge/workspace /var/www/forge/.playwright /var/www/forge/backend/static/screenshots /dev/shm
+ReadWritePaths=/var/www/forge/workspace /var/www/forge/.playwright /var/www/forge/backend/static/screenshots /dev/shm /etc/nginx /run /var/log/nginx
 
 # Chemins en lecture seule indispensables
 ReadOnlyPaths=/var/www/forge
