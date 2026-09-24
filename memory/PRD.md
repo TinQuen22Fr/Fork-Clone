@@ -753,3 +753,37 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
 - Verifie : bash -n sur tous les scripts, compileall backend, et test reel de
   ensure-rwpaths.sh (fusion additive conservant un chemin perso, idempotence,
   creation de la ligne quand elle est absente).
+
+## Analyse de l unite systemd de PRODUCTION (2026-09-24, fichiers fournis par l utilisateur)
+
+- Fichiers recus : forge-backend.service (prod), KNOWN_ISSUE_preview_map_readonly.md,
+  nginx-forge.conf. L unite de prod differe du gabarit du depot :
+  PATH limite au venv, --workers 2, NoNewPrivileges=true, Restart=on-failure,
+  ReadWritePaths=/var/www/forge /etc/nginx /run /var/log/nginx.
+- 3 pieges detectes que le patch precedent aurait rates :
+  1. `Environment="PATH=/var/www/forge/backend/venv/bin"` -> npm/node/python3
+     introuvables : aucune preview Node ne peut demarrer.
+  2. `NoNewPrivileges=true` -> sudo REFUSE depuis le service : la regeneration
+     automatique de la map nginx ne peut jamais fonctionner (503 persistant).
+  3. `Restart=on-failure` -> l ancien patch inserait KillMode/TimeoutStopSec par
+     remplacement de "Restart=always" : ne s appliquait pas silencieusement.
+- `deploy/ensure-rwpaths.sh` refait : unique source de verite de la conformite de
+  l unite (ReadWritePaths avec couverture par parent, PATH, NoNewPrivileges,
+  --workers 1, KillMode/TimeoutStopSec), patch additif + sauvegarde .bak,
+  modes --print et --check (audit sans ecriture). Teste sur le fichier de prod
+  reel : le correctif de l utilisateur est conserve a l identique (seul /dev/shm
+  ajoute), idempotent au 2e passage, `systemd-analyze verify` OK.
+- `preview_runtime.py` : resolution des binaires via _bin() (fallback /usr/bin,
+  /usr/local/bin, /bin) + PATH des enfants complete -> fonctionne meme si l unite
+  garde un PATH minimal.
+- Aucune modification de /etc/nginx/sites-available/forge : les scripts ne
+  touchent que forge-preview-wildcard et forge-preview-ports.map.
+- Recommandations du KNOWN_ISSUE implementees dans le code (2026-09-24) :
+  * POST /api/workspace/preview-map/refresh attend desormais le resultat REEL et
+    renvoie 502 avec stdout/stderr + indice de correctif en cas d echec
+    (plus de 200 muet) ; dernier resultat memorise dans _preview_map_last.
+  * NOUVEAU GET /api/workspace/preview-map : contenu de la map, projets attendus
+    (Mongo + workspace), liste `missing`, `in_sync`, dernier refresh -> detection
+    de derive map/base sans SSH.
+  * Le refresh est declenche aussi par POST /api/conversations/{id}/project
+    (lien conversation<->projet) et par le demarrage d une preview.

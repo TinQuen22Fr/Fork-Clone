@@ -43,6 +43,18 @@ def _port_open(port: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, port)) == 0
 
 
+def _bin(name: str) -> Optional[str]:
+    """Binaire absolu : le PATH d'un service systemd est souvent limite au venv."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in ("/usr/local/bin", "/usr/bin", "/bin", "/snap/bin"):
+        p = Path(d) / name
+        if p.is_file():
+            return str(p)
+    return None
+
+
 class PreviewProcess:
     """Etat d'une preview (process + phase + journal)."""
 
@@ -104,6 +116,12 @@ class PreviewManager:
             }
         )
         env.pop("VIRTUAL_ENV", None)
+        # npm a besoin de trouver node : le PATH du service peut etre limite au venv.
+        parts = [p for p in env.get("PATH", "").split(":") if p]
+        for d in ("/usr/local/bin", "/usr/bin", "/bin"):
+            if d not in parts:
+                parts.append(d)
+        env["PATH"] = ":".join(parts)
         return env
 
     # -- detection --------------------------------------------------------
@@ -134,7 +152,7 @@ class PreviewManager:
         }
 
     def _detect_node(self, d: Path, pkg_file: Path, port: int) -> dict:
-        npm = shutil.which("npm")
+        npm = _bin("npm")
         try:
             pkg = json.loads(pkg_file.read_text(encoding="utf-8"))
         except Exception:
@@ -187,7 +205,7 @@ class PreviewManager:
         for sub in ("dist", "build", "public", "."):
             target = (d / sub).resolve() if sub != "." else d
             if (target / "index.html").is_file():
-                py = shutil.which("python3") or "python3"
+                py = _bin("python3") or "python3"
                 return {
                     "kind": "static",
                     "cmd": [py, "-m", "http.server", str(port),
@@ -213,7 +231,7 @@ class PreviewManager:
         elif reqs.is_file() and not (venv / ".forge-installed").is_file():
             install = [str(vpy), "-m", "pip", "install", "-r", str(reqs)]
 
-        python = str(vpy) if (vpy.is_file() or install) else (shutil.which("python3") or "python3")
+        python = str(vpy) if (vpy.is_file() or install) else (_bin("python3") or "python3")
         if not entry:
             return {
                 "kind": "",
@@ -285,7 +303,7 @@ class PreviewManager:
                 st.phase = PHASE_INSTALLING
                 if install == ["__venv__"]:
                     steps = [
-                        [shutil.which("python3") or "python3", "-m", "venv", ".venv"],
+                        [_bin("python3") or "python3", "-m", "venv", ".venv"],
                     ]
                     reqs = Path(cwd) / "requirements.txt"
                     if reqs.is_file():

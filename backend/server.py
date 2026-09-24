@@ -3954,13 +3954,79 @@ def _default_preview_url(name: str) -> str:
 _preview_map_lock = asyncio.Lock()
 _preview_map_pending = False
 _preview_manager: Optional[PreviewManager] = None
+# Dernier resultat reel de la regeneration de la map (interrogeable par l'API :
+# un echec silencieux etait la cause des previews en 503).
+_preview_map_last: dict = {"at": None, "ok": None, "code": None, "output": "", "hint": ""}
+
+_READONLY_HINT = (
+    "Ecriture refusee : le service est monte en lecture seule. Ajoute "
+    "/etc/nginx /run /var/log/nginx a ReadWritePaths= et passe "
+    "NoNewPrivileges=false dans forge-backend.service (ou lance "
+    "`sudo bash deploy/fix-previews.sh`), puis `systemctl daemon-reload && "
+    "systemctl restart forge-backend`. Voir "
+    "deploy/KNOWN_ISSUE_preview_map_readonly.md"
+)
+
+
+async def _exec_preview_map_cmd() -> dict:
+    """Execute la commande de regeneration et retourne son resultat reel."""
+    global _preview_map_last
+    cmd = settings.preview_map_refresh_cmd
+    res = {"at": now_iso(), "ok": False, "code": None, "output": "", "hint": "", "command": cmd}
+    if not cmd:
+        res["hint"] = "PREVIEW_MAP_REFRESH_CMD n'est pas configure."
+        _preview_map_last = res
+        return res
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(cmd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=settings.preview_map_refresh_timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            res["output"] = f"timeout apres {settings.preview_map_refresh_timeout}s"
+            res["hint"] = "la commande ne rend jamais la main"
+        else:
+            res["code"] = proc.returncode
+            res["output"] = (out or b"").decode("utf-8", "replace")[-2000:]
+            res["ok"] = proc.returncode == 0
+            low = res["output"]
+            if not res["ok"]:
+                if "Read-only file system" in low or "Permission denied" in low:
+                    res["hint"] = _READONLY_HINT
+                elif "no new privileges" in low.lower() or "sudo:" in low:
+                    res["hint"] = (
+                        "sudo refuse : NoNewPrivileges=true dans le service, ou regle "
+                        "sudoers absente (cf. deploy/fix-previews.sh)."
+                    )
+    except FileNotFoundError:
+        res["output"] = f"commande introuvable : {cmd}"
+        res["hint"] = "verifie PREVIEW_MAP_REFRESH_CMD et le chemin du script."
+    except Exception as exc:  # noqa: BLE001
+        res["output"] = f"erreur inattendue : {exc}"
+
+    if res["ok"]:
+        logger.info("Preview map Nginx regeneree avec succes.")
+    else:
+        logger.warning(
+            "Preview map : ECHEC (code %s) %s | %s",
+            res["code"],
+            res["hint"],
+            res["output"][-400:],
+        )
+    _preview_map_last = res
+    return res
 
 
 async def _run_preview_map_refresh() -> None:
     """Regenere la map Nginx des previews. Ne leve jamais : log uniquement."""
     global _preview_map_pending
-    cmd = settings.preview_map_refresh_cmd
-    if not cmd:
+    if not settings.preview_map_refresh_cmd:
         return
     if _preview_map_lock.locked():
         # Une execution est deja en cours : on demande juste un re-run apres.
@@ -3969,50 +4035,7 @@ async def _run_preview_map_refresh() -> None:
     async with _preview_map_lock:
         while True:
             _preview_map_pending = False
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *shlex.split(cmd),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                )
-                try:
-                    out, _ = await asyncio.wait_for(
-                        proc.communicate(), timeout=settings.preview_map_refresh_timeout
-                    )
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    logger.warning(
-                        "Preview map: timeout apres %ss sur '%s'",
-                        settings.preview_map_refresh_timeout,
-                        cmd,
-                    )
-                    out = b""
-                else:
-                    if proc.returncode == 0:
-                        logger.info("Preview map Nginx regeneree avec succes.")
-                    else:
-                        out_txt = (out or b"").decode("utf-8", "replace")
-                        if "Read-only file system" in out_txt or "Permission denied" in out_txt:
-                            logger.warning(
-                                "Preview map : ecriture refusee (systeme monte en "
-                                "lecture seule). Ajoute /etc/nginx /run /var/log/nginx "
-                                "a ReadWritePaths= de forge-backend.service, ou lance "
-                                "`sudo bash deploy/fix-previews.sh` "
-                                "(cf. deploy/KNOWN_ISSUE_preview_map_readonly.md). "
-                                "Sans cela les previews repondent 503. Sortie : %s",
-                                out_txt[-300:],
-                            )
-                        else:
-                            logger.warning(
-                                "Preview map: '%s' a echoue (code %s) : %s",
-                                cmd,
-                                proc.returncode,
-                                out_txt[-500:],
-                            )
-            except FileNotFoundError:
-                logger.warning("Preview map: commande introuvable ('%s').", cmd)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Preview map: erreur inattendue : %s", exc)
+            await _exec_preview_map_cmd()
             if not _preview_map_pending:
                 return
 
@@ -4176,6 +4199,9 @@ async def preview_start(
     """Demarre (ou redemarre) l'application du projet sur son port dedie."""
     pname, meta = await _project_port(current_user["id"], name)
     status = await preview_mgr().start(pname, meta["preview_port"], restart=restart)
+    # Le projet doit aussi figurer dans la map Nginx, sinon 503 malgre un
+    # serveur de dev qui tourne.
+    _schedule_preview_map_refresh()
     await get_db().projects.update_one(
         {"user_id": current_user["id"], "name": pname},
         {"$set": {"preview_running": status["phase"] != "error", "updated_at": now_iso()}},
@@ -4248,14 +4274,64 @@ async def _autostart_previews() -> None:
 
 @api_router.post("/workspace/preview-map/refresh")
 async def refresh_preview_map(current_user: dict = Depends(get_current_user)):
-    """Force la regeneration de la map Nginx des sous-domaines de preview."""
+    """Regenere la map Nginx et RETOURNE LE RESULTAT REEL (plus de 200 muet)."""
     if not settings.preview_map_refresh_cmd:
         raise HTTPException(
             status_code=400,
             detail="PREVIEW_MAP_REFRESH_CMD n'est pas configure.",
         )
-    asyncio.create_task(_run_preview_map_refresh())
-    return {"scheduled": True, "command": settings.preview_map_refresh_cmd}
+    async with _preview_map_lock:
+        res = await _exec_preview_map_cmd()
+    if not res["ok"]:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Regeneration de la map echouee (code {res['code']}). "
+                f"{res['hint']} Sortie : {res['output'][-600:]}"
+            ),
+        )
+    return res
+
+
+@api_router.get("/workspace/preview-map")
+async def get_preview_map(current_user: dict = Depends(get_current_user)):
+    """Diagnostic anti-503 : dernier resultat de regeneration + derive entre la
+    map Nginx et la collection `projects`."""
+    map_file = os.environ.get("PREVIEW_MAP_FILE", "/etc/nginx/forge-preview-ports.map")
+    mapped: dict[str, int] = {}
+    readable = False
+    try:
+        with open(map_file, encoding="utf-8") as fh:
+            readable = True
+            for line in fh:
+                line = line.strip().rstrip(";")
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) == 2 and parts[1].isdigit():
+                    mapped[parts[0]] = int(parts[1])
+    except OSError:
+        pass
+
+    docs = await get_db().projects.find(
+        {"user_id": current_user["id"]}, {"name": 1, "preview_port": 1}
+    ).to_list(500)
+    expected = {
+        d["name"]: d.get("preview_port")
+        for d in docs
+        if d.get("preview_port") and (Path(settings.workspace_root) / d["name"]).is_dir()
+    }
+    missing = [n for n, p in expected.items() if mapped.get(n) != p]
+    return {
+        "map_file": map_file,
+        "readable": readable,
+        "mapped": mapped,
+        "expected": expected,
+        "missing": missing,
+        "in_sync": not missing,
+        "last_refresh": _preview_map_last,
+        "command": settings.preview_map_refresh_cmd,
+    }
 
 
 @api_router.post("/conversations/{conv_id}/project")
@@ -4274,6 +4350,9 @@ async def link_conversation_project(
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Toujours resynchroniser la map, meme si le projet existait deja : un lien
+    # conversation<->projet fait hors du flux normal laissait la map perimee.
+    _schedule_preview_map_refresh()
     return {"id": conv_id, "project": name, "preview_url": meta.get("preview_url", "")}
 
 

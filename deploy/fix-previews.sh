@@ -180,33 +180,10 @@ fi
 # ---------------------------------------------------------------------------
 c_step "Unite systemd $SERVICE"
 if [ -f "$UNIT" ]; then
-  cp "$UNIT" "$UNIT.bak-$STAMP"
-  # Chemins inscriptibles : source unique de verite, patch additif.
-  # (Sans /etc/nginx /run /var/log/nginx, la map des previews ne peut pas etre
-  #  ecrite avec ProtectSystem=strict -> PREVIEW en 503.)
+  # Conformite de l'unite : ReadWritePaths (dont /etc/nginx /run /var/log/nginx),
+  # PATH des binaires (npm/node/python3), NoNewPrivileges (sinon sudo impossible),
+  # --workers 1, KillMode. Patch additif : rien n'est jamais supprime.
   bash "$APP_DIR/deploy/ensure-rwpaths.sh" "$UNIT" "$APP_DIR"
-  python3 - "$UNIT" <<'PY'
-import re, sys
-path = sys.argv[1]
-text = open(path).read()
-changed = []
-
-# Plusieurs workers uvicorn = plusieurs gestionnaires de preview concurrents.
-new, n = re.subn(r"--workers\s+\d+", "--workers 1", text)
-if n and new != text:
-    text, _ = new, changed.append("--workers 1")
-
-# Les serveurs de dev sont des process enfants : ils doivent mourir avec le service.
-if not re.search(r"(?m)^KillMode=", text):
-    text = text.replace("Restart=always", "KillMode=control-group\nRestart=always")
-    changed.append("KillMode=control-group")
-if not re.search(r"(?m)^TimeoutStopSec=", text):
-    text = text.replace("Restart=always", "TimeoutStopSec=20\nRestart=always")
-    changed.append("TimeoutStopSec=20")
-
-open(path, "w").write(text)
-print("  ok unite deja conforme" if not changed else "  ok " + ", ".join(changed))
-PY
   systemctl daemon-reload
 else
   c_warn "$UNIT absent : installe le service (install.sh) puis relance ce script"
