@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend E2E testing for Claude Unchained Forge. Login, chat text send (real Claude), new chat, sidebar list, image vision, persistence after reload, and delete conversation all pass. RENAME conversation feature is NOT implemented in the frontend UI (backend PATCH /api/conversations/{id} exists per test_credentials.md but no rename button/input in Chat.jsx).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Chat.jsx sidebar", "issue": "No rename UI for conversations. Only delete button is present. User requirement includes 'Le renommage d'une conversation fonctionne' but there is no button/input to trigger rename. Backend PATCH endpoint exists but is not wired to any UI element.", "selector": "conv-item-*", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Implement a rename UI for conversations in Chat.jsx (e.g., double-click on title or a pencil icon that calls api.patch(`/conversations/${id}`, { title }))."
+  ],
+  "critical_code_review_comments": [
+    "Chat.jsx (500 lines) is fine but could split EmptyState/EmptyChat into their own files.",
+    "sendMessage: axios.post with Content-Type multipart/form-data manually set — usually best to let axios set the boundary automatically; however it works with the current backend so low priority.",
+    "Login.jsx still contains a 'register' mode UI branch and a switch-to-register button even though public registration is disabled server-side (returns 403). Consider hiding the switch link when ALLOW_REGISTRATION=false to avoid dead UI.",
+    "Chat.jsx: header hard-codes 'model: claude-sonnet-5' but backend default is 'claude-sonnet-4-6' (per /app/memory/test_credentials.md). Cosmetic mismatch that could confuse users."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not-tested-skipped", "frontend": "6/7 (86%) - only rename UI missing"},
+  "test_credentials": "admin@forge.dev / ForgeAdmin2026! (works)",
+  "seed_data_creation": "Created several test conversations during the run (admin sidebar accumulates them). Also deleted one at end of run. Non-destructive.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Vision test: use a real (>=100x100) PNG. A 1x1 PNG causes Claude to reply 'I don't see an image'. Use /tmp/test_vision.png style asset. Login testids: auth-email-input, auth-password-input, auth-submit-btn. Chat testids: new-chat-btn, chat-text-input, send-message-btn, image-file-input, conv-item-{id}, delete-conv-{id}, messages-container, chat-error, current-user-email, logout-btn.",
+  "rca of the issue": "Rename feature not implemented in frontend. Backend supports PATCH /api/conversations/{id} (see credentials doc) but Chat.jsx sidebar only wires delete."
+}

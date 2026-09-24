@@ -1,63 +1,62 @@
-# Gemini3_Unchained_ZeroDollar_Forge — PRD
+# Claude Unchained Forge — PRD
 
-## Original Problem Statement
-"on va faire simple créer un fork de toi !!!" — User wanted a fork of an AI assistant.
+## Problème / intention utilisateur
+App de chat auto-hébergée type ChatGPT/Claude, 100% standalone et open-source,
+AUCUNE dépendance Emergent (pas d'Emergent LLM key, pas de crédits, pas d'upsell).
+L'utilisateur veut utiliser SON abonnement Claude Pro (22€/mois) directement,
+et refuse catégoriquement toute API Anthropic payante au token.
 
-## User Choices
-- App type: Chat interface (ChatGPT/Claude style)
-- AI model: Gemini 3 Pro (`gemini-3.1-pro-preview`)
-- Features: User authentication, file/image upload, saved conversations
-- Design: Coloré et moderne (bold neo-brutalist with hot pink/yellow/cyan accents on dark)
-- App name: `Gemini3_Unchained_ZeroDollar_Forge`
+## Décision technique clé (juin 2026)
+Claude Pro ne donne pas d'API classique. La SEULE voie sans facture au token =
+jeton OAuth de Claude Code (`claude setup-token`, jeton `sk-ant-oat...`), appelé
+sur `/v1/messages` avec :
+- `Authorization: Bearer <token>`
+- `anthropic-beta: oauth-2025-04-20,claude-code-20250219`
+- 1er bloc `system` = identité obligatoire "You are Claude Code, Anthropic's official CLI for Claude."
+La conso est décomptée du forfait Pro/Max. Usage individuel/perso (instance mono-user, inscription fermée).
 
-## Architecture
-- **Backend**: FastAPI + Motor (MongoDB async) + JWT auth (bcrypt) + emergentintegrations LlmChat
-- **Frontend**: React 19 + react-router-dom + Tailwind + react-markdown + lucide-react
-- **AI**: Gemini 3 Pro via Emergent Universal Key
-- **Auth**: JWT in httpOnly cookie (samesite=none, secure) + Bearer fallback in localStorage
+## Stack
+- Backend: FastAPI + MongoDB (motor), JWT (cookie httpOnly + Bearer fallback), lifespan config tolérante.
+- Frontend: React 19 + Vite 6 + Tailwind (Neo-Brutalist), react-markdown, framer-motion.
+- Moteur: Claude via httpx direct sur l'API Messages, jeton d'abonnement.
+- Source de vérité: repo GitHub TinQuen22Fr/Fork-Clone, branche `claude-ai`. Déploiement perso Dedibox (Nginx + systemd).
 
-## What's Implemented (2026-06-02)
-- ✅ JWT auth: register / login / logout / me + admin seeding (idempotent)
-- ✅ Conversations CRUD (create / list / rename / delete) scoped to authenticated user
-- ✅ Chat send endpoint (multipart) with text + optional image upload to Gemini 3 Pro
-- ✅ Multi-turn context (replays last 20 turns into prompt)
-- ✅ Auto-titling on first exchange
-- ✅ Neo-brutalist UI: login hero + chat interface with sidebar
-- ✅ Markdown rendering for AI responses (code blocks, lists, tables, blockquotes)
-- ✅ Optimistic UI for sent messages, typing indicator while AI responds
-- ✅ Image preview before send, 8 MB limit
-- ✅ Mobile responsive sidebar (slide-in)
-- ✅ Protected routes with auth context
+## Implémenté (2026-09-07)
+- Portage complet du repo `claude-ai` dans /app (backend + frontend Vite).
+- `generate_ai_response()` branché sur Claude via jeton OAuth d'abonnement (fichier `backend/server.py`).
+- Config: `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_MODEL`, `CLAUDE_MAX_TOKENS`, `CLAUDE_SYSTEM_PROMPT`.
+- Vérifié: boot backend, login admin, création conversation, chat renvoie 503 propre tant que le jeton est absent.
+- Vérifié: frontend Vite rend la page login (port 3000) dans la preview.
 
-## Core Requirements (Static)
-1. User can sign up & log in
-2. User can chat with Gemini 3 Pro
-3. User can upload images to the AI
-4. User's conversations are saved & accessible
-5. Distinctive bold UI (no generic ChatGPT clone)
+## En attente
+- (rien de bloquant) Objectif principal atteint.
 
-## Prioritized Backlog
-### P1 — Quick wins
-- Streaming token responses (currently buffered)
-- Auto-resize textarea height
-- Rename conversation from sidebar (UI for existing PATCH endpoint)
-- Copy-to-clipboard on code blocks
+## Vérifié E2E (2026-09-07)
+- Jeton `CLAUDE_CODE_OAUTH_TOKEN` configuré, `CLAUDE_MODEL=claude-sonnet-5`.
+- Backend curl: chat texte + vision → vraies réponses Claude (abonnement, 0 API payante).
+- Frontend E2E (testing_agent iteration_2): 6/7 — login, chat, new chat, sidebar, vision, persistance, suppression OK.
 
-### P2 — Nice to have
-- Model selector (Gemini 3 Pro / Flash / Claude / GPT — same key)
-- Conversation search
-- Export conversation as Markdown
-- Brute-force lockout on login (playbook recommended)
-- Password reset flow
-- File types beyond images (PDF, txt)
-- Conversation summarization for very long chats (current strategy replays last 20 turns)
+## Implémenté (2026-09-08) — Tool Calling agentique
+- Backend: outils `bash` (subprocess, timeout 30s, capture stdout/stderr) et `read_file`. Boucle agent dans generate_ai_response (détecte stop_reason=='tool_use', exécute, réinjecte tool_result, relance; garde-fou MAX_TOOL_ITERS=10). Helper _call_anthropic. Flag ENABLE_TOOLS (défaut true).
+- generate_ai_response retourne (text, tool_steps); chat_send + regenerate stockent tool_steps sur le message.
+- Frontend: ChatMessage.jsx affiche un panneau repliable <details data-testid=tool-steps-{id}> avec chaque appel d'outil + sortie.
+- Vérifié E2E (iteration_6): bash + read_file OK, panneau UI OK, aucune régression.
+- ⚠️ SÉCURITÉ: bash exécute des commandes arbitraires avec les droits du backend. Réservé à l'instance perso. Désactivable via ENABLE_TOOLS=false.
 
-### P3 — Backlog
-- Public share links for conversations
-- Team / workspace mode
-- Custom system prompt per conversation
-- Object storage for images (currently base64 in Mongo — fine for small images)
+## Implémenté (2026-09-08) — Barre d'actions type claude.ai
+- Sous chaque réponse Claude: Copier (presse-papier), Lecture audio (Web Speech API navigateur, gratuit), Pouce haut/bas (persistés), Régénérer (dernière réponse uniquement), heure relative FR (dayjs).
+- Backend: POST /api/chat/regenerate, PATCH /api/messages/{id}/feedback. user_msg stocke image_mime.
+- Frontend: ChatMessage.jsx (barre d'actions), Chat.jsx (handlers regenerate/submitFeedback, isLast).
+- Vérifié E2E (iteration_5): 100% front + backend curl. Aucune régression (rename, chat OK).
 
-## Testing
-- Backend: 21/21 pytest tests pass — `/app/backend/tests/backend_test.py`
-- Frontend: e2e flows (login, chat, image upload, logout, protected route) all pass
+## Déploiement Dedibox — pièges résolus (2026-09-08)
+- Repo complet requis à la racine : install.sh, deploy/, README (sinon `./install.sh: No such file`).
+- requirements.txt : NE JAMAIS faire `pip freeze` du venv du pod (pollue avec litellm/google/openai...). Garder la liste propre + httpx.
+- npm 11 strict → conflit peer-deps (date-fns@4 vs react-day-picker@8). Fix : `frontend/.npmrc` avec `legacy-peer-deps=true`.
+- Vite build.outDir = "build". Nginx DOIT avoir `root /var/www/forge/frontend/build;` (la config live avait divergé vers /var/www/forge/build → ancien bundle servi, crayon absent). Corrigé.
+
+## Backlog
+- FAIT (2026-09-07): UI renommage de conversation (crayon + input, PATCH câblé) — vérifié navigateur.
+- FAIT (2026-09-07): lien "Register" masqué (instance admin-only).
+- P2: "Share Conversation" (lien public read-only /share/{id}).
+- P2: sélecteur de modèle Claude dans l'UI + streaming (SSE).

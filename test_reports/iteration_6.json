@@ -1,0 +1,23 @@
+{
+  "summary": "Full E2E frontend testing of the new Tool Calling / Function Calling feature (bash + read_file). Logged in as admin, created a new chat, and sent a bash-triggering prompt ('Utilise l'outil bash pour executer: echo HELLO_TEST_42'). Within ~3s the collapsible panel data-testid=tool-steps-<id> appeared under the // CLAUDE label with summary '1 OUTIL(S) UTILISÉ(S)'. Expanding it revealed the correct tool call 'bash(echo HELLO_TEST_42)' along with exit_code, stdout ('HELLO_TEST_42') and stderr sections. Claude's final markdown response 'La commande a été exécutée avec succès. Voici le résultat : HELLO_TEST_42' rendered correctly below the panel. The action bar (copy, tts, thumbs-up, thumbs-down, regenerate, timestamp) is present on the tool-using message.\n\nRegression 1 (no-tool prompt): sent 'Dis simplement bonjour, sans utiliser d'outil.' -> Claude answered normally ('Bonjour ! 👋 Comment puis-je t'aider aujourd'hui ?'), NO tool-steps panel rendered, full action bar (copy/tts/up/down/regen/timestamp) present.\n\nRegression 2 (rename conversation): rename-conv-<id> button still present and clicking it opens the inline rename input.\n\nRegression 3 (feedback thumbs-up): clicking feedback-up-<id> on the last assistant message toggles the cyan (#05d9e8) active state (PATCH /api/messages/{id}/feedback).\n\nBackend was pre-validated by main agent via curl (both bash and read_file). No new backend testing performed here — everything works via the public REACT_APP_BACKEND_URL. Tool prompt round-trip on the frontend was fast (~3s) contrary to the 15–40s worst-case expected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ChatMessage.jsx renders tool_steps output inside a <pre> with max-h-48 overflow-y-auto — for very long outputs this is fine, but there is no truncation/limit on the raw string sent from backend; a very large stdout (e.g. `cat /var/log/...`) could bloat message payloads. Consider server-side truncation with a 'truncated' flag.",
+    "In the tool-step header the label displays `s.input.command || s.input.path || JSON.stringify(s.input)`. If a future tool has neither `command` nor `path` the raw JSON will be shown — acceptable fallback but consider a nicer per-tool renderer.",
+    "The Terminal icon + gold accent panel is visually clear, but consider adding a copy-command button inside each tool step for quick re-use."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (validated by main agent via curl)", "frontend": "100%"},
+  "test_credentials": "admin@forge.dev / ForgeAdmin2026!",
+  "seed_data_creation": "Created one new conversation containing a bash-tool message and a no-tool 'bonjour' message. No cleanup needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Tool Calling feature is working end-to-end in the frontend. The <details data-testid='tool-steps-{message.id}'> panel renders whenever ai_message.tool_steps is a non-empty array, otherwise it is omitted. Only bash was exercised via UI here (read_file was already curl-validated). Backend response was quick (~3s) because prompt only needed 1 tool round-trip. For deeper stress tests, try prompts requiring multiple sequential tool calls to verify multiple entries in tool_steps array."
+}

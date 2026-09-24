@@ -27,6 +27,14 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Chat />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/chat"
         element={
           <ProtectedRoute>
@@ -34,7 +42,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/chat" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

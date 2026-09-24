@@ -61,13 +61,13 @@ export default function Login() {
             </h1>
             <p className="mt-6 text-gray-300 max-w-md text-lg">
               Powered by{" "}
-              <span className="font-mono text-[#05d9e8]">Gemini 3 Pro</span>.
+              <span className="font-mono text-[#05d9e8]">Claude</span>.
               Zero filters. Zero dollars. Pure raw intelligence at your
               fingertips.
             </p>
             <div className="mt-8 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-gray-400">
               <Zap className="w-3 h-3 text-[#ffd700]" />
-              <span>gemini3_unchained_zerodollar_forge</span>
+              <span>claude_unchained_zerodollar_forge</span>
             </div>
           </div>
         </div>
@@ -86,7 +86,7 @@ export default function Login() {
             </h2>
             <p className="text-gray-400 mt-3">
               {mode === "login"
-                ? "Sign in to unleash Gemini 3 Pro."
+                ? "Sign in to unleash Claude."
                 : "Mint a new account, no friction."}
             </p>
           </div>
@@ -160,36 +160,8 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-8 text-center text-sm text-gray-400">
-            {mode === "login" ? (
-              <>
-                No account?{" "}
-                <button
-                  className="text-[#ffd700] font-bold hover:text-[#ff2a6d] underline underline-offset-4"
-                  onClick={() => {
-                    setMode("register");
-                    setError("");
-                  }}
-                  data-testid="switch-to-register-btn"
-                >
-                  Register
-                </button>
-              </>
-            ) : (
-              <>
-                Already here?{" "}
-                <button
-                  className="text-[#ffd700] font-bold hover:text-[#ff2a6d] underline underline-offset-4"
-                  onClick={() => {
-                    setMode("login");
-                    setError("");
-                  }}
-                  data-testid="switch-to-login-btn"
-                >
-                  Sign in
-                </button>
-              </>
-            )}
+          <div className="mt-8 text-center text-xs uppercase tracking-[0.2em] text-gray-600 font-mono">
+            // access restricted — admin only
           </div>
         </div>
       </div>

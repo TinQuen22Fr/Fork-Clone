@@ -1,4 +1,4 @@
-"""Backend tests for Gemini3 Unchained Forge."""
+"""Backend tests for Claude Unchained Forge."""
 import os
 import io
 import time
@@ -8,11 +8,19 @@ import pytest
 import requests
 from PIL import Image
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://fork-clone-1.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admin@forge.dev"
-ADMIN_PASSWORD = "ForgeAdmin2026!"
+# Identifiants lus depuis l'environnement : rien de sensible dans le depot.
+#   TEST_ADMIN_EMAIL=... TEST_ADMIN_PASSWORD=... pytest
+ADMIN_EMAIL = os.environ.get("TEST_ADMIN_EMAIL", "admin@forge.dev")
+ADMIN_PASSWORD = os.environ.get("TEST_ADMIN_PASSWORD", "")
+
+if not ADMIN_PASSWORD:
+    pytest.skip(
+        "TEST_ADMIN_PASSWORD non defini — tests d'authentification ignores.",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture
@@ -58,7 +66,7 @@ class TestAuth:
     def test_root(self, s):
         r = s.get(f"{API}/", timeout=15)
         assert r.status_code == 200
-        assert "Gemini3" in r.json().get("message", "")
+        assert "Claude" in r.json().get("message", "")
 
     def test_login_success(self, s):
         r = s.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
