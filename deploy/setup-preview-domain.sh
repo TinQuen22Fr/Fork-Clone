@@ -20,6 +20,8 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/var/www/forge}"
 PREVIEW_SUFFIX="${PREVIEW_SUFFIX:-preview.quentin-astro.fr}"
 MAP_FILE="${MAP_FILE:-/etc/nginx/forge-preview-ports.map}"
+API_MAP_FILE="${API_MAP_FILE:-/etc/nginx/forge-preview-api-ports.map}"
+API_PORT_OFFSET="${API_PORT_OFFSET:-100}"
 SITE_FILE="${SITE_FILE:-/etc/nginx/sites-available/forge-preview-wildcard}"
 SITE_LINK="/etc/nginx/sites-enabled/forge-preview-wildcard"
 CERT_EMAIL="${CERT_EMAIL:-}"
@@ -51,9 +53,9 @@ c_step "Table de correspondance projet -> port"
 PY="$APP_DIR/backend/venv/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
 
-"$PY" - "$APP_DIR/backend/.env" "$MAP_FILE" <<'PYEOF' || die "generation de la map impossible"
+"$PY" - "$APP_DIR/backend/.env" "$MAP_FILE" "$API_MAP_FILE" "$API_PORT_OFFSET" <<'PYEOF' || die "generation de la map impossible"
 import os, sys, re
-env_path, map_path = sys.argv[1], sys.argv[2]
+env_path, map_path, api_map_path, offset = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 
 conf = {}
 if os.path.isfile(env_path):
@@ -63,6 +65,7 @@ if os.path.isfile(env_path):
             conf[m.group(1)] = m.group(2).strip().strip('"').strip("'")
 
 lines = []
+api_lines = []
 try:
     from pymongo import MongoClient
 
@@ -73,13 +76,15 @@ try:
         name, port = doc.get("name"), doc.get("preview_port")
         if name and port and re.fullmatch(r"[A-Za-z0-9._-]+", str(name)):
             lines.append(f"    {name} {port};")
+            api_lines.append(f"    {name} {port + offset};")
 except Exception as e:  # noqa: BLE001
     print(f"  /!\\ Mongo illisible ({e}) : map vide, previews en 502", file=sys.stderr)
 
-with open(map_path, "w") as fh:
-    fh.write("# Genere par deploy/setup-preview-domain.sh — ne pas editer a la main.\n")
-    fh.write("\n".join(lines) + ("\n" if lines else ""))
-print(f"  ok {len(lines)} projet(s) mappe(s) dans {map_path}")
+for path, rows, label in ((map_path, lines, "frontend"), (api_map_path, api_lines, "api")):
+    with open(path, "w") as fh:
+        fh.write("# Genere par deploy/setup-preview-domain.sh — ne pas editer a la main.\n")
+        fh.write("\n".join(rows) + ("\n" if rows else ""))
+print(f"  ok {len(lines)} projet(s) mappe(s) : {map_path} (frontend) + {api_map_path} (/api -> port+{offset})")
 PYEOF
 
 if [ "$MAP_ONLY" -eq 1 ]; then
@@ -92,6 +97,17 @@ fi
 # ---------------------------------------------------------------------------
 c_step "Vhost $SITE_FILE"
 CERT_DIR="/etc/letsencrypt/live/$PREVIEW_SUFFIX"
+
+# `http2 on;` n'existe qu'a partir de nginx 1.25.1 ; avant, c'est `listen ... http2`.
+NGX_VER="$(nginx -v 2>&1 | sed -E 's|.*/([0-9.]+).*|\1|')"
+if [ "$(printf '%s\n1.25.1\n' "$NGX_VER" | sort -V | head -1)" = "1.25.1" ]; then
+  LISTEN_443="    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;"
+else
+  LISTEN_443="    listen 443 ssl http2;
+    listen [::]:443 ssl http2;"
+fi
 if [ -f "$CERT_DIR/fullchain.pem" ]; then
   SSL_BLOCK="    ssl_certificate     $CERT_DIR/fullchain.pem;
     ssl_certificate_key $CERT_DIR/privkey.pem;"
@@ -113,6 +129,13 @@ map \$project \$forge_preview_port {
     include $MAP_FILE;
 }
 
+# Backend du projet (monorepo frontend/ + backend/) : port de preview + $API_PORT_OFFSET.
+# /api/... du sous-domaine est proxifie ici, comme la Forge elle-meme.
+map \$project \$forge_preview_api_port {
+    default 0;
+    include $API_MAP_FILE;
+}
+
 server {
     listen 80;
     listen [::]:80;
@@ -120,11 +143,25 @@ server {
 
     location /.well-known/acme-challenge/ { root /var/www/html; }
 $( [ "$HAS_CERT" -eq 1 ] && echo '    location / { return 301 https://$host$request_uri; }' || cat <<'HTTPONLY'
+    location /api/ {
+        if ($forge_preview_api_port = 0) { return 503; }
+        proxy_pass http://127.0.0.1:$forge_preview_api_port;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 900s;
+    }
+
     location / {
         if ($forge_preview_port = 0) { return 503; }
         proxy_pass http://127.0.0.1:$forge_preview_port;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        # Host reecrit en loopback : Vite et CRA refusent un Host inconnu.
+        proxy_set_header Host 127.0.0.1:$forge_preview_port;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -144,9 +181,7 @@ if [ "$HAS_CERT" -eq 1 ]; then
 cat >> "$SITE_FILE" <<NGINXEOF
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+$LISTEN_443
     server_name ~^(?<project>[a-z0-9._-]+)\\.${PREVIEW_SUFFIX//./\\.}\$;
 
 $SSL_BLOCK
@@ -158,13 +193,33 @@ $SSL_BLOCK
     access_log /var/log/nginx/forge-preview.access.log;
     error_log  /var/log/nginx/forge-preview.error.log;
 
+    # API du projet (backend/ du monorepo) : port de preview + offset.
+    location /api/ {
+        if (\$forge_preview_api_port = 0) { return 503; }
+
+        proxy_pass http://127.0.0.1:\$forge_preview_api_port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+    }
+
     location / {
         # Projet inconnu de la map : 503 explicite plutot qu'un 502 obscur.
         if (\$forge_preview_port = 0) { return 503; }
 
         proxy_pass http://127.0.0.1:\$forge_preview_port;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        # Host reecrit en loopback : Vite et CRA refusent un Host inconnu.
+        proxy_set_header Host 127.0.0.1:\$forge_preview_port;
+        proxy_set_header X-Forwarded-Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -220,6 +275,7 @@ c_step "Previews actives"
 cat <<EOF
   Domaine    : https://<projet>.$PREVIEW_SUFFIX
   Map        : $MAP_FILE  (regenere avec --map-only)
+  Map API    : $API_MAP_FILE  (/api -> port + $API_PORT_OFFSET)
   Ports      : attribues par la Forge des la creation du projet (8090+)
   Astuce     : apres creation d'un nouveau projet, lance
                sudo bash deploy/setup-preview-domain.sh --map-only

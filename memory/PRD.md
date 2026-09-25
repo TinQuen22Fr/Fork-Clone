@@ -787,3 +787,35 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
     de derive map/base sans SSH.
   * Le refresh est declenche aussi par POST /api/conversations/{id}/project
     (lien conversation<->projet) et par le demarrage d une preview.
+
+## Previews des projets FULL-STACK (monorepo) — 2026-09-25
+
+- Constat utilisateur : ses projets generes par la Forge sont des monorepos
+  (backend/ + frontend/, ex. storm-monitor-20km) ; le detecteur ne regardait que
+  la racine -> "aucune application detectee".
+- `preview_runtime.py` refondu en MULTI-CIBLES :
+  * frontend/ | client/ | web/ | ui/ (package.json) -> port de preview (8091)
+  * backend/ | api/ | server/ (requirements.txt|package.json|app.py|main.py|
+    server.py) -> port de preview + 100 (8191)
+  * sinon : detection racine comme avant (node / statique / python)
+  * un process, un port et un journal par cible
+    (workspace/.forge-preview/<projet>.web.log / .api.log)
+  * status() agrege les phases et expose `targets[]`
+  * env injecte au frontend : VITE_API_URL=/api, VITE_BACKEND_URL=/api,
+    REACT_APP_BACKEND_URL="" , NEXT_PUBLIC_API_URL=/api,
+    DANGEROUSLY_DISABLE_HOST_CHECK=true, WDS_SOCKET_PORT=0
+- `deploy/setup-preview-domain.sh` : seconde map
+  /etc/nginx/forge-preview-api-ports.map (port+100) + `location /api/` dans les
+  vhosts HTTP et HTTPS ; Host reecrit en 127.0.0.1:<port> sur `location /`
+  (Vite/CRA refusent un Host inconnu) ; `http2 on;` seulement si nginx >= 1.25.1
+  (sinon `listen 443 ssl http2`) -> evite un vhost invalide.
+- `fix-previews.sh` : controle du certificat wildcard (SAN *.<suffixe> + date
+  d expiration) avec la commande certbot DNS-01 a lancer si absent.
+- API : GET .../preview/logs?target=web|api ; status renvoie `targets[]`.
+- UI : panneau de logs avec un onglet par cible (frontend/backend) + point d etat
+  et port par cible.
+- VALIDE EN LOCAL, bout en bout : monorepo vite+FastAPI -> npm install et venv
+  automatiques, web 8091 running + api 8191 running, puis a travers un vrai nginx
+  (1.22) configure avec les vhosts generes : GET / (Host mono-test.preview.test.fr)
+  sert le frontend Vite, GET /api/ping renvoie {"pong":true} depuis le backend du
+  projet, projet inconnu -> 503. `nginx -t` OK sur les blocs HTTP et HTTPS.

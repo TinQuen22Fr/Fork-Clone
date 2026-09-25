@@ -4228,22 +4228,24 @@ async def preview_stop(name: str, current_user: dict = Depends(get_current_user)
 
 @api_router.get("/workspace/projects/{name}/preview/status")
 async def preview_status(name: str, current_user: dict = Depends(get_current_user)):
-    """Etat de la preview : stopped / installing / starting / running / error."""
+    """Etat de la preview : stopped / installing / starting / running / error.
+    `targets` detaille le frontend (port de preview) et le backend (port + 100)."""
     pname, meta = await _project_port(current_user["id"], name)
-    mgr = preview_mgr()
-    status = mgr.status(pname, meta["preview_port"])
-    if status["phase"] == "stopped" and not status["kind"]:
-        plan = mgr.detect(pname, meta["preview_port"])
-        status["kind"] = plan.get("kind", "")
-        status["message"] = plan.get("hint", "")
+    status = preview_mgr().status(pname, meta["preview_port"])
     return _preview_payload(meta, status)
 
 
 @api_router.get("/workspace/projects/{name}/preview/logs")
-async def preview_logs(name: str, current_user: dict = Depends(get_current_user)):
-    """Journal du process de preview (derniers Ko)."""
+async def preview_logs(
+    name: str, target: str = "", current_user: dict = Depends(get_current_user)
+):
+    """Journal du process de preview (derniers Ko). target = web | api | app."""
     pname, _ = await _project_port(current_user["id"], name)
-    return {"project": pname, "logs": preview_mgr().logs(pname)}
+    return {
+        "project": pname,
+        "target": target,
+        "logs": preview_mgr().logs(pname, target),
+    }
 
 
 async def _autostart_previews() -> None:

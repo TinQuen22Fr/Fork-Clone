@@ -33,6 +33,7 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
   const [error, setError] = useState("");
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState("");
+  const [logTarget, setLogTarget] = useState("");
   const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState(previewUrl || "");
   const openWhenReady = useRef(false);
@@ -107,9 +108,13 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
     }
   };
 
-  const loadLogs = async () => {
+  const loadLogs = async (target = logTarget) => {
+    setLogTarget(target);
     try {
-      const { data } = await api.get(`/workspace/projects/${project}/preview/logs`);
+      const { data } = await api.get(
+        `/workspace/projects/${project}/preview/logs`,
+        { params: target ? { target } : {} }
+      );
       setLogs(data.logs || "(journal vide)");
     } catch (e) {
       setLogs(formatApiError(e));
@@ -240,7 +245,32 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
                 </button>
               </div>
             </div>
-            <div className="px-4 py-2 border-b-2 border-white/10 text-[10px] font-mono text-gray-500 space-y-0.5">
+            <div className="px-4 py-2 border-b-2 border-white/10 text-[10px] font-mono text-gray-500 space-y-1">
+              {(status?.targets || []).length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {status.targets.map((t) => (
+                    <button
+                      key={t.target}
+                      onClick={() => loadLogs(t.target)}
+                      className={`border px-2 py-0.5 uppercase tracking-[0.1em] transition-colors ${
+                        logTarget === t.target
+                          ? "border-[#05d9e8] text-[#05d9e8]"
+                          : "border-white/20 text-gray-500 hover:text-gray-300"
+                      }`}
+                      data-testid={`preview-log-target-${t.target}`}
+                    >
+                      {t.target === "api" ? "backend" : t.target === "web" ? "frontend" : t.target}
+                      <span
+                        className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full align-middle"
+                        style={{
+                          backgroundColor: (PHASES[t.phase] || PHASES.stopped).color,
+                        }}
+                      />
+                      <span className="ml-1 normal-case tracking-normal">:{t.port}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div>type : {status?.kind || "—"} · port {status?.port || "—"}</div>
               {status?.command && <div className="truncate">$ {status.command}</div>}
               {status?.message && (

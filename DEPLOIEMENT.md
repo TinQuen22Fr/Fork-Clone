@@ -72,6 +72,23 @@ manque quelque chose :
 
 ### 3. Ce qu'un projet doit contenir pour être prévisualisable
 
+**Projet full-stack (cas des projets générés par la Forge, ex. `storm-monitor-20km`)** :
+
+| Dossier détecté | Ce qui est lancé | Port |
+|---|---|---|
+| `frontend/` (ou `client/`, `web/`, `ui/`) avec `package.json` | serveur de dev (vite / next / react-scripts) | **port de preview** (ex. 8091) |
+| `backend/` (ou `api/`, `server/`) avec `requirements.txt` / `app.py` / `main.py` / `server.py` | venv `.venv` auto + `uvicorn` (FastAPI) ou `python` | **port + 100** (ex. 8191) |
+
+Nginx proxifie automatiquement `https://<projet>.preview.quentin-astro.fr/api/...`
+vers le backend du projet (port + 100), exactement comme la Forge elle-même est
+servie. **Le frontend doit appeler `/api/...` en relatif** — au démarrage, la
+Forge injecte `VITE_API_URL=/api`, `VITE_BACKEND_URL=/api`,
+`REACT_APP_BACKEND_URL=` (vide), `NEXT_PUBLIC_API_URL=/api` sans modifier les
+fichiers du projet. Si le code contient une URL absolue codée en dur
+(`http://localhost:8000`), c'est le seul cas où il faut éditer le projet.
+
+**Projet simple (une seule app à la racine)** :
+
 | Détecté | Lancement |
 |---|---|
 | `package.json` avec `vite` | `npm run dev -- --host 127.0.0.1 --port <port> --strictPort` |
@@ -91,9 +108,11 @@ jamais de 502 muet.
 ```bash
 systemctl status forge-backend
 journalctl -u forge-backend -n 50 --no-pager
-tail -f /var/www/forge/workspace/.forge-preview/<projet>.log   # journal du projet
-cat /etc/nginx/forge-preview-ports.map                          # map projet -> port
-ss -ltnp | grep -E '809[0-9]|81[0-8][0-9]'                      # qui écoute vraiment
+tail -f /var/www/forge/workspace/.forge-preview/<projet>.web.log   # frontend
+tail -f /var/www/forge/workspace/.forge-preview/<projet>.api.log   # backend
+cat /etc/nginx/forge-preview-ports.map            # projet -> port frontend
+cat /etc/nginx/forge-preview-api-ports.map        # projet -> port backend (/api)
+ss -ltnp | grep -E '809[0-9]|81[0-9][0-9]'        # qui écoute vraiment
 ```
 
 ### 5. Certificat wildcard (si les previews répondent en HTTP mais pas en HTTPS)

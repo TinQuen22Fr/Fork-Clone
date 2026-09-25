@@ -33,6 +33,7 @@ APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SERVICE="${SERVICE:-forge-backend}"
 UNIT="/etc/systemd/system/$SERVICE.service"
 VENV_DIR="${VENV_DIR:-$APP_DIR/backend/venv}"
+PREVIEW_SUFFIX="${PREVIEW_SUFFIX:-preview.quentin-astro.fr}"
 DO_RESET=0
 DO_BUILD=1
 DO_NGINX=1
@@ -251,29 +252,56 @@ if [ "$DO_NGINX" -eq 1 ]; then
     echo "        (doit contenir /etc/nginx /run /var/log/nginx"
     echo "         — voir deploy/KNOWN_ISSUE_preview_map_readonly.md)"
   fi
+  # Controle du certificat wildcard : sans lui, les sous-domaines repondent en
+  # HTTPS invalide (ou pas du tout).
+  CERT="/etc/letsencrypt/live/$PREVIEW_SUFFIX/cert.pem"
+  if [ -f "$CERT" ]; then
+    SANS="$(openssl x509 -in "$CERT" -noout -ext subjectAltName 2>/dev/null | tr -d ' ' | tr ',' '\n' | sed 's/^DNS://')"
+    if echo "$SANS" | grep -qx "\*\.$PREVIEW_SUFFIX"; then
+      EXP="$(openssl x509 -in "$CERT" -noout -enddate | cut -d= -f2)"
+      c_ok "certificat wildcard *.$PREVIEW_SUFFIX valide jusqu'au $EXP"
+    else
+      c_warn "le certificat de $PREVIEW_SUFFIX NE couvre PAS *.$PREVIEW_SUFFIX :"
+      echo "$SANS" | sed 's/^/        /'
+      echo "      -> obtiens un wildcard (validation DNS-01) :"
+      echo "         sudo certbot certonly --manual --preferred-challenges dns \\"
+      echo "           -d '*.$PREVIEW_SUFFIX' -d '$PREVIEW_SUFFIX'"
+      echo "         puis : sudo bash deploy/setup-preview-domain.sh"
+    fi
+  else
+    c_warn "aucun certificat pour $PREVIEW_SUFFIX : previews en HTTP seul."
+    echo "         sudo certbot certonly --manual --preferred-challenges dns \\"
+    echo "           -d '*.$PREVIEW_SUFFIX' -d '$PREVIEW_SUFFIX'"
+    echo "         puis : sudo bash deploy/setup-preview-domain.sh"
+  fi
 fi
-
-c_step "Previews reparees"
 cat <<EOF
-  Ce qui change : la Forge demarre elle-meme l'app de chaque projet sur son
-  port dedie. Plus de 502 tant que la preview est demarree.
+
+$(printf '\033[1;36m==>\033[0m \033[1mPreviews reparees\033[0m')
+  Ce qui change : la Forge demarre elle-meme l'app de chaque projet.
+    - projet full-stack (frontend/ + backend/) : le frontend est servi sur le
+      port de preview, le backend sur le port + 100, et Nginx proxifie
+      https://<projet>.$PREVIEW_SUFFIX/api/... vers ce backend.
+      Le frontend doit appeler /api/... en relatif (les variables
+      VITE_API_URL / REACT_APP_BACKEND_URL sont injectees en ce sens).
+    - projet simple : package.json, index.html/dist/build, ou app.py/main.py.
 
   Depuis l'interface :
     - bouton PREVIEW (en-tete d'une conversation) : 1er clic = demarrage, le
       point de couleur indique l'etat (gris arretee / jaune demarrage /
       cyan en ligne / rouge erreur), puis l'onglet s'ouvre tout seul.
-    - icone parchemin : journal du serveur de dev (pour voir une erreur npm).
-    - carre : arret (libere RAM et port), fleche circulaire : redemarrage.
+    - icone parchemin : journal, avec un onglet par cible (frontend / backend).
+    - carre : arret (libere RAM et ports), fleche circulaire : redemarrage.
     - sur le Hub, chaque carte de projet a le meme bouton et le meme etat.
 
   En ligne de commande (diagnostic) :
     systemctl status $SERVICE
     journalctl -u $SERVICE -n 50 --no-pager
-    tail -f $APP_DIR/workspace/.forge-preview/<projet>.log
+    tail -f $APP_DIR/workspace/.forge-preview/<projet>.web.log
+    tail -f $APP_DIR/workspace/.forge-preview/<projet>.api.log
     cat /etc/nginx/forge-preview-ports.map
-    ss -ltnp | grep -E '809[0-9]|81[0-8][0-9]'
+    cat /etc/nginx/forge-preview-api-ports.map
+    ss -ltnp | grep -E '80(9[0-9])|81[0-8][0-9]|82[0-8][0-9]'
 
-  Rappel : un projet doit contenir une app demarrable (package.json avec un
-  script dev/start, un index.html, ou app.py/main.py). Sinon le journal
-  l'indique clairement au lieu d'un 502 muet.
+  Premier demarrage d'un projet Node : 1 a 2 min (npm install automatique).
 EOF
