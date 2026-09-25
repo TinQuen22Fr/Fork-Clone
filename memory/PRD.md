@@ -819,3 +819,29 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   (1.22) configure avec les vhosts generes : GET / (Host mono-test.preview.test.fr)
   sert le frontend Vite, GET /api/ping renvoie {"pong":true} depuis le backend du
   projet, projet inconnu -> 503. `nginx -t` OK sur les blocs HTTP et HTTPS.
+
+## Cadrage systeme + cloisonnement workspace par projet (2026-09-25)
+
+- Probleme : aucun system prompt de cadrage -> le modele se croyait sur une
+  plateforme cloud, reclamait sudo/root, touchait /var/www/forge et debordait
+  sur les autres projets du workspace.
+- `backend/server.py` :
+  * `_current_project` (ContextVar) + `set_current_project()` appele dans
+    chat_send, chat_stream et chat_regenerate depuis `conv["project"]`.
+  * `forge_system_prompt()` = CLAUDE_SYSTEM_PROMPT + bloc identite/environnement
+    reel (Forge auto-hebergee, pas de cloud, pas d outil tiers) + bloc
+    « aucun privilege sudo/root » + bloc cloisonnement strict
+    (/var/www/forge/workspace/<projet>/ uniquement, interdiction des autres
+    projets, de la racine de prod et de l OS) + contenu de
+    workspace/<projet>/.forge-rules s il existe (FORGE_RULES_MAX_CHARS=8000).
+    Sans projet actif : bloc lecture seule.
+  * Les 14 usages de settings.claude_system_prompt (Claude, Gemini, Ollama,
+    Ollama Cloud, OpenCode, providers compatibles OpenAI, versions stream et
+    non-stream) passent par forge_system_prompt() -> cadrage applique a TOUS
+    les providers.
+  * `_tool_bash` : cwd force sur la racine du projet actif, cwd rappele dans la
+    sortie de l outil ; description de l outil mise a jour.
+- Doc : section « Cadrage du modele et cloisonnement par projet » en tete de
+  DEPLOIEMENT.md (dont l usage de .forge-rules).
+- Verifie sans appel LLM (aucun credit consomme) : rendu du prompt avec et sans
+  projet, lecture de .forge-rules, et `_tool_bash("pwd")` -> racine du projet.

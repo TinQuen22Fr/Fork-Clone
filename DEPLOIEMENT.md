@@ -7,7 +7,46 @@ Toutes les commandes sont copiables telles quelles, dans l'ordre.
 
 ---
 
-## ⚡ Previews en 502 Bad Gateway — la procédure A → Z (à faire en premier)
+## Cadrage du modèle et cloisonnement par projet
+
+Le backend injecte automatiquement, **à chaque appel LLM et pour tous les
+providers** (Claude, Gemini, Groq, Cerebras, SambaNova, NVIDIA, OpenRouter,
+OpenCode, Ollama), un bloc système reconstruit selon le projet de la
+conversation :
+
+1. **Identité réelle** : moteur de code de The Forge, auto-hébergé sur un
+   serveur Linux privé — pas de plateforme cloud, pas de conteneur jetable,
+   pas d'outil SaaS propriétaire, uniquement les outils de la Forge.
+2. **Aucun privilège** : ni `sudo`, ni root, ni moyen d'en obtenir ; interdiction
+   de proposer `systemctl`, `apt`, etc. Tout se résout avec le code et les
+   dépendances locales du projet.
+3. **Cloisonnement strict** : l'univers d'action est
+   `/var/www/forge/workspace/<projet>/` ; interdiction d'inspecter les autres
+   projets du workspace, la racine de prod `/var/www/forge` et l'OS hôte.
+4. **`cwd` forcé** : l'outil `bash` s'exécute **toujours** dans la racine du
+   projet actif (le `cwd` est rappelé dans la sortie de l'outil).
+
+### Règles locales par projet : `.forge-rules`
+
+Si le fichier `workspace/<projet>/.forge-rules` existe, son contenu est
+concaténé au prompt système (max 8000 caractères, réglable par
+`FORGE_RULES_MAX_CHARS`). Exemple :
+
+```bash
+cat > /var/www/forge/workspace/storm-monitor-20km/.forge-rules <<'EOF'
+- Backend FastAPI dans backend/, frontend Vite dans frontend/.
+- Le frontend appelle /api/... en relatif, jamais d'URL absolue.
+- Ne jamais toucher aux migrations existantes.
+EOF
+```
+
+Ces règles **complètent** le cadrage et ne peuvent pas l'assouplir. Une
+conversation non rattachée à un projet est en lecture seule : le modèle répond
+sans écrire de fichier.
+
+---
+
+## ⚡ Previews en 502 Bad Gateway — la procédure A → Z
 
 **Pourquoi c'était cassé.** Deux bugs distincts, corrigés tous les deux :
 

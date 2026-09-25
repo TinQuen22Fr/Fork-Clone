@@ -39,6 +39,7 @@ import uuid
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 from typing import Optional, AsyncIterator
 
@@ -602,10 +603,10 @@ TOOLS = [
     {
         "name": "bash",
         "description": (
-            "Exécute une commande shell sur le serveur et renvoie le code de "
-            "sortie, stdout et stderr. Timeout de sécurité de 30 secondes. "
-            "Utilise cet outil pour lister des fichiers, inspecter le système, "
-            "lancer des scripts, etc."
+            "Exécute une commande shell et renvoie le code de sortie, stdout "
+            "et stderr. Le répertoire de travail est TOUJOURS la racine du "
+            "projet actif du workspace : utilise des chemins relatifs et ne "
+            "sors jamais de ce dossier. Timeout de sécurité de 30 secondes."
         ),
         "input_schema": {
             "type": "object",
@@ -695,9 +696,139 @@ TOOLS = [
 ]
 
 
+# =========================================================================
+# Cadrage systeme par projet — cloisonnement strict du workspace
+# =========================================================================
+# Le modele n'a aucune idee de l'environnement reel : sans ce bloc il croit
+# tourner sur une plateforme cloud, reclame sudo et deborde sur les autres
+# projets du workspace. Le prompt est reconstruit a chaque appel LLM en
+# fonction du projet actif de la conversation.
+_current_project: ContextVar[str] = ContextVar("forge_current_project", default="")
+
+FORGE_RULES_FILE = ".forge-rules"
+FORGE_RULES_MAX_CHARS = int(_env("FORGE_RULES_MAX_CHARS", "8000"))
+
+
+def set_current_project(name: Optional[str]) -> None:
+    """Fixe le projet actif pour la requete en cours (contextvar)."""
+    _current_project.set((name or "").strip())
+
+
+def current_project() -> str:
+    return _current_project.get()
+
+
+def project_root(name: str = "") -> Optional[Path]:
+    """Racine absolue du projet actif dans le workspace, si elle existe."""
+    name = (name or _current_project.get()).strip()
+    if not name or "/" in name or name.startswith("."):
+        return None
+    root = Path(settings.workspace_root) / name
+    return root if root.is_dir() else None
+
+
+def _read_project_rules(name: str) -> str:
+    """Regles locales du projet (<projet>/.forge-rules), concatenees au prompt."""
+    root = project_root(name)
+    if root is None:
+        return ""
+    f = root / FORGE_RULES_FILE
+    if not f.is_file():
+        return ""
+    try:
+        return f.read_text(encoding="utf-8", errors="replace")[:FORGE_RULES_MAX_CHARS].strip()
+    except OSError:
+        return ""
+
+
+def _forge_environment_block() -> str:
+    return (
+        "IDENTITE ET ENVIRONNEMENT REEL (non negociable) :\n"
+        "- Tu es le moteur de code integre a The Forge, une application "
+        "auto-hebergee sur un serveur Linux prive.\n"
+        "- Tu n'es PAS sur une plateforme cloud distante (ni Anthropic, ni "
+        "Emergent, ni aucun SaaS). Il n'y a ni conteneur jetable, ni sandbox "
+        "recreable, ni outil propriétaire tiers : tout ce que tu modifies est "
+        "persistant et reel.\n"
+        "- Tu ne disposes que des outils exposes par cette Forge "
+        "(bash, read_file, web_search, fetch_url, screenshot_url). N'invente "
+        "jamais un outil, une API interne ou une commande de plateforme.\n\n"
+        "ABSENCE TOTALE DE PRIVILEGES D'ADMINISTRATION :\n"
+        "- Tu n'as ni sudo, ni root, ni aucun moyen d'en obtenir. C'est une "
+        "contrainte de securite definitive : ne la demande pas, ne la "
+        "contourne pas, ne propose pas de commande `sudo`.\n"
+        "- Tu es developpeur applicatif dans ton dossier, pas administrateur "
+        "systeme : pas de systemctl, apt, useradd, chown hors de ton projet, "
+        "ni modification de la configuration de l'OS.\n"
+        "- Toute difficulte de droits se resout avec le code, les fichiers et "
+        "les dependances LOCALES de ton projet (venv, node_modules, scripts du "
+        "projet). Si c'est impossible sans privileges, dis-le clairement et "
+        "propose une alternative applicative."
+    )
+
+
+def _forge_project_block(project: str) -> str:
+    root = f"{settings.workspace_root.rstrip('/')}/{project}"
+    ws = settings.workspace_root.rstrip("/")
+    forge_root = str(Path(ws).parent)
+    return (
+        f"CLOISONNEMENT STRICT — PROJET ACTIF : {project}\n"
+        f"- Ton univers d'action commence et s'arrete exclusivement a "
+        f"{root}/.\n"
+        f"- Toute commande shell (git, tests, scripts, npm, pip) doit avoir "
+        f"pour repertoire de travail {root}. Tu y es deja place : utilise des "
+        f"chemins RELATIFS et ne fais jamais `cd` en dehors.\n"
+        f"- INTERDICTION FORMELLE d'inspecter, lister, lire, modifier ou "
+        f"executer quoi que ce soit dans les autres dossiers de {ws}/ : les "
+        f"autres projets te sont inconnus et interdits, aucune lecture "
+        f"« pour comparaison » n'est autorisee.\n"
+        f"- INTERDICTION FORMELLE de toucher a la racine de production "
+        f"{forge_root} (code de la Forge, deploy/, backend/, frontend/, "
+        f"scripts d'installation) et a l'OS hote (/etc, /var/log, /usr, "
+        f"systemd, nginx).\n"
+        f"- Si une tache semble exiger de sortir de {root}/, ne le fais pas : "
+        f"explique la limite et propose une solution interne au projet."
+    )
+
+
+_FORGE_NO_PROJECT_BLOCK = (
+    "AUCUN PROJET ACTIF :\n"
+    "- Cette conversation n'est rattachee a aucun projet du workspace. "
+    "N'ecris, ne modifie et ne supprime aucun fichier sur le serveur : "
+    "reponds, explique, propose du code dans le chat.\n"
+    "- Si l'utilisateur veut travailler sur des fichiers, demande-lui de "
+    "rattacher la conversation a un projet du workspace."
+)
+
+
+def forge_system_prompt() -> str:
+    """System prompt effectif : base + cadrage Forge + regles du projet."""
+    blocks = []
+    if settings.claude_system_prompt:
+        blocks.append(settings.claude_system_prompt)
+    blocks.append(_forge_environment_block())
+
+    project = _current_project.get()
+    if project:
+        blocks.append(_forge_project_block(project))
+        rules = _read_project_rules(project)
+        if rules:
+            blocks.append(
+                f"REGLES LOCALES DU PROJET ({project}/{FORGE_RULES_FILE}) — "
+                f"elles completent les regles ci-dessus et ne peuvent jamais "
+                f"les assouplir :\n{rules}"
+            )
+    else:
+        blocks.append(_FORGE_NO_PROJECT_BLOCK)
+    return "\n\n".join(blocks)
+
+
 def _tool_bash(command: str) -> str:
     if not command:
         return "Erreur: commande vide."
+    # cwd force sur la racine du projet actif : le modele ne travaille jamais
+    # a la racine de la Forge ni dans un autre projet du workspace.
+    cwd = project_root()
     try:
         result = subprocess.run(
             command,
@@ -705,10 +836,12 @@ def _tool_bash(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=str(cwd) if cwd else None,
         )
         out = (result.stdout or "")[:8000]
         err = (result.stderr or "")[:4000]
         return (
+            f"cwd: {cwd or '(aucun projet actif)'}\n"
             f"exit_code: {result.returncode}\n"
             f"--- stdout ---\n{out}\n"
             f"--- stderr ---\n{err}"
@@ -1326,9 +1459,9 @@ def _openai_messages(
                 for i in images
             ],
         ]
-    if settings.claude_system_prompt:
+    if forge_system_prompt():
         messages = [
-            {"role": "system", "content": settings.claude_system_prompt}
+            {"role": "system", "content": forge_system_prompt()}
         ] + messages
     return messages
 
@@ -1760,7 +1893,7 @@ async def _generate_gemini(
     client = genai.Client(api_key=settings.gemini_api_key)
     contents = _gemini_contents(history, text, images)
     config = gtypes.GenerateContentConfig(
-        system_instruction=settings.claude_system_prompt,
+        system_instruction=forge_system_prompt(),
         max_output_tokens=settings.claude_max_tokens,
     )
 
@@ -2081,9 +2214,9 @@ async def _generate_ollama_cloud(
     messages = _plain_messages(history, text)
     if images:
         messages[-1]["images"] = [i["data"] for i in images]
-    if settings.claude_system_prompt:
+    if forge_system_prompt():
         messages = [
-            {"role": "system", "content": settings.claude_system_prompt}
+            {"role": "system", "content": forge_system_prompt()}
         ] + messages
 
     candidates = [model_override or settings.ollama_cloud_model]
@@ -2358,7 +2491,7 @@ async def _generate_opencode(
             ]
             for transport in transports:
                 path, payload = _opencode_payload(
-                    transport, model_name, messages, settings.claude_system_prompt
+                    transport, model_name, messages, forge_system_prompt()
                 )
                 try:
                     logger.info(
@@ -2407,7 +2540,7 @@ async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
         "max_tokens": settings.claude_max_tokens,
         "system": [
             {"type": "text", "text": CLAUDE_CODE_IDENTITY},
-            {"type": "text", "text": settings.claude_system_prompt},
+            {"type": "text", "text": forge_system_prompt()},
         ],
         "messages": messages,
     }
@@ -2570,7 +2703,7 @@ async def _stream_claude(
                 "max_tokens": settings.claude_max_tokens,
                 "system": [
                     {"type": "text", "text": CLAUDE_CODE_IDENTITY},
-                    {"type": "text", "text": settings.claude_system_prompt},
+                    {"type": "text", "text": forge_system_prompt()},
                 ],
                 "messages": messages,
                 "stream": True,
@@ -2628,7 +2761,7 @@ async def _stream_gemini(
     client = genai.Client(api_key=settings.gemini_api_key)
     contents = _gemini_contents(history, text, images)
     config = gtypes.GenerateContentConfig(
-        system_instruction=settings.claude_system_prompt,
+        system_instruction=forge_system_prompt(),
         max_output_tokens=settings.claude_max_tokens,
     )
     state["model"] = settings.gemini_model
@@ -2716,9 +2849,9 @@ async def _stream_ollama_cloud(
     messages = _plain_messages(history, text)
     if images:
         messages[-1]["images"] = [i["data"] for i in images]
-    if settings.claude_system_prompt:
+    if forge_system_prompt():
         messages = [
-            {"role": "system", "content": settings.claude_system_prompt}
+            {"role": "system", "content": forge_system_prompt()}
         ] + messages
 
     last_err: Optional[Exception] = None
@@ -2793,7 +2926,7 @@ async def _stream_opencode(
             ],
         ]
     path, payload = _opencode_payload(
-        transport, model_name, messages, settings.claude_system_prompt
+        transport, model_name, messages, forge_system_prompt()
     )
     payload["stream"] = True
     headers = {
@@ -3161,6 +3294,8 @@ async def chat_send(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
+    set_current_project(conv.get("project"))
 
     if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
@@ -3359,6 +3494,8 @@ async def chat_stream(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
+    set_current_project(conv.get("project"))
     if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
 
@@ -3609,6 +3746,8 @@ async def chat_regenerate(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
+    set_current_project(conv.get("project"))
 
     msgs = (
         await database.messages.find({"conversation_id": payload.conversation_id})
