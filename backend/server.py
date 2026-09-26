@@ -34,6 +34,7 @@ from html import unescape
 import asyncio
 import base64
 import shlex
+import shutil
 import subprocess
 import uuid
 import logging
@@ -4308,6 +4309,59 @@ async def update_project(
         "preview_url": meta.get("preview_url", ""),
         "preview_port": meta.get("preview_port"),
     }
+
+
+@api_router.delete("/workspace/projects/{name}")
+async def delete_project(
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Supprime definitivement un projet : arrete sa preview, efface son
+    dossier sur disque et purge ses conversations/messages/metadonnees.
+    Action irreversible, confirmee cote frontend."""
+    pname = _valid_project_name(name)
+    root = Path(settings.workspace_root)
+    project_dir = root / pname
+    if not project_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Projet inconnu : {pname}")
+
+    # Securite : le dossier resolu doit bien rester sous WORKSPACE_ROOT.
+    try:
+        project_dir.resolve().relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Chemin de projet invalide.")
+
+    database = get_db()
+    meta = await database.projects.find_one(
+        {"user_id": current_user["id"], "name": pname}, {"_id": 0, "preview_port": 1}
+    )
+    if meta and meta.get("preview_port"):
+        try:
+            await preview_mgr().stop(pname, meta["preview_port"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Arret preview avant suppression de %s : %s", pname, exc)
+
+    try:
+        shutil.rmtree(project_dir)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500, detail=f"Suppression du dossier impossible : {exc}"
+        )
+
+    conv_ids = [
+        c["id"]
+        async for c in database.conversations.find(
+            {"user_id": current_user["id"], "project": pname}, {"id": 1}
+        )
+    ]
+    if conv_ids:
+        await database.messages.delete_many({"conversation_id": {"$in": conv_ids}})
+        await database.conversations.delete_many(
+            {"user_id": current_user["id"], "project": pname}
+        )
+    await database.projects.delete_one({"user_id": current_user["id"], "name": pname})
+    _schedule_preview_map_refresh()
+    return {"ok": True, "name": pname}
 
 
 def preview_mgr() -> PreviewManager:

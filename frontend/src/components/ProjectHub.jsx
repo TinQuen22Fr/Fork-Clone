@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Play,
   Square,
+  X,
 } from "lucide-react";
 
 /** Ecran d'accueil : prompt central + projets du workspace. */
@@ -26,6 +27,8 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [acting, setActing] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null); // projet en attente de confirmation
+  const [deleting, setDeleting] = useState(false);
 
   const PHASES = {
     stopped: { label: "arrêtée", color: "#6b7280" },
@@ -55,6 +58,20 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
       setError(formatApiError(e));
     } finally {
       setActing("");
+    }
+  };
+
+  const deleteProject = async (p) => {
+    setDeleting(true);
+    setError("");
+    try {
+      await api.delete(`/workspace/projects/${p.name}`);
+      setProjects((prev) => prev.filter((x) => x.name !== p.name));
+      setConfirmDelete(null);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -222,8 +239,9 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                     >
                       {p.name}
                     </button>
-                    {p.preview_url && (
-                      <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1">
+                      {p.preview_url && (
+                        <>
                         <button
                           type="button"
                           onClick={() =>
@@ -259,8 +277,18 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                             <Square className="w-3.5 h-3.5" />
                           </button>
                         )}
-                      </div>
-                    )}
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(p)}
+                        title={`Supprimer ${p.name}`}
+                        className="text-gray-600 hover:text-[#ff2a6d] transition-colors"
+                        data-testid={`hub-delete-${p.name}`}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 flex items-center gap-3 text-[10px] font-mono text-gray-500">
                     <span
@@ -295,6 +323,53 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
           )}
         </div>
       </div>
+
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4"
+          data-testid="hub-delete-confirm-overlay"
+          onClick={() => !deleting && setConfirmDelete(null)}
+        >
+          <div
+            className="w-full max-w-sm border-2 border-[#ff2a6d]/60 bg-[#0a0a0a] p-5"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="hub-delete-confirm-dialog"
+          >
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#ff2a6d]">
+              // suppression
+            </div>
+            <h2 className="mt-2 font-heading text-lg font-black uppercase tracking-tight">
+              Supprimer « {confirmDelete.name} » ?
+            </h2>
+            <p className="mt-2 text-xs text-gray-400">
+              Cette action est <span className="text-[#ff2a6d] font-semibold">irréversible</span> :
+              le dossier du projet, ses conversations et ses données seront
+              définitivement effacés. Confirmez-vous ?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                disabled={deleting}
+                className="btn-ghost border-2 border-white/20 hover:border-white/40 text-xs px-4 py-2 disabled:opacity-40"
+                data-testid="hub-delete-confirm-no"
+              >
+                Non
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteProject(confirmDelete)}
+                disabled={deleting}
+                className="border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 hover:bg-[#ff2a6d]/20 text-[#ff2a6d] text-xs font-semibold px-4 py-2 flex items-center gap-2 disabled:opacity-40"
+                data-testid="hub-delete-confirm-yes"
+              >
+                {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Oui, supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
