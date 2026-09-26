@@ -886,7 +886,20 @@ export default function Chat() {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="min-w-0">
+            <div className="min-w-0 flex flex-col gap-1">
+              {activeId && (
+                <button
+                  className="self-start text-gray-500 hover:text-white hover:opacity-100 opacity-60 transition-all duration-150 cursor-pointer bg-transparent border-0 p-0 leading-none"
+                  onClick={() => {
+                    abortRequest();
+                    setActiveId(null);
+                  }}
+                  title="Retour au choix des projets"
+                  data-testid="close-session-btn"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
               <div className="text-[10px] uppercase tracking-[0.3em] text-[#ffd700] font-bold">
                 // active session
               </div>
@@ -896,19 +909,6 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
-            {activeId && (
-              <button
-                className="btn-ghost flex-shrink-0"
-                onClick={() => {
-                  abortRequest();
-                  setActiveId(null);
-                }}
-                title="Retour au choix des projets"
-                data-testid="close-session-btn"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            )}
             {activeConv?.project && (
               <PreviewButton
                 project={activeConv.project}
