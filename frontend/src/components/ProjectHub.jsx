@@ -240,6 +240,16 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
               />
               <button
                 type="button"
+                onClick={createProject}
+                disabled={busy || !newName.trim()}
+                title="Créer le dossier du projet dans le workspace"
+                className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] disabled:opacity-40"
+                data-testid="hub-create-project-btn"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
                 onClick={triggerImport}
                 disabled={importing}
                 title="Importer un projet depuis une archive .zip (GitHub, backup...)"
@@ -251,16 +261,6 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                 ) : (
                   <Upload className="w-4 h-4" />
                 )}
-              </button>
-              <button
-                type="button"
-                onClick={createProject}
-                disabled={busy || !newName.trim()}
-                title="Créer le dossier du projet dans le workspace"
-                className="btn-ghost border-2 border-white/20 hover:border-[#ffd700] hover:text-[#ffd700] disabled:opacity-40"
-                data-testid="hub-create-project-btn"
-              >
-                <Plus className="w-4 h-4" />
               </button>
             </div>
             <button
