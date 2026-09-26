@@ -3,8 +3,27 @@ import axios from "axios";
 // Vide par défaut : les appels partent en relatif sur /api (proxy Vite en dev,
 // Nginx en prod — même origine dans les deux cas). Ne renseigner
 // VITE_BACKEND_URL que si l'API vit sur un domaine séparé.
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
-export const API = `${BACKEND_URL}/api`;
+//
+// Cas dogfooding/self-hosting : quand cette appli tourne en preview en tant
+// que sous-projet de la Forge, le runtime de preview injecte lui-même
+// VITE_BACKEND_URL="/api" (ou une URL qui se termine déjà par /api). Dans ce
+// cas il ne faut PAS re-concatener /api, sinon on obtient /api/api (404) et
+// l'auth + les conversations ne chargent plus.
+const RAW_BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "").trim();
+const BACKEND_URL = RAW_BACKEND_URL.replace(/\/+$/, ""); // sans slash final
+const ALREADY_HAS_API = /\/api$/i.test(BACKEND_URL);
+export const API = ALREADY_HAS_API ? BACKEND_URL : `${BACKEND_URL}/api`;
+
+// Nom de la cle localStorage du token, paramétrable pour isoler les sessions
+// entre une instance hote et une instance sandboxee qui partageraient le
+// meme domaine (voir aussi COOKIE_NAME cote backend).
+export const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY || "auth_token";
+
+// Retire les doubles slashes eventuels (hors "://") introduits par la
+// concatenation base + chemin.
+function cleanDoubleSlashes(url) {
+  return url.replace(/([^:]\/)\/+/g, "$1");
+}
 
 const api = axios.create({
   baseURL: API,
@@ -13,9 +32,12 @@ const api = axios.create({
 
 // Also attach Bearer token if stored (fallback for cookie issues)
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("auth_token");
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (config.url) {
+    config.url = cleanDoubleSlashes(config.url);
   }
   return config;
 });
@@ -28,10 +50,10 @@ export default api;
  */
 export async function postSSE(path, formData, { signal, onEvent }) {
   const headers = {};
-  const token = localStorage.getItem("auth_token");
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const resp = await fetch(`${API}${path}`, {
+  const resp = await fetch(cleanDoubleSlashes(`${API}${path}`), {
     method: "POST",
     body: formData,
     credentials: "include",

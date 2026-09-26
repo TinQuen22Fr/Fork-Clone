@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, AUTH_TOKEN_KEY } from "@/lib/api";
 
 const AuthContext = createContext(null);
 
@@ -22,7 +22,7 @@ export function AuthProvider({ children }) {
     setError("");
     try {
       const { data } = await api.post("/auth/login", { email, password });
-      if (data.token) localStorage.setItem("auth_token", data.token);
+      if (data.token) localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       setUser({ id: data.id, email: data.email, name: data.name, role: data.role });
       return true;
     } catch (e) {
@@ -35,7 +35,7 @@ export function AuthProvider({ children }) {
     setError("");
     try {
       const { data } = await api.post("/auth/register", { email, password, name });
-      if (data.token) localStorage.setItem("auth_token", data.token);
+      if (data.token) localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       setUser({ id: data.id, email: data.email, name: data.name, role: data.role });
       return true;
     } catch (e) {
@@ -50,7 +50,7 @@ export function AuthProvider({ children }) {
     } catch (e) {
       // ignore
     }
-    localStorage.removeItem("auth_token");
+    localStorage.removeItem(AUTH_TOKEN_KEY);
     setUser(false);
   };
 

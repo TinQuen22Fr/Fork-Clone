@@ -113,6 +113,10 @@ class Settings:
         # "lax" si front et back partagent le domaine, "none" si cross-site.
         self.cookie_samesite: str = _env("COOKIE_SAMESITE", "lax").lower()
         self.cookie_domain: Optional[str] = _env("COOKIE_DOMAIN") or None
+        # Nom du cookie de session, paramétrable pour isoler les jetons entre
+        # une instance hôte et une instance sandboxée (preview de sous-projet)
+        # qui partageraient le même domaine cookie.
+        self.cookie_name: str = _env("COOKIE_NAME", "access_token")
 
         # --- Compte admin initial ---
         self.admin_email: str = _env("ADMIN_EMAIL", "admin@forge.dev").lower()
@@ -532,7 +536,7 @@ def create_access_token(user_id: str, email: str) -> str:
 
 def set_auth_cookie(response: Response, token: str) -> None:
     kwargs = {
-        "key": "access_token",
+        "key": settings.cookie_name,
         "value": token,
         "httponly": True,
         "secure": settings.cookie_secure,
@@ -546,7 +550,7 @@ def set_auth_cookie(response: Response, token: str) -> None:
 
 
 def clear_auth_cookie(response: Response) -> None:
-    kwargs = {"key": "access_token", "path": "/"}
+    kwargs = {"key": settings.cookie_name, "path": "/"}
     if settings.cookie_domain:
         kwargs["domain"] = settings.cookie_domain
     response.delete_cookie(**kwargs)
@@ -555,7 +559,7 @@ def clear_auth_cookie(response: Response) -> None:
 async def get_current_user(request: Request) -> dict:
     database = get_db()
 
-    token = request.cookies.get("access_token")
+    token = request.cookies.get(settings.cookie_name)
     if not token:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):

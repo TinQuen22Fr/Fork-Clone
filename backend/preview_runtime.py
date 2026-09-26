@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import socket
@@ -167,13 +168,13 @@ class PreviewManager:
 
         if web_dir is not None:
             plan = self._detect_node(web_dir, web_dir / "package.json", port)
-            plan.update({"target": "web", "port": port, "env": self._web_env()})
+            plan.update({"target": "web", "port": port, "env": self._web_env(project)})
             targets.append(plan)
 
         if api_dir is not None:
             api_port = port + API_PORT_OFFSET
             plan = self._detect_api(api_dir, api_port)
-            plan.update({"target": "api", "port": api_port})
+            plan.update({"target": "api", "port": api_port, "env": self._api_env(project)})
             targets.append(plan)
 
         if targets:
@@ -196,7 +197,11 @@ class PreviewManager:
         plan.update({"target": "app", "port": port})
         return {"targets": [plan] if plan.get("kind") else [], "hint": plan.get("hint", "")}
 
-    def _web_env(self) -> dict:
+    def _safe_id(self, project: str) -> str:
+        """Identifiant sans danger pour un nom de cookie / cle localStorage."""
+        return re.sub(r"[^a-zA-Z0-9_]", "_", project).strip("_") or "project"
+
+    def _web_env(self, project: str) -> dict:
         """Le frontend doit appeler /api/... en relatif : Nginx proxifie /api vers
         le backend du projet. On neutralise les URL absolues des frameworks."""
         return {
@@ -211,6 +216,18 @@ class PreviewManager:
             # CRA/webpack-dev-server derriere un reverse proxy.
             "DANGEROUSLY_DISABLE_HOST_CHECK": "true",
             "WDS_SOCKET_PORT": "0",
+            # Isole le token de session en localStorage de celui de l'instance
+            # hote (dogfooding : ce projet peut heberger sa propre preview).
+            "VITE_AUTH_TOKEN_KEY": f"forge_preview_{self._safe_id(project)}_token",
+        }
+
+    def _api_env(self, project: str) -> dict:
+        """Isole le cookie de session du backend sandboxe de celui de
+        l'instance hote, meme si elles partagent le meme domaine cookie
+        (COOKIE_DOMAIN herite de l'environnement du process parent)."""
+        return {
+            "COOKIE_NAME": f"forge_preview_{self._safe_id(project)}_session",
+            "COOKIE_DOMAIN": "",
         }
 
     def _detect_node(self, d: Path, pkg_file: Path, port: int) -> dict:
