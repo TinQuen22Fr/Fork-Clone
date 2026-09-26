@@ -13,6 +13,8 @@ import {
   MessageSquare,
   Play,
   Square,
+  Download,
+  Upload,
   X,
 } from "lucide-react";
 
@@ -29,6 +31,9 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
   const [acting, setActing] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null); // projet en attente de confirmation
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(""); // nom du projet en cours d'export
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = React.useRef(null);
 
   const PHASES = {
     stopped: { label: "arrêtée", color: "#6b7280" },
@@ -72,6 +77,61 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
       setError(formatApiError(e));
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const exportProject = async (p) => {
+    setExporting(p.name);
+    setError("");
+    try {
+      const { data } = await api.get(
+        `/workspace/projects/${p.name}/export`,
+        { responseType: "blob" }
+      );
+      const url = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${p.name}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setExporting("");
+    }
+  };
+
+  const triggerImport = () => {
+    if (importing) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permet de reselectionner le meme fichier ensuite
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      setError("Seules les archives .zip sont acceptées pour l'import.");
+      return;
+    }
+    setImporting(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (newName.trim()) form.append("name", newName.trim());
+      const { data } = await api.post("/workspace/projects/import", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setProjects((prev) => [data, ...prev.filter((p) => p.name !== data.name)]);
+      setProject(data.name);
+      setNewName("");
+    } catch (e2) {
+      setError(formatApiError(e2));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -170,6 +230,28 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                 className="w-40 bg-black/50 border-2 border-white/20 focus:border-[#ffd700] outline-none px-3 py-2 font-mono text-xs"
                 data-testid="hub-new-project-input"
               />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".zip,application/zip"
+                onChange={handleImportFile}
+                className="hidden"
+                data-testid="hub-import-file-input"
+              />
+              <button
+                type="button"
+                onClick={triggerImport}
+                disabled={importing}
+                title="Importer un projet depuis une archive .zip (GitHub, backup...)"
+                className="btn-ghost border-2 border-white/20 hover:border-[#05d9e8] hover:text-[#05d9e8] disabled:opacity-40"
+                data-testid="hub-import-project-btn"
+              >
+                {importing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4" />
+                )}
+              </button>
               <button
                 type="button"
                 onClick={createProject}
@@ -279,6 +361,20 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                         )}
                         </>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => exportProject(p)}
+                        disabled={exporting === p.name}
+                        title={`Télécharger ${p.name} en .zip (backup)`}
+                        className="text-gray-600 hover:text-[#05d9e8] transition-colors disabled:opacity-40"
+                        data-testid={`hub-export-${p.name}`}
+                      >
+                        {exporting === p.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setConfirmDelete(p)}
