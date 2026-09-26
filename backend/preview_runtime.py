@@ -321,9 +321,15 @@ class PreviewManager:
                 "hint": "requirements.txt trouve mais aucun point d'entree (app.py / main.py / server.py).",
             }
 
+        # Lu en entier (read_text charge deja tout le fichier en memoire, la
+        # troncature ne fait qu'economiser la comparaison) : un cap trop bas
+        # ratait `app = FastAPI(...)` dans les gros fichiers (ex. server.py de
+        # la Forge elle-meme, 180+ Ko), qui tombaient alors en kind="python"
+        # -> `python server.py` s'importait puis sortait aussitot (code 0,
+        # log vide) sans jamais lancer uvicorn.
         src = ""
         try:
-            src = (d / entry).read_text(encoding="utf-8", errors="ignore")[:20000]
+            src = (d / entry).read_text(encoding="utf-8", errors="ignore")[:2_000_000]
         except Exception:
             pass
         module = entry[:-3]
