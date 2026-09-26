@@ -896,6 +896,19 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
+            {activeId && (
+              <button
+                className="btn-ghost flex-shrink-0"
+                onClick={() => {
+                  abortRequest();
+                  setActiveId(null);
+                }}
+                title="Retour au choix des projets"
+                data-testid="close-session-btn"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
             {activeConv?.project && (
               <PreviewButton
                 project={activeConv.project}
