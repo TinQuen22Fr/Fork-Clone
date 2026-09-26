@@ -11,6 +11,7 @@
 import React, { useState } from "react";
 import { speak, stopSpeech } from "@/lib/tts";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/fr";
@@ -300,6 +301,7 @@ function ChatMessage({
         <div className="bg-transparent text-white border-2 border-white/20 p-4 rounded-bl-none shadow-[4px_4px_0_0_rgba(5,217,232,0.4)]">
           <div className="md-body">
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               components={{
                 img: ({ node, ...props }) => (
                   <a href={props.src} target="_blank" rel="noopener noreferrer" className="block my-3">
@@ -309,6 +311,11 @@ function ChatMessage({
                       loading="lazy"
                     />
                   </a>
+                ),
+                table: ({ node, ...props }) => (
+                  <div className="md-table-wrap">
+                    <table {...props} />
+                  </div>
                 )
               }}
             >
