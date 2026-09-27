@@ -845,3 +845,55 @@ Fichiers: `backend/server.py`, `backend/env.example`, `backend/requirements.txt`
   DEPLOIEMENT.md (dont l usage de .forge-rules).
 - Verifie sans appel LLM (aucun credit consomme) : rendu du prompt avec et sans
   projet, lecture de .forge-rules, et `_tool_bash("pwd")` -> racine du projet.
+
+## Fix critique preview dogfooding (2026-09-27)
+- Bug: backend d'une preview auto-hébergée (la Forge dans elle-même) restait
+  rouge, "process arrete (code 0)", log vide, frontend OK.
+- Cause: `preview_runtime.py::_detect_python` ne scannait que les 20000
+  premiers caracteres de l'entry file pour trouver `FastAPI(`. Sur server.py
+  (188 Ko), `app = FastAPI(` est a l'offset ~20350 -> jamais detecte -> plan
+  tombait en kind="python" -> `python server.py` (import puis exit direct,
+  jamais d'uvicorn).
+- Fix: cap remonte a 2_000_000 caracteres (read_text charge deja tout le
+  fichier, cout nul). Commit `ccce813`.
+
+## Fix double /api en preview dogfooding (2026-09-27)
+- `lib/api.js` detecte maintenant si `VITE_BACKEND_URL` se termine deja par
+  `/api` (injecte par `_web_env` du runtime de preview) pour ne pas
+  reconcatener /api/api. Nettoyage des doubles slash sur chaque requete.
+- Isolation session ajoutee : `COOKIE_NAME` (backend, defaut `access_token`)
+  et `VITE_AUTH_TOKEN_KEY` (frontend, defaut `auth_token`) paramétrables.
+  `preview_runtime.py` injecte automatiquement un nom unique par projet pour
+  les cibles `api`/`web` sandboxees (`forge_preview_<projet>_session/token`),
+  et neutralise `COOKIE_DOMAIN` du sous-processus pour eviter toute collision
+  avec la session de l'instance hote. Commit `8717789`.
+
+## Sync GitHub -> Emergent (2026-09-27)
+Merge de `prod/claude-ai` (repo TinQuen22Fr/Fork-Clone) dans `main`, code
+ajoute par l'instance perso de la Forge de l'utilisateur (dogfooding) :
+- Bouton X fermeture de session active (Chat.jsx) — deja injecte avant ce merge.
+- Import de projet depuis archive .zip (upload/export GitHub/backup) :
+  `POST /api/workspace/projects/import`, protection anti zip-slip, deballage
+  intelligent du dossier racine unique.
+- Export .zip d'un projet (backup workspace) : `GET /api/workspace/projects/{name}/export`,
+  exclut node_modules/venv/__pycache__/dist/build/.git etc.
+- Suppression de projet depuis le HUB : `DELETE /api/workspace/projects/{name}`
+  (arrete la preview, supprime le dossier + conversations/messages, avec
+  confirmation cote frontend).
+- Support tableaux Markdown (`remark-gfm`, ajoute via yarn) avec style
+  sombre/clair dans ChatMessage.jsx.
+- Toggle theme clair/sombre : hook `useTheme.js` + variables CSS
+  (`[data-theme="light"]`) dans `index.css`, couleurs en dur remplacees par
+  `var(--bg-main)` / `var(--bg-dock)` dans App.jsx, Login.jsx,
+  GithubSaveDialog.jsx, PreviewButton.jsx, VoicePicker.jsx.
+- Testé : merge sans conflit, `py_compile` backend OK, `yarn add remark-gfm`
+  OK, restart backend/frontend propre (logs sans erreur), screenshot smoke
+  test page login OK. Pas de testing_agent utilisé (consigne utilisateur
+  explicite de limiter la conso de credits).
+
+## Prochaines pistes (backlog, non demandees explicitement)
+- P1 report (session precedente) : hard block code-level sur `_tool_read_file`
+  / `_tool_bash` pour empecher toute lecture hors du dossier projet actif.
+- Tester en conditions reelles sur la Dedibox : import/export .zip, delete
+  projet, toggle theme, tableaux markdown.
+
