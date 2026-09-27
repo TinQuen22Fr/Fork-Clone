@@ -35,9 +35,12 @@ import {
   Github,
   GitFork,
   ExternalLink,
+  Sun,
+  Moon,
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
+import { useTheme } from "@/hooks/useTheme";
 import ProjectHub from "@/components/ProjectHub";
 import PreviewButton from "@/components/PreviewButton";
 
@@ -47,6 +50,7 @@ const MAX_FAVORITES = 6;
 
 export default function Chat() {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -920,7 +924,13 @@ export default function Chat() {
                 }
               />
             )}
-            {usage && <UsageBadge usage={usage} />}
+            <div className="hidden md:flex flex-col items-end gap-1">
+              {usage && <UsageBadge usage={usage} />}
+              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            </div>
+            <div className="md:hidden">
+              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            </div>
             <div
               className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[220px] lg:max-w-[420px] text-right"
               data-testid="active-model-label"
@@ -1347,6 +1357,35 @@ export default function Chat() {
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+function ThemeToggle({ theme, onToggle }) {
+  return (
+    <div
+      className="theme-toggle-group"
+      data-testid="theme-toggle"
+      title="Changer de thème"
+    >
+      <button
+        type="button"
+        className={`theme-toggle-btn ${theme === "dark" ? "active" : ""}`}
+        onClick={() => theme !== "dark" && onToggle()}
+        title="Thème sombre"
+        data-testid="theme-toggle-dark"
+      >
+        <Moon className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        className={`theme-toggle-btn ${theme === "light" ? "active" : ""}`}
+        onClick={() => theme !== "light" && onToggle()}
+        title="Thème clair"
+        data-testid="theme-toggle-light"
+      >
+        <Sun className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }
