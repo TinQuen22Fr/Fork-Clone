@@ -171,7 +171,7 @@ export default function Chat() {
   if (user === false) return <Navigate to="/login" replace />;
   if (user === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050505]">
+      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)]">
         <div className="typing-dots">
           <span></span>
           <span></span>
@@ -680,12 +680,12 @@ export default function Chat() {
   const activeModel = models.find((m) => m.id === provider);
   const catalog = activeModel?.models || [];
   return (
-    <div className="h-full w-full flex bg-[#050505] text-white overflow-hidden">
+    <div className="h-full w-full flex bg-[var(--bg-main)] text-white overflow-hidden">
       {/* Sidebar */}
       <aside
         className={`${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } lg:translate-x-0 fixed lg:relative z-30 lg:z-auto top-0 left-0 h-full w-72 max-w-[85vw] flex-shrink-0 bg-[#0d0d0d] border-r-2 border-white/20 flex flex-col transition-transform`}
+        } lg:translate-x-0 fixed lg:relative z-30 lg:z-auto top-0 left-0 h-full w-72 max-w-[85vw] flex-shrink-0 bg-[var(--bg-sidebar)] border-r-2 border-white/20 flex flex-col transition-transform`}
         data-testid="chat-sidebar"
       >
         <div className="p-5 border-b-2 border-white/10 flex items-center justify-between">
@@ -700,13 +700,16 @@ export default function Chat() {
               </div>
             </div>
           </div>
-          <button
-            className="lg:hidden btn-ghost"
-            onClick={() => setSidebarOpen(false)}
-            data-testid="close-sidebar-btn"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            <button
+              className="lg:hidden btn-ghost"
+              onClick={() => setSidebarOpen(false)}
+              data-testid="close-sidebar-btn"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-4">
@@ -924,13 +927,7 @@ export default function Chat() {
                 }
               />
             )}
-            <div className="hidden md:flex flex-col items-end gap-1">
-              {usage && <UsageBadge usage={usage} />}
-              <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            </div>
-            <div className="md:hidden">
-              <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            </div>
+            {usage && <UsageBadge usage={usage} />}
             <div
               className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[220px] lg:max-w-[420px] text-right"
               data-testid="active-model-label"
@@ -1011,7 +1008,7 @@ export default function Chat() {
                 )}
                 {!streamText && (
                   <div className="flex gap-4 mb-6">
-                    <div className="w-10 h-10 border-2 border-white/30 bg-[#0a0a0a] flex items-center justify-center flex-shrink-0">
+                    <div className="w-10 h-10 border-2 border-white/30 bg-[var(--bg-dock)] flex items-center justify-center flex-shrink-0">
                       <img src="/logo-64.png" alt="" className="w-7 h-7 pulse-glow" />
                     </div>
                     <div className="border-2 border-white/20 p-4 shadow-[4px_4px_0_0_rgba(5,217,232,0.4)] flex items-center gap-4">
@@ -1141,7 +1138,7 @@ export default function Chat() {
             )}
             <form
               onSubmit={sendMessage}
-              className="border-2 border-white/20 bg-[#0a0a0a]/90 backdrop-blur-xl shadow-[4px_4px_0_0_#ff2a6d] sm:shadow-[8px_8px_0_0_#ff2a6d] flex flex-col sm:flex-row sm:items-end gap-2 p-2 sm:p-3"
+              className="border-2 border-white/20 bg-[var(--bg-dock-90)] backdrop-blur-xl shadow-[4px_4px_0_0_#ff2a6d] sm:shadow-[8px_8px_0_0_#ff2a6d] flex flex-col sm:flex-row sm:items-end gap-2 p-2 sm:p-3"
               data-testid="chat-input-form"
             >
               <input
@@ -1166,14 +1163,14 @@ export default function Chat() {
                     className="flex-1 min-w-0 bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
                     data-testid="provider-select"
                   >
-                    <option value="auto" className="bg-[#0a0a0a] text-white">
+                    <option value="auto" className="bg-[var(--bg-dock)] text-white">
                       Auto (meilleur dispo)
                     </option>
                     {models.map((m) => (
                       <option
                         key={m.id}
                         value={m.id}
-                        className="bg-[#0a0a0a] text-white"
+                        className="bg-[var(--bg-dock)] text-white"
                       >
                         {m.label}
                         {m.available === false ? " (non configuré)" : ""}
@@ -1192,11 +1189,11 @@ export default function Chat() {
                       className="flex-1 min-w-0 sm:max-w-[150px] bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer"
                       data-testid="model-select"
                     >
-                      <option value="" className="bg-[#0a0a0a] text-white">
+                      <option value="" className="bg-[var(--bg-dock)] text-white">
                         défaut ({activeModel?.model})
                       </option>
                       {catalog.map((m) => (
-                        <option key={m} value={m} className="bg-[#0a0a0a] text-white">
+                        <option key={m} value={m} className="bg-[var(--bg-dock)] text-white">
                           {m}
                         </option>
                       ))}
@@ -1270,7 +1267,7 @@ export default function Chat() {
                         data-testid="plus-menu-backdrop"
                       />
                       <div
-                        className="absolute z-40 bottom-full mb-2 left-0 w-60 border-2 border-white/20 bg-[#0a0a0a] shadow-[6px_6px_0_0_#05d9e8]"
+                        className="absolute z-40 bottom-full mb-2 left-0 w-60 border-2 border-white/20 bg-[var(--bg-dock)] shadow-[6px_6px_0_0_#05d9e8]"
                         data-testid="plus-menu"
                       >
                         <button

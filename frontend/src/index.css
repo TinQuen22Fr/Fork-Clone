@@ -9,6 +9,7 @@
     --bg-sidebar: #0d0d0d;
     --bg-surface: #1a1a1a;
     --bg-dock: #0a0a0a;
+    --bg-dock-90: rgba(10, 10, 10, 0.9);
     --accent-pink: #ff2a6d;
     --accent-yellow: #ffd700;
     --accent-cyan: #05d9e8;
@@ -357,6 +358,7 @@ body {
     --bg-sidebar: #ffffff;
     --bg-surface: #ececec;
     --bg-dock: #ffffff;
+    --bg-dock-90: rgba(255, 255, 255, 0.9);
     --border-default: #d8d8d8;
 }
 

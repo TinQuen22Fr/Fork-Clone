@@ -427,7 +427,7 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
           onClick={() => !deleting && setConfirmDelete(null)}
         >
           <div
-            className="w-full max-w-sm border-2 border-[#ff2a6d]/60 bg-[#0a0a0a] p-5"
+            className="w-full max-w-sm border-2 border-[#ff2a6d]/60 bg-[var(--bg-dock)] p-5"
             onClick={(e) => e.stopPropagation()}
             data-testid="hub-delete-confirm-dialog"
           >

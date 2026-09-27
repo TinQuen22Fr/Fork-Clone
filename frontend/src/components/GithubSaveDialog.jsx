@@ -150,7 +150,7 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       data-testid="github-dialog"
     >
-      <div className="w-full max-w-lg border-2 border-white/20 bg-[#0a0a0a] shadow-[8px_8px_0_0_#05d9e8] max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-lg border-2 border-white/20 bg-[var(--bg-dock)] shadow-[8px_8px_0_0_#05d9e8] max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b-2 border-white/10 px-4 py-3">
           <div className="flex items-center gap-2 font-heading font-black uppercase tracking-tighter">
             <Github className="w-5 h-5 text-[#05d9e8]" />

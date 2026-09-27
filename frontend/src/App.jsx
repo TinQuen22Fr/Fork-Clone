@@ -19,7 +19,7 @@ function ProtectedRoute({ children }) {
   const { user } = useAuth();
   if (user === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050505]">
+      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)]">
         <div className="typing-dots">
           <span></span>
           <span></span>
