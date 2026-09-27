@@ -34,7 +34,10 @@ from html import unescape
 import asyncio
 import base64
 import shlex
+import shutil
 import subprocess
+import tempfile
+import zipfile
 import uuid
 import logging
 import secrets
@@ -59,6 +62,7 @@ from fastapi import (
 )
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, FileResponse
+from starlette.background import BackgroundTask
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from preview_runtime import PreviewManager
@@ -4286,6 +4290,103 @@ async def create_project(
     }
 
 
+@api_router.post("/workspace/projects/import")
+async def import_project(
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """Importe un projet depuis une archive .zip (upload direct, export GitHub,
+    ou backup genere par /export). Deballe intelligemment un eventuel dossier
+    racine unique (cas des exports GitHub type ``repo-main/``), detecte le nom
+    du projet depuis le champ ``name`` ou depuis le nom du fichier, et cree les
+    metadonnees necessaires pour que la preview soit immediatement disponible."""
+    orig_filename = file.filename or "projet.zip"
+    if not orig_filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Seules les archives .zip sont acceptees.")
+
+    base_name = (name or "").strip() or re.sub(r"\.zip$", "", orig_filename, flags=re.IGNORECASE)
+    base_name = _valid_project_name(base_name)
+
+    root = Path(settings.workspace_root)
+    root.mkdir(parents=True, exist_ok=True)
+
+    # Nom unique : si le dossier existe deja, on suffixe (jamais d'ecrasement silencieux).
+    pname = base_name
+    n = 1
+    while (root / pname).exists():
+        n += 1
+        pname = f"{base_name}-{n}"
+        _valid_project_name(pname)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp_path = tmp.name
+    try:
+        content = await file.read()
+        tmp.write(content)
+        tmp.close()
+
+        if not zipfile.is_zipfile(tmp_path):
+            raise HTTPException(status_code=400, detail="Fichier .zip invalide ou corrompu.")
+
+        project_dir = root / pname
+        with zipfile.ZipFile(tmp_path) as zf:
+            names = [n for n in zf.namelist() if n and not n.endswith("/")]
+            if not names:
+                raise HTTPException(status_code=400, detail="L'archive .zip est vide.")
+
+            # Protection anti zip-slip : aucun chemin ne doit sortir de l'archive.
+            for member in zf.namelist():
+                mpath = Path(member)
+                if mpath.is_absolute() or ".." in mpath.parts:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Archive invalide (chemin dangereux) : {member}",
+                    )
+
+            # Deballage intelligent : si tous les fichiers partagent un meme
+            # dossier racine (cas des exports GitHub "repo-main/..."), on
+            # l'ignore pour ne pas ajouter un niveau de dossier inutile.
+            top_dirs = {n.split("/", 1)[0] for n in names if "/" in n}
+            single_root = (
+                top_dirs.pop() if len(top_dirs) == 1 and all("/" in n for n in names)
+                else None
+            )
+
+            project_dir.mkdir(parents=True, exist_ok=True)
+            for member in zf.namelist():
+                if member.endswith("/"):
+                    continue
+                rel = member
+                if single_root and rel.startswith(single_root + "/"):
+                    rel = rel[len(single_root) + 1 :]
+                if not rel:
+                    continue
+                target = project_dir / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src_f, open(target, "wb") as dst_f:
+                    shutil.copyfileobj(src_f, dst_f)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Import impossible : {exc}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    meta = await _assign_project_meta(current_user["id"], pname)
+    return {
+        "name": pname,
+        "path": str(root / pname),
+        "preview_url": meta.get("preview_url", ""),
+        "preview_port": meta.get("preview_port"),
+        "is_git_repo": (root / pname / ".git").exists(),
+        "conversations": 0,
+    }
+
+
 @api_router.put("/workspace/projects/{name}")
 async def update_project(
     name: str,
@@ -4308,6 +4409,121 @@ async def update_project(
         "preview_url": meta.get("preview_url", ""),
         "preview_port": meta.get("preview_port"),
     }
+
+
+# Dossiers/fichiers exclus des exports .zip : dependances reinstallables ou
+# volumineuses, jamais des donnees utiles au projet.
+_EXPORT_EXCLUDE_DIRS = {
+    "node_modules", "__pycache__", ".git", "venv", ".venv", "env",
+    "dist", "build", ".next", ".turbo", ".cache",
+}
+
+
+@api_router.get("/workspace/projects/{name}/export")
+async def export_project(
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Exporte le dossier du projet en .zip (backup telechargeable).
+    Exclut les dependances reinstallables (node_modules, venv, __pycache__...)
+    pour garder l'archive legere."""
+    pname = _valid_project_name(name)
+    root = Path(settings.workspace_root)
+    project_dir = root / pname
+    if not project_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Projet inconnu : {pname}")
+
+    try:
+        project_dir.resolve().relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Chemin de projet invalide.")
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for dirpath, dirnames, filenames in os.walk(project_dir):
+                dirnames[:] = [d for d in dirnames if d not in _EXPORT_EXCLUDE_DIRS]
+                for fname in filenames:
+                    fpath = Path(dirpath) / fname
+                    arcname = Path(pname) / fpath.relative_to(project_dir)
+                    try:
+                        zf.write(fpath, arcname)
+                    except OSError as exc:  # noqa: BLE001
+                        logger.warning("Export %s : fichier ignore (%s): %s", pname, fpath, exc)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Export impossible : {exc}")
+
+    def _cleanup():
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    return FileResponse(
+        tmp_path,
+        media_type="application/zip",
+        filename=f"{pname}.zip",
+        background=BackgroundTask(_cleanup),
+    )
+
+
+@api_router.delete("/workspace/projects/{name}")
+async def delete_project(
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Supprime definitivement un projet : arrete sa preview, efface son
+    dossier sur disque et purge ses conversations/messages/metadonnees.
+    Action irreversible, confirmee cote frontend."""
+    pname = _valid_project_name(name)
+    root = Path(settings.workspace_root)
+    project_dir = root / pname
+    if not project_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Projet inconnu : {pname}")
+
+    # Securite : le dossier resolu doit bien rester sous WORKSPACE_ROOT.
+    try:
+        project_dir.resolve().relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Chemin de projet invalide.")
+
+    database = get_db()
+    meta = await database.projects.find_one(
+        {"user_id": current_user["id"], "name": pname}, {"_id": 0, "preview_port": 1}
+    )
+    if meta and meta.get("preview_port"):
+        try:
+            await preview_mgr().stop(pname, meta["preview_port"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Arret preview avant suppression de %s : %s", pname, exc)
+
+    try:
+        shutil.rmtree(project_dir)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500, detail=f"Suppression du dossier impossible : {exc}"
+        )
+
+    conv_ids = [
+        c["id"]
+        async for c in database.conversations.find(
+            {"user_id": current_user["id"], "project": pname}, {"id": 1}
+        )
+    ]
+    if conv_ids:
+        await database.messages.delete_many({"conversation_id": {"$in": conv_ids}})
+        await database.conversations.delete_many(
+            {"user_id": current_user["id"], "project": pname}
+        )
+    await database.projects.delete_one({"user_id": current_user["id"], "name": pname})
+    _schedule_preview_map_refresh()
+    return {"ok": True, "name": pname}
 
 
 def preview_mgr() -> PreviewManager:

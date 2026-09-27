@@ -13,6 +13,9 @@ import {
   MessageSquare,
   Play,
   Square,
+  Download,
+  Upload,
+  X,
 } from "lucide-react";
 
 /** Ecran d'accueil : prompt central + projets du workspace. */
@@ -26,6 +29,11 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [acting, setActing] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null); // projet en attente de confirmation
+  const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(""); // nom du projet en cours d'export
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = React.useRef(null);
 
   const PHASES = {
     stopped: { label: "arrêtée", color: "#6b7280" },
@@ -55,6 +63,75 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
       setError(formatApiError(e));
     } finally {
       setActing("");
+    }
+  };
+
+  const deleteProject = async (p) => {
+    setDeleting(true);
+    setError("");
+    try {
+      await api.delete(`/workspace/projects/${p.name}`);
+      setProjects((prev) => prev.filter((x) => x.name !== p.name));
+      setConfirmDelete(null);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const exportProject = async (p) => {
+    setExporting(p.name);
+    setError("");
+    try {
+      const { data } = await api.get(
+        `/workspace/projects/${p.name}/export`,
+        { responseType: "blob" }
+      );
+      const url = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${p.name}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setExporting("");
+    }
+  };
+
+  const triggerImport = () => {
+    if (importing) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permet de reselectionner le meme fichier ensuite
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      setError("Seules les archives .zip sont acceptées pour l'import.");
+      return;
+    }
+    setImporting(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (newName.trim()) form.append("name", newName.trim());
+      const { data } = await api.post("/workspace/projects/import", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setProjects((prev) => [data, ...prev.filter((p) => p.name !== data.name)]);
+      setProject(data.name);
+      setNewName("");
+    } catch (e2) {
+      setError(formatApiError(e2));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -153,6 +230,14 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                 className="w-40 bg-black/50 border-2 border-white/20 focus:border-[#ffd700] outline-none px-3 py-2 font-mono text-xs"
                 data-testid="hub-new-project-input"
               />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".zip,application/zip"
+                onChange={handleImportFile}
+                className="hidden"
+                data-testid="hub-import-file-input"
+              />
               <button
                 type="button"
                 onClick={createProject}
@@ -162,6 +247,20 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                 data-testid="hub-create-project-btn"
               >
                 <Plus className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={triggerImport}
+                disabled={importing}
+                title="Importer un projet depuis une archive .zip (GitHub, backup...)"
+                className="btn-ghost border-2 border-white/20 hover:border-[#05d9e8] hover:text-[#05d9e8] disabled:opacity-40"
+                data-testid="hub-import-project-btn"
+              >
+                {importing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4" />
+                )}
               </button>
             </div>
             <button
@@ -222,8 +321,9 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                     >
                       {p.name}
                     </button>
-                    {p.preview_url && (
-                      <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1">
+                      {p.preview_url && (
+                        <>
                         <button
                           type="button"
                           onClick={() =>
@@ -259,8 +359,32 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                             <Square className="w-3.5 h-3.5" />
                           </button>
                         )}
-                      </div>
-                    )}
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => exportProject(p)}
+                        disabled={exporting === p.name}
+                        title={`Télécharger ${p.name} en .zip (backup)`}
+                        className="text-gray-600 hover:text-[#05d9e8] transition-colors disabled:opacity-40"
+                        data-testid={`hub-export-${p.name}`}
+                      >
+                        {exporting === p.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(p)}
+                        title={`Supprimer ${p.name}`}
+                        className="text-gray-600 hover:text-[#ff2a6d] transition-colors"
+                        data-testid={`hub-delete-${p.name}`}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 flex items-center gap-3 text-[10px] font-mono text-gray-500">
                     <span
@@ -295,6 +419,53 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
           )}
         </div>
       </div>
+
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4"
+          data-testid="hub-delete-confirm-overlay"
+          onClick={() => !deleting && setConfirmDelete(null)}
+        >
+          <div
+            className="w-full max-w-sm border-2 border-[#ff2a6d]/60 bg-[var(--bg-dock)] p-5"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="hub-delete-confirm-dialog"
+          >
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#ff2a6d]">
+              // suppression
+            </div>
+            <h2 className="mt-2 font-heading text-lg font-black uppercase tracking-tight">
+              Supprimer « {confirmDelete.name} » ?
+            </h2>
+            <p className="mt-2 text-xs text-gray-400">
+              Cette action est <span className="text-[#ff2a6d] font-semibold">irréversible</span> :
+              le dossier du projet, ses conversations et ses données seront
+              définitivement effacés. Confirmez-vous ?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                disabled={deleting}
+                className="btn-ghost border-2 border-white/20 hover:border-white/40 text-xs px-4 py-2 disabled:opacity-40"
+                data-testid="hub-delete-confirm-no"
+              >
+                Non
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteProject(confirmDelete)}
+                disabled={deleting}
+                className="border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 hover:bg-[#ff2a6d]/20 text-[#ff2a6d] text-xs font-semibold px-4 py-2 flex items-center gap-2 disabled:opacity-40"
+                data-testid="hub-delete-confirm-yes"
+              >
+                {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Oui, supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

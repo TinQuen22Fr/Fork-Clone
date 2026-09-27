@@ -88,7 +88,7 @@ export const VoicePicker = () => {
             data-testid="voice-picker-backdrop"
           />
           <div
-            className="absolute z-40 bottom-full mb-2 left-0 w-72 border-2 border-white/20 bg-[#0a0a0a] shadow-[6px_6px_0_0_#05d9e8] p-3 space-y-2"
+            className="absolute z-40 bottom-full mb-2 left-0 w-72 border-2 border-white/20 bg-[var(--bg-dock)] shadow-[6px_6px_0_0_#05d9e8] p-3 space-y-2"
             data-testid="voice-picker-menu"
           >
             <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">

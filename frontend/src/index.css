@@ -9,6 +9,7 @@
     --bg-sidebar: #0d0d0d;
     --bg-surface: #1a1a1a;
     --bg-dock: #0a0a0a;
+    --bg-dock-90: rgba(10, 10, 10, 0.9);
     --accent-pink: #ff2a6d;
     --accent-yellow: #ffd700;
     --accent-cyan: #05d9e8;
@@ -238,18 +239,58 @@ body {
     margin: 0.75rem 0;
     color: #b3b3b3;
 }
+.md-table-wrap {
+    overflow-x: auto;
+    margin: 0.9rem 0;
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 3px 3px 0 0 rgba(5, 217, 232, 0.35);
+}
 .md-body table {
     border-collapse: collapse;
-    margin: 0.75rem 0;
+    width: 100%;
+    min-width: 100%;
+    font-size: 0.9rem;
+}
+.md-body thead {
+    background: #161616;
 }
 .md-body th,
 .md-body td {
-    border: 1px solid #333;
-    padding: 0.5rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 0.55rem 0.9rem;
+    text-align: left;
+    white-space: nowrap;
 }
 .md-body th {
-    background: #1a1a1a;
+    background: #161616;
     color: #ffd700;
+    font-family: "Unbounded", sans-serif;
+    font-weight: 700;
+    font-size: 0.8rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    border-bottom: 2px solid #ffd700;
+}
+.md-body tbody tr {
+    background: rgba(255, 255, 255, 0.02);
+    transition: background 0.15s ease;
+}
+.md-body tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.045);
+}
+.md-body tbody tr:hover {
+    background: rgba(5, 217, 232, 0.08);
+}
+.md-body td {
+    color: #e6e6e6;
+    white-space: normal;
+}
+@media (max-width: 640px) {
+    .md-body th,
+    .md-body td {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.85rem;
+    }
 }
 
 /* Animations */
@@ -306,4 +347,164 @@ body {
     30% {
         transform: translateY(-6px);
     }
+}
+
+/* ============================================================
+   THEME CLAIR — overrides ciblés, activés via [data-theme="light"]
+   Le thème par défaut (sombre) reste inchangé.
+   ============================================================ */
+[data-theme="light"] {
+    --bg-main: #f5f5f5;
+    --bg-sidebar: #ffffff;
+    --bg-surface: #ececec;
+    --bg-dock: #ffffff;
+    --bg-dock-90: rgba(255, 255, 255, 0.9);
+    --border-default: #d8d8d8;
+}
+
+[data-theme="light"] body {
+    background-color: var(--bg-main);
+    color: #111111;
+}
+
+/* Fonds "noirs" -> fonds clairs */
+[data-theme="light"] .bg-black\/40,
+[data-theme="light"] .bg-black\/50,
+[data-theme="light"] .bg-black\/60,
+[data-theme="light"] .bg-black\/70,
+[data-theme="light"] .bg-black\/80 {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Fonds "blancs" translucides -> légèrement plus marqués en clair */
+[data-theme="light"] .bg-white\/5,
+[data-theme="light"] .bg-white\/10 {
+    background-color: rgba(0, 0, 0, 0.045) !important;
+}
+
+/* Bordures blanches translucides -> bordures sombres discrètes */
+[data-theme="light"] .border-white\/10,
+[data-theme="light"] .border-white\/15,
+[data-theme="light"] .border-white\/20,
+[data-theme="light"] .border-white\/30,
+[data-theme="light"] .border-white\/40 {
+    border-color: rgba(0, 0, 0, 0.18) !important;
+}
+
+/* Texte blanc -> texte sombre */
+[data-theme="light"] .text-white {
+    color: #111111 !important;
+}
+
+/* Nuances de gris : on les assombrit pour rester lisibles sur fond clair */
+[data-theme="light"] .text-gray-300 {
+    color: #3a3a3a !important;
+}
+[data-theme="light"] .text-gray-400 {
+    color: #4a4a4a !important;
+}
+[data-theme="light"] .text-gray-500 {
+    color: #666666 !important;
+}
+[data-theme="light"] .text-gray-600 {
+    color: #777777 !important;
+}
+
+[data-theme="light"] .btn-ghost {
+    color: #333333;
+}
+[data-theme="light"] .btn-ghost:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: #000000;
+}
+
+[data-theme="light"] .input-brutal {
+    color: #111111;
+    border-color: rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] .input-brutal::placeholder {
+    color: #999999;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-track {
+    background: #eaeaea;
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background: #cfcfcf;
+    border: 1px solid #b5b5b5;
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+    background: #ff2a6d;
+}
+
+/* Markdown en thème clair */
+[data-theme="light"] .md-body blockquote {
+    color: #555555;
+}
+[data-theme="light"] .md-body code {
+    background: #eaeaea;
+    color: #b8860b;
+    border-color: #cfcfcf;
+}
+[data-theme="light"] .md-body pre {
+    background: #ececec;
+    border-color: rgba(0, 0, 0, 0.15);
+}
+[data-theme="light"] .md-body pre code {
+    color: #1a1a1a;
+}
+[data-theme="light"] .md-table-wrap {
+    border-color: rgba(0, 0, 0, 0.15);
+}
+[data-theme="light"] .md-body thead,
+[data-theme="light"] .md-body th {
+    background: #eaeaea;
+}
+[data-theme="light"] .md-body th,
+[data-theme="light"] .md-body td {
+    border-color: rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] .md-body tbody tr {
+    background: rgba(0, 0, 0, 0.015);
+}
+[data-theme="light"] .md-body tbody tr:nth-child(even) {
+    background: rgba(0, 0, 0, 0.035);
+}
+[data-theme="light"] .md-body td {
+    color: #1a1a1a;
+}
+
+/* Bouton de bascule de thème */
+.theme-toggle-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border: 2px solid var(--border-default);
+    background: rgba(0, 0, 0, 0.2);
+    padding: 2px;
+}
+[data-theme="light"] .theme-toggle-group {
+    background: rgba(0, 0, 0, 0.04);
+}
+.theme-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #888888;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.theme-toggle-btn:hover {
+    color: #ffffff;
+}
+[data-theme="light"] .theme-toggle-btn:hover {
+    color: #111111;
+}
+.theme-toggle-btn.active {
+    background: #ffd700;
+    color: #000000;
 }

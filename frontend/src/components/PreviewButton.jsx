@@ -220,7 +220,7 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
           data-testid="preview-logs-dialog"
         >
-          <div className="w-full max-w-3xl border-2 border-white/20 bg-[#0a0a0a] shadow-[8px_8px_0_0_#05d9e8]">
+          <div className="w-full max-w-3xl border-2 border-white/20 bg-[var(--bg-dock)] shadow-[8px_8px_0_0_#05d9e8]">
             <div className="flex items-center justify-between border-b-2 border-white/10 px-4 py-3">
               <span className="font-heading font-black uppercase tracking-tighter text-sm">
                 Preview — {project}
@@ -317,7 +317,7 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
           data-testid="preview-dialog"
         >
-          <div className="w-full max-w-md border-2 border-white/20 bg-[#0a0a0a] shadow-[8px_8px_0_0_#05d9e8]">
+          <div className="w-full max-w-md border-2 border-white/20 bg-[var(--bg-dock)] shadow-[8px_8px_0_0_#05d9e8]">
             <div className="flex items-center justify-between border-b-2 border-white/10 px-4 py-3">
               <span className="font-heading font-black uppercase tracking-tighter text-sm">
                 URL de preview — {project}

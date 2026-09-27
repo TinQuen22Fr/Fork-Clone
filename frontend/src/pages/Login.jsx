@@ -84,7 +84,7 @@ export default function Login() {
       </div>
 
       {/* Right: form */}
-      <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 bg-[#050505]">
+      <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 bg-[var(--bg-main)]">
         <div className="w-full max-w-md">
           <div className="mb-10">
             <div className="text-xs uppercase tracking-[0.3em] text-[#ffd700] font-bold mb-3">
