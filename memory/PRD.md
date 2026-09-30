@@ -897,3 +897,40 @@ ajoute par l'instance perso de la Forge de l'utilisateur (dogfooding) :
 - Tester en conditions reelles sur la Dedibox : import/export .zip, delete
   projet, toggle theme, tableaux markdown.
 
+
+## Refonte tool-calling multi-providers (2026-09-30) — commit ffdc221
+Bug remonte par l'utilisateur apres tests reels : seul Claude executait les
+outils (bash, fichiers...). Tous les autres providers (Groq, Cerebras,
+SambaNova, NVIDIA NIM, OpenRouter, OpenCode, Gemini, Ollama, Ollama Cloud)
+n'envoyaient jamais le champ `tools` a l'API -> Qwen3.8-flash ecrivait sa
+syntaxe d'appel d'outil en texte brut (DSML) au lieu d'executer, et un
+choix de provider explicite qui echouait basculait SILENCIEUSEMENT sur le
+provider suivant de `PROVIDER_PRIORITY` (Claude en premier).
+
+Fix :
+- `OPENAI_TOOLS` / `RESPONSES_TOOLS` / `_gemini_tool_declaration()` :
+  traduction du schema canonique `TOOLS` (Anthropic) vers les formats OpenAI
+  chat, OpenAI Responses, et Gemini FunctionDeclaration.
+- Boucle de tool-calling ajoutee a TOUS les adaptateurs (non-stream + SSE) :
+  `_generate_openai_compat`/`_stream_openai_compat` (Groq/Cerebras/
+  SambaNova/NVIDIA/OpenRouter), OpenCode (3 transports: /messages, /chat,
+  /responses), Gemini (function calling natif + retry/backoff preserve),
+  Ollama local + Ollama Cloud.
+- `_build_chain` : un provider choisi explicitement (!= "auto") ne fait plus
+  JAMAIS de bascule silencieuse — `chain=[requested]` seul, erreur precise
+  renvoyee au frontend si echec. Le mode "auto" garde sa cascade resiliente.
+
+Teste en direct avec cles reelles (Gemini, OpenCode x3 transports incl.
+qwen3.8-flash, Ollama Cloud) : bash execute correctement en non-stream et en
+stream SSE. Groq/Cerebras/SambaNova/NVIDIA/OpenRouter partagent le meme code
+mais n'ont pas de cle dans ce sandbox — a valider par l'utilisateur sur sa
+Dedibox (memes providers deja utilisables auparavant, seul le tool-calling
+change).
+
+### A valider par l'utilisateur (P0)
+- `git pull` sur la Dedibox puis tester Groq/Cerebras/SambaNova/NVIDIA/
+  OpenRouter avec un prompt necessitant un outil (ex: "quelle heure est-il ?
+  utilise bash").
+- Confirmer qu'un provider explicite indisponible affiche desormais une
+  erreur claire au lieu de repondre silencieusement via Claude.
+
