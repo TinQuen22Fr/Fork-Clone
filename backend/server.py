@@ -43,6 +43,11 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+
+_current_provider: ContextVar[str] = ContextVar("current_provider", default="claude")
+
+def set_current_provider(pid: str):
+    _current_provider.set(pid or "claude")
 from datetime import datetime, timezone, timedelta
 from typing import Optional, AsyncIterator
 
@@ -874,6 +879,17 @@ _FORGE_NO_PROJECT_BLOCK = (
 
 
 def forge_system_prompt() -> str:
+    pid = _current_provider.get()
+    if pid != "claude":
+        blocks = []
+        blocks.append(
+            f"Tu es l'assistant de code de The Forge, propulsé par le modèle '{pid}'. "
+            f"Tu n'es PAS Claude et tu n'as PAS été créé par Anthropic. "
+            f"Ne prétends jamais être Claude, ni Claude Code, ni affilié à Anthropic. "
+            f"Réponds selon ta véritable identité de modèle, avec clarté, franchise et concision."
+        )
+        return "\n\n".join(blocks)
+
     """System prompt effectif : base + cadrage Forge + regles du projet."""
     blocks = []
     if settings.claude_system_prompt:
@@ -2942,10 +2958,14 @@ async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
     payload = {
         "model": settings.claude_model,
         "max_tokens": settings.claude_max_tokens,
-        "system": [
-            {"type": "text", "text": CLAUDE_CODE_IDENTITY},
-            {"type": "text", "text": forge_system_prompt()},
-        ],
+        "system": (
+            [
+                {"type": "text", "text": CLAUDE_CODE_IDENTITY},
+                {"type": "text", "text": forge_system_prompt()},
+            ]
+            if _current_provider.get() == "claude"
+            else [{"type": "text", "text": forge_system_prompt()}]
+        ),
         "messages": messages,
     }
     if settings.enable_tools and use_tools:
@@ -3105,10 +3125,14 @@ async def _stream_claude(
             payload = {
                 "model": settings.claude_model,
                 "max_tokens": settings.claude_max_tokens,
-                "system": [
-                    {"type": "text", "text": CLAUDE_CODE_IDENTITY},
-                    {"type": "text", "text": forge_system_prompt()},
-                ],
+                "system": (
+                    [
+                        {"type": "text", "text": CLAUDE_CODE_IDENTITY},
+                        {"type": "text", "text": forge_system_prompt()},
+                    ]
+                    if _current_provider.get() == "claude"
+                    else [{"type": "text", "text": forge_system_prompt()}]
+                ),
                 "messages": messages,
                 "stream": True,
             }
@@ -3831,6 +3855,7 @@ async def chat_send(
         raise HTTPException(status_code=404, detail="Conversation not found")
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
+    set_current_provider(provider)
 
     if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
@@ -4031,6 +4056,7 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail="Conversation not found")
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
+    set_current_provider(provider)
     if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
 
@@ -4283,6 +4309,7 @@ async def chat_regenerate(
         raise HTTPException(status_code=404, detail="Conversation not found")
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
+    set_current_provider(provider)
 
     msgs = (
         await database.messages.find({"conversation_id": payload.conversation_id})
