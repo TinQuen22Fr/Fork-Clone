@@ -704,6 +704,59 @@ TOOLS = [
 ]
 
 
+def _openai_tool_schema(tools: list[dict]) -> list[dict]:
+    """Traduit le schema Anthropic (name/description/input_schema) vers le
+    format standard `tools` compatible OpenAI (Groq, Cerebras, SambaNova,
+    NVIDIA NIM, OpenRouter, Ollama, OpenCode transport /chat/completions)."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]
+
+
+OPENAI_TOOLS = _openai_tool_schema(TOOLS)
+
+
+def _responses_tool_schema(tools: list[dict]) -> list[dict]:
+    """Format `tools` de l'API OpenAI Responses (schema plat, sans sous-objet
+    `function`) : transport /responses d'OpenCode (gpt-5.6-luna, muse-spark)."""
+    return [
+        {
+            "type": "function",
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"],
+        }
+        for t in tools
+    ]
+
+
+RESPONSES_TOOLS = _responses_tool_schema(TOOLS)
+
+
+def _gemini_tool_declaration():
+    """Traduit TOOLS vers `types.Tool` (function calling natif Gemini)."""
+    from google.genai import types
+
+    return types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name=t["name"],
+                description=t["description"],
+                parameters=t["input_schema"],
+            )
+            for t in TOOLS
+        ]
+    )
+
+
 # =========================================================================
 # Cadrage systeme par projet — cloisonnement strict du workspace
 # =========================================================================
@@ -1195,7 +1248,8 @@ def _build_messages(history: list[dict], text: str,
 
 
 async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[dict]]:
-    """Génération via Ollama local (ex: qwen2.5-coder:3b)."""
+    """Génération via Ollama local (ex: qwen2.5-coder:3b), avec tool-calling
+    (schema `tools` OpenAI, supporte par Ollama >= 0.3 sur les modeles compatibles)."""
     messages = []
     for h in history:
         r = "user" if h.get("role") == "user" else "assistant"
@@ -1203,58 +1257,92 @@ async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[di
         if c:
             messages.append({"role": r, "content": c})
     messages.append({"role": "user", "content": text or "(vide)"})
+    if forge_system_prompt():
+        messages = [{"role": "system", "content": forge_system_prompt()}] + messages
 
-    payload = {
-        "model": settings.ollama_model,
-        "messages": messages,
-        "stream": False,
-        "keep_alive": settings.ollama_keep_alive,
-        "options": {
-            "num_ctx": settings.ollama_num_ctx,
-            "num_predict": settings.ollama_num_predict,
-            "num_thread": settings.ollama_num_thread,
-        },
-    }
+    tool_steps: list[dict] = []
+
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.ollama_timeout, connect=5.0)
     ) as http:
-        try:
-            logger.info(
-                "Appel Ollama sur %s (modele %s)...",
-                settings.ollama_url, settings.ollama_model,
-            )
-            resp = await http.post(f"{settings.ollama_url}/api/chat", json=payload)
-        except httpx.ConnectError:
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Ollama injoignable sur {settings.ollama_url}. Vérifie qu'il "
-                    "tourne (`ollama serve`) et que OLLAMA_URL est correct."
-                ),
-            )
-        except httpx.HTTPError as e:
-            logger.exception("Erreur réseau Ollama")
-            raise HTTPException(status_code=502, detail=f"Erreur réseau Ollama: {e}")
-
-        if resp.status_code == 404:
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Modèle Ollama '{settings.ollama_model}' introuvable. "
-                    f"Lance d'abord : ollama pull {settings.ollama_model}"
-                ),
-            )
-        if resp.status_code >= 400:
-            detail = resp.text
+        for _ in range(MAX_TOOL_ITERS):
+            payload = {
+                "model": settings.ollama_model,
+                "messages": messages,
+                "stream": False,
+                "keep_alive": settings.ollama_keep_alive,
+                "options": {
+                    "num_ctx": settings.ollama_num_ctx,
+                    "num_predict": settings.ollama_num_predict,
+                    "num_thread": settings.ollama_num_thread,
+                },
+            }
+            if settings.enable_tools:
+                payload["tools"] = OPENAI_TOOLS
             try:
-                detail = resp.json().get("error", detail)
-            except Exception:
-                pass
-            raise HTTPException(status_code=502, detail=f"Erreur Ollama: {detail}")
+                logger.info(
+                    "Appel Ollama sur %s (modele %s)...",
+                    settings.ollama_url, settings.ollama_model,
+                )
+                resp = await http.post(f"{settings.ollama_url}/api/chat", json=payload)
+            except httpx.ConnectError:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Ollama injoignable sur {settings.ollama_url}. Vérifie qu'il "
+                        "tourne (`ollama serve`) et que OLLAMA_URL est correct."
+                    ),
+                )
+            except httpx.HTTPError as e:
+                logger.exception("Erreur réseau Ollama")
+                raise HTTPException(status_code=502, detail=f"Erreur réseau Ollama: {e}")
 
-        data = resp.json()
-        answer = (data.get("message", {}).get("content", "") or "").strip()
-        return answer or "(reponse vide)", []
+            if resp.status_code == 404:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Modèle Ollama '{settings.ollama_model}' introuvable. "
+                        f"Lance d'abord : ollama pull {settings.ollama_model}"
+                    ),
+                )
+            if resp.status_code >= 400:
+                detail = resp.text
+                try:
+                    detail = resp.json().get("error", detail)
+                except Exception:
+                    pass
+                raise HTTPException(status_code=502, detail=f"Erreur Ollama: {detail}")
+
+            data = resp.json()
+            msg = data.get("message") or {}
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls and settings.enable_tools:
+                messages.append({
+                    "role": "assistant",
+                    "content": msg.get("content") or "",
+                    "tool_calls": tool_calls,
+                })
+                for tc in tool_calls:
+                    fn = tc.get("function") or {}
+                    name = fn.get("name", "")
+                    args = fn.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                    args = args or {}
+                    output = _run_tool(name, args)
+                    tool_steps.append({"tool": name, "input": args, "output": output[:4000]})
+                    messages.append({
+                        "role": "tool", "content": output or "(vide)", "tool_name": name,
+                    })
+                continue
+
+            answer = (msg.get("content") or "").strip()
+            return (answer or "(reponse vide)", tool_steps)
+
+    return ("⚠️ Trop d'etapes d'outils, reponse non finalisee.", tool_steps)
 
 
 async def _generate_claude(
@@ -1481,7 +1569,8 @@ async def _generate_openai_compat(
     images: Optional[list[dict]] = None,
     model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
-    """Adaptateur unifie pour tout endpoint compatible OpenAI (non-stream)."""
+    """Adaptateur unifie pour tout endpoint compatible OpenAI (non-stream),
+    avec boucle de tool-calling (`tools`/`tool_calls`) identique a Claude."""
     if not _provider_available(pid):
         raise HTTPException(
             status_code=503,
@@ -1489,35 +1578,112 @@ async def _generate_openai_compat(
         )
     conf = settings.free_providers[pid]
     model_name = await _resolve_free_model(pid, model_override)
-    payload = {
-        "model": model_name,
-        "messages": _openai_messages(history, text, images),
-        "max_tokens": settings.claude_max_tokens,
-    }
+    messages = _openai_messages(history, text, images)
+    tool_steps: list[dict] = []
+
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(conf["timeout"], connect=10.0)
     ) as http:
-        resp = await http.post(
-            f"{conf['base_url']}/chat/completions",
-            json=payload,
-            headers=_free_provider_headers(pid),
-        )
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Erreur {PROVIDER_LABELS[pid]}: {_http_error_detail(resp)}",
-        )
-    data = resp.json()
-    if data.get("error"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"Erreur {PROVIDER_LABELS[pid]}: {_http_error_detail(resp)}",
-        )
-    choices = data.get("choices") or []
-    answer = ""
-    if choices:
-        answer = ((choices[0].get("message") or {}).get("content") or "").strip()
-    return (answer or "(reponse vide)", [], model_name)
+        for _ in range(MAX_TOOL_ITERS):
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": settings.claude_max_tokens,
+            }
+            if settings.enable_tools:
+                payload["tools"] = OPENAI_TOOLS
+            resp = await http.post(
+                f"{conf['base_url']}/chat/completions",
+                json=payload,
+                headers=_free_provider_headers(pid),
+            )
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Erreur {PROVIDER_LABELS[pid]}: {_http_error_detail(resp)}",
+                )
+            data = resp.json()
+            if data.get("error"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Erreur {PROVIDER_LABELS[pid]}: {_http_error_detail(resp)}",
+                )
+            choices = data.get("choices") or []
+            if not choices:
+                return ("(reponse vide)", tool_steps, model_name)
+            msg = choices[0].get("message") or {}
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls and settings.enable_tools:
+                messages.append({
+                    "role": "assistant",
+                    "content": msg.get("content") or "",
+                    "tool_calls": tool_calls,
+                })
+                for tc in tool_calls:
+                    fn = tc.get("function") or {}
+                    name = fn.get("name", "")
+                    try:
+                        tinput = json.loads(fn.get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        tinput = {}
+                    output = _run_tool(name, tinput)
+                    tool_steps.append({"tool": name, "input": tinput, "output": output[:4000]})
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": output or "(vide)",
+                    })
+                continue
+
+            answer = (msg.get("content") or "").strip()
+            return (answer or "(reponse vide)", tool_steps, model_name)
+
+    return ("⚠️ Trop d'etapes d'outils, reponse non finalisee.", tool_steps, model_name)
+
+
+async def _stream_openai_turn(
+    http: httpx.AsyncClient,
+    url: str,
+    headers: dict,
+    payload: dict,
+) -> AsyncIterator[dict]:
+    """
+    Un tour de streaming SSE compatible OpenAI, partage par les providers
+    gratuits et le transport /chat/completions d'OpenCode.
+
+    Emet {"delta": "..."} pour chaque fragment de texte, puis un
+    {"final": {"content": str, "tool_calls": [...]}} qui reconstitue les
+    tool_calls fragmentes (accumules par `index`, comme le fait l'API OpenAI).
+    """
+    content = ""
+    tool_calls: dict[int, dict] = {}
+    async with http.stream("POST", url, json=payload, headers=headers) as resp:
+        if resp.status_code >= 400:
+            body = (await resp.aread()).decode("utf-8", "replace")
+            raise HTTPException(status_code=502, detail=f"Erreur: {body[:400]}")
+        async for ev in _sse_events(resp):
+            if ev.get("error"):
+                raise HTTPException(
+                    status_code=502, detail=f"Erreur: {str(ev['error'])[:400]}"
+                )
+            for ch in ev.get("choices") or []:
+                delta = ch.get("delta") or {}
+                piece = delta.get("content") or ""
+                if piece:
+                    content += piece
+                    yield {"delta": piece}
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = tool_calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["arguments"] += fn["arguments"]
+    ordered = [tool_calls[k] for k in sorted(tool_calls)]
+    yield {"final": {"content": content, "tool_calls": ordered}}
 
 
 async def _stream_openai_compat(
@@ -1528,7 +1694,8 @@ async def _stream_openai_compat(
     model_override: Optional[str],
     state: dict,
 ) -> AsyncIterator[dict]:
-    """Adaptateur unifie compatible OpenAI, en SSE (`stream: true`)."""
+    """Adaptateur unifie compatible OpenAI, en SSE (`stream: true`), avec
+    boucle de tool-calling (memes evenements `tool` que Claude en flux)."""
     if not _provider_available(pid):
         raise HTTPException(
             status_code=503,
@@ -1537,40 +1704,54 @@ async def _stream_openai_compat(
     conf = settings.free_providers[pid]
     model_name = await _resolve_free_model(pid, model_override)
     state["model"] = model_name
-    payload = {
-        "model": model_name,
-        "messages": _openai_messages(history, text, images),
-        "max_tokens": settings.claude_max_tokens,
-        "stream": True,
-    }
+    messages = _openai_messages(history, text, images)
+    headers = _free_provider_headers(pid)
+    url = f"{conf['base_url']}/chat/completions"
+
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(conf["timeout"], connect=10.0)
     ) as http:
-        async with http.stream(
-            "POST",
-            f"{conf['base_url']}/chat/completions",
-            json=payload,
-            headers=_free_provider_headers(pid),
-        ) as resp:
-            if resp.status_code >= 400:
-                body = (await resp.aread()).decode("utf-8", "replace")
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Erreur {PROVIDER_LABELS[pid]}: {body[:400]}",
-                )
-            async for ev in _sse_events(resp):
-                if ev.get("error"):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            f"Erreur {PROVIDER_LABELS[pid]}: "
-                            f"{str(ev['error'])[:400]}"
-                        ),
-                    )
-                for ch in ev.get("choices") or []:
-                    piece = (ch.get("delta") or {}).get("content") or ""
-                    if piece:
-                        yield {"delta": piece}
+        for _ in range(MAX_TOOL_ITERS):
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": settings.claude_max_tokens,
+                "stream": True,
+            }
+            if settings.enable_tools:
+                payload["tools"] = OPENAI_TOOLS
+            final = None
+            async for item in _stream_openai_turn(http, url, headers, payload):
+                if "delta" in item:
+                    yield item
+                else:
+                    final = item["final"]
+            if not final or not final["tool_calls"]:
+                return
+            messages.append({
+                "role": "assistant",
+                "content": final["content"] or "",
+                "tool_calls": [
+                    {
+                        "id": tc["id"] or f"call_{i}",
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"] or "{}"},
+                    }
+                    for i, tc in enumerate(final["tool_calls"])
+                ],
+            })
+            for i, tc in enumerate(final["tool_calls"]):
+                try:
+                    tinput = json.loads(tc["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    tinput = {}
+                output = await asyncio.to_thread(_run_tool, tc["name"], tinput)
+                yield {"tool": {"tool": tc["name"], "input": tinput, "output": output}}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"] or f"call_{i}",
+                    "content": output,
+                })
 
 
 def _estimate_tokens(messages: list[dict]) -> int:
@@ -1719,21 +1900,24 @@ def _classify_error(msg: str) -> str:
 
 
 def _build_chain(requested: str) -> list[str]:
-    """Chaine de providers a essayer, Ollama local toujours en dernier recours."""
+    """
+    Chaine de providers a essayer.
+
+    Un choix EXPLICITE (provider != "auto") n'a JAMAIS de bascule silencieuse :
+    si le provider demande echoue, l'erreur precise est renvoyee telle quelle
+    au frontend. Seul le mode "auto" beneficie de la cascade de secours
+    multi-providers (Ollama local toujours en tout dernier recours).
+    """
+    if requested != "auto":
+        return [requested]
+
     priority = [p for p in settings.provider_priority if p in PROVIDER_IDS]
     for p in PROVIDER_IDS:
         if p not in priority:
             priority.append(p)
 
-    if requested == "auto":
-        chain = list(priority)
-    else:
-        chain = [requested] + [p for p in priority if p != requested]
+    chain = list(priority) if settings.enable_fallback else priority[:1]
 
-    if not settings.enable_fallback:
-        chain = chain[:1]
-
-    # Le moteur local est lent : jamais avant un cloud, sauf s'il est demande.
     if "ollama" in chain[1:]:
         chain = [p for p in chain if p != "ollama"] + ["ollama"]
     return chain
@@ -1791,10 +1975,17 @@ async def generate_ai_response(
     """
     requested = provider if provider in PROVIDER_IDS or provider == "auto" else "claude"
     chain = _build_chain(requested)
+    single = len(chain) == 1  # choix explicite : aucune bascule, erreur brute renvoyee
     attempts: list[dict] = []
 
     for pid in chain:
         if not _provider_available(pid):
+            detail = (
+                f"{PROVIDER_LABELS.get(pid, pid)} n'est pas configure "
+                "(cle API absente dans backend/.env)."
+            )
+            if single:
+                raise HTTPException(status_code=503, detail=detail)
             attempts.append({
                 "provider": pid,
                 "model": _provider_model(pid),
@@ -1810,6 +2001,8 @@ async def generate_ai_response(
                 model if pid == requested else None,
             )
         except HTTPException as e:
+            if single:
+                raise
             detail = str(e.detail)
             kind = _classify_error(detail)
             attempts.append({
@@ -1822,6 +2015,8 @@ async def generate_ai_response(
             )
             continue
         except Exception as e:  # noqa: BLE001
+            if single:
+                raise HTTPException(status_code=502, detail=f"Erreur {PROVIDER_LABELS.get(pid, pid)}: {e}")
             kind = _classify_error(str(e))
             attempts.append({
                 "provider": pid, "model": _provider_model(pid),
@@ -1881,12 +2076,81 @@ def _gemini_contents(history, text, images):
     return contents
 
 
+def _gemini_function_calls(resp) -> list:
+    """Extrait les `function_call` presents dans les parts d'une reponse Gemini."""
+    calls = []
+    try:
+        for cand in (resp.candidates or []):
+            content = getattr(cand, "content", None)
+            for part in (getattr(content, "parts", None) or []):
+                fc = getattr(part, "function_call", None)
+                if fc is not None:
+                    calls.append(fc)
+    except Exception:  # noqa: BLE001
+        pass
+    return calls
+
+
+async def _gemini_call_with_retry(client, model_name: str, contents: list, config):
+    """Un appel Gemini avec retry/backoff sur erreurs transitoires (503/429/500)."""
+    last_err: Optional[Exception] = None
+    for attempt in range(4):
+        try:
+            return await asyncio.to_thread(
+                lambda: client.models.generate_content(
+                    model=model_name, contents=contents, config=config
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            msg = str(e)
+            transient = any(
+                k in msg
+                for k in ("503", "UNAVAILABLE", "overloaded", "high demand",
+                          "RESOURCE_EXHAUSTED", "429", "500", "INTERNAL")
+            )
+            if transient and attempt < 3:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+    raise last_err  # pragma: no cover
+
+
+async def _gemini_tool_loop(client, model_name: str, contents: list, config) -> tuple[str, list[dict]]:
+    """Boucle agentique Gemini : function calling natif, memes tool_steps que
+    Claude. `contents` est mute (reinjection des tours function_call/response)."""
+    from google.genai import types as gtypes
+
+    tool_steps: list[dict] = []
+    for _ in range(MAX_TOOL_ITERS):
+        resp = await _gemini_call_with_retry(client, model_name, contents, config)
+        calls = _gemini_function_calls(resp) if config.tools else []
+        if calls:
+            contents.append(resp.candidates[0].content)
+            response_parts = []
+            for fc in calls:
+                args = dict(fc.args or {})
+                output = _run_tool(fc.name, args)
+                tool_steps.append({"tool": fc.name, "input": args, "output": output[:4000]})
+                response_parts.append(
+                    gtypes.Part.from_function_response(
+                        name=fc.name, response={"result": output}
+                    )
+                )
+            contents.append(gtypes.Content(role="user", parts=response_parts))
+            continue
+        answer = (getattr(resp, "text", None) or "").strip()
+        return (answer or "(reponse vide)", tool_steps)
+    return ("⚠️ Trop d'etapes d'outils, reponse non finalisee.", tool_steps)
+
+
 async def _generate_gemini(
     history: list[dict],
     text: str,
     images: Optional[list[dict]],
 ) -> tuple[str, list[dict], str]:
-    """Generation via Google Gemini (cle API GEMINI_API_KEY, SDK google-genai)."""
+    """Generation via Google Gemini (cle API GEMINI_API_KEY, SDK google-genai),
+    avec function calling natif (memes outils que Claude)."""
     if not settings.gemini_api_key:
         raise HTTPException(
             status_code=503,
@@ -1899,10 +2163,11 @@ async def _generate_gemini(
     from google.genai import types as gtypes
 
     client = genai.Client(api_key=settings.gemini_api_key)
-    contents = _gemini_contents(history, text, images)
+    base_contents = _gemini_contents(history, text, images)
     config = gtypes.GenerateContentConfig(
         system_instruction=forge_system_prompt(),
         max_output_tokens=settings.claude_max_tokens,
+        tools=[_gemini_tool_declaration()] if settings.enable_tools else None,
     )
 
     # Modèle principal + fallback (utile quand un modèle est saturé).
@@ -1912,28 +2177,14 @@ async def _generate_gemini(
 
     last_err: Optional[Exception] = None
     for model_name in model_candidates:
-        def _call(m=model_name):
-            return client.models.generate_content(
-                model=m, contents=contents, config=config
+        try:
+            answer, tool_steps = await _gemini_tool_loop(
+                client, model_name, list(base_contents), config
             )
-        # Retry avec backoff sur erreurs transitoires (503 / surcharge / 429).
-        for attempt in range(4):
-            try:
-                resp = await asyncio.to_thread(_call)
-                answer = (getattr(resp, "text", None) or "").strip()
-                return (answer or "(reponse vide)", [], model_name)
-            except Exception as e:  # noqa: BLE001
-                last_err = e
-                msg = str(e)
-                transient = any(
-                    k in msg
-                    for k in ("503", "UNAVAILABLE", "overloaded", "high demand",
-                              "RESOURCE_EXHAUSTED", "429", "500", "INTERNAL")
-                )
-                if transient and attempt < 3:
-                    await asyncio.sleep(2 ** attempt)  # 1s, 2s, 4s
-                    continue
-                break  # non transitoire, ou retries épuisés -> modèle suivant
+            return (answer, tool_steps, model_name)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            continue
 
     # Échec après retries : message clair selon le type d'erreur.
     msg = str(last_err or "")
@@ -2207,8 +2458,9 @@ async def _generate_ollama_cloud(
     model_override: Optional[str] = None,
 ) -> tuple[str, list[dict], str]:
     """
-    Generation via Ollama Cloud (https://ollama.com/api), auth Bearer.
-    Essaie le modele principal puis le modele de secours du meme provider.
+    Generation via Ollama Cloud (https://ollama.com/api), auth Bearer, avec
+    tool-calling (schema `tools` OpenAI). Essaie le modele principal puis le
+    modele de secours du meme provider.
     """
     if not settings.ollama_cloud_api_key:
         raise HTTPException(
@@ -2219,13 +2471,13 @@ async def _generate_ollama_cloud(
             ),
         )
 
-    messages = _plain_messages(history, text)
+    base_messages = _plain_messages(history, text)
     if images:
-        messages[-1]["images"] = [i["data"] for i in images]
+        base_messages[-1]["images"] = [i["data"] for i in images]
     if forge_system_prompt():
-        messages = [
+        base_messages = [
             {"role": "system", "content": forge_system_prompt()}
-        ] + messages
+        ] + base_messages
 
     candidates = [model_override or settings.ollama_cloud_model]
     if (
@@ -2243,40 +2495,77 @@ async def _generate_ollama_cloud(
         timeout=httpx.Timeout(settings.ollama_cloud_timeout, connect=10.0)
     ) as http:
         for model_name in candidates:
-            payload = {"model": model_name, "messages": messages, "stream": False}
-            try:
-                logger.info("Appel Ollama Cloud (modele %s)...", model_name)
-                resp = await http.post(
-                    f"{settings.ollama_cloud_url}/chat",
-                    json=payload,
-                    headers=headers,
-                )
-            except httpx.HTTPError as e:
-                last_detail = f"reseau: {e}"
-                continue
+            messages = list(base_messages)
+            tool_steps: list[dict] = []
+            failed = False
+            answer = None
+            for _ in range(MAX_TOOL_ITERS):
+                payload = {"model": model_name, "messages": messages, "stream": False}
+                if settings.enable_tools:
+                    payload["tools"] = OPENAI_TOOLS
+                try:
+                    logger.info("Appel Ollama Cloud (modele %s)...", model_name)
+                    resp = await http.post(
+                        f"{settings.ollama_cloud_url}/chat",
+                        json=payload,
+                        headers=headers,
+                    )
+                except httpx.HTTPError as e:
+                    last_detail = f"reseau: {e}"
+                    failed = True
+                    break
 
-            if resp.status_code >= 400:
-                last_detail = _http_error_detail(resp)
-                logger.warning(
-                    "Ollama Cloud %s -> HTTP %s: %s",
-                    model_name, resp.status_code, last_detail[:200],
-                )
-                continue
+                if resp.status_code >= 400:
+                    last_detail = _http_error_detail(resp)
+                    logger.warning(
+                        "Ollama Cloud %s -> HTTP %s: %s",
+                        model_name, resp.status_code, last_detail[:200],
+                    )
+                    failed = True
+                    break
 
-            data = resp.json()
-            # L'API renvoie parfois une erreur applicative avec un HTTP 200.
-            if isinstance(data, dict) and data.get("error"):
-                last_detail = str(data["error"])[:500]
-                logger.warning(
-                    "Ollama Cloud %s -> erreur applicative: %s",
-                    model_name, last_detail[:200],
-                )
-                continue
+                data = resp.json()
+                # L'API renvoie parfois une erreur applicative avec un HTTP 200.
+                if isinstance(data, dict) and data.get("error"):
+                    last_detail = str(data["error"])[:500]
+                    logger.warning(
+                        "Ollama Cloud %s -> erreur applicative: %s",
+                        model_name, last_detail[:200],
+                    )
+                    failed = True
+                    break
 
-            answer = (
-                (data.get("message") or {}).get("content", "") or ""
-            ).strip()
-            return (answer or "(reponse vide)", [], model_name)
+                msg = data.get("message") or {}
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls and settings.enable_tools:
+                    messages.append({
+                        "role": "assistant",
+                        "content": msg.get("content") or "",
+                        "tool_calls": tool_calls,
+                    })
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        name = fn.get("name", "")
+                        args = fn.get("arguments")
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args or "{}")
+                            except json.JSONDecodeError:
+                                args = {}
+                        args = args or {}
+                        output = _run_tool(name, args)
+                        tool_steps.append({"tool": name, "input": args, "output": output[:4000]})
+                        messages.append({
+                            "role": "tool", "content": output or "(vide)", "tool_name": name,
+                        })
+                    continue
+
+                answer = (msg.get("content") or "").strip()
+                break
+
+            if failed:
+                continue
+            return (answer or "(reponse vide)", tool_steps, model_name)
 
     raise HTTPException(
         status_code=502,
@@ -2340,12 +2629,14 @@ def _opencode_payload(
     model: str,
     messages: list[dict],
     system_prompt: str,
+    tools_enabled: bool = True,
 ) -> tuple[str, dict]:
     """Construit (chemin, payload) pour le transport demande."""
     messages = _opencode_convert_image(messages, transport)
 
     if transport == "messages":
-        # Format Anthropic : le system est un champ a part.
+        # Format Anthropic : le system est un champ a part, tools = meme
+        # schema que Claude (deja au format Anthropic).
         body = {
             "model": model,
             "max_tokens": settings.claude_max_tokens,
@@ -2353,10 +2644,12 @@ def _opencode_payload(
         }
         if system_prompt:
             body["system"] = system_prompt
+        if tools_enabled:
+            body["tools"] = TOOLS
         return "/messages", body
 
     if transport == "responses":
-        # Format OpenAI Responses : `input` + `instructions`.
+        # Format OpenAI Responses : `input` + `instructions`, tools au schema plat.
         body = {
             "model": model,
             "input": messages,
@@ -2364,6 +2657,8 @@ def _opencode_payload(
         }
         if system_prompt:
             body["instructions"] = system_prompt
+        if tools_enabled:
+            body["tools"] = RESPONSES_TOOLS
         return "/responses", body
 
     body = {"model": model, "max_tokens": settings.claude_max_tokens}
@@ -2373,33 +2668,61 @@ def _opencode_payload(
         ] + messages
     else:
         body["messages"] = messages
+    if tools_enabled:
+        body["tools"] = OPENAI_TOOLS
     return "/chat/completions", body
 
 
-def _opencode_extract(transport: str, data: dict) -> str:
-    """Extrait le texte de la reponse selon le transport."""
+def _opencode_extract_turn(transport: str, data: dict) -> dict:
+    """
+    Extrait {"text", "tool_calls": [{"id","name","arguments"(dict)}], ...} de
+    la reponse non-stream, quel que soit le transport OpenCode. Les champs
+    additionnels ("blocks"/"output"/"message") servent a reinjecter le tour
+    assistant dans la conversation pour la suite de la boucle d'outils.
+    """
     if transport == "messages":
-        parts = [
-            b.get("text", "")
-            for b in (data.get("content") or [])
-            if b.get("type") == "text"
+        blocks = data.get("content") or []
+        text = "".join(
+            b.get("text", "") for b in blocks if b.get("type") == "text"
+        ).strip()
+        tool_calls = [
+            {"id": b.get("id", ""), "name": b.get("name", ""), "arguments": b.get("input") or {}}
+            for b in blocks if b.get("type") == "tool_use"
         ]
-        return "".join(parts).strip()
+        return {"text": text, "tool_calls": tool_calls, "blocks": blocks}
 
     if transport == "responses":
-        out = []
-        for item in data.get("output") or []:
-            if item.get("type") != "message":
-                continue
-            for block in item.get("content") or []:
-                if block.get("type") in ("output_text", "text"):
-                    out.append(block.get("text", ""))
-        return "".join(out).strip()
+        out = data.get("output") or []
+        text_parts = []
+        tool_calls = []
+        for item in out:
+            if item.get("type") == "message":
+                for block in item.get("content") or []:
+                    if block.get("type") in ("output_text", "text"):
+                        text_parts.append(block.get("text", ""))
+            elif item.get("type") == "function_call":
+                try:
+                    args = json.loads(item.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                tool_calls.append({
+                    "id": item.get("call_id", ""), "name": item.get("name", ""), "arguments": args,
+                })
+        return {"text": "".join(text_parts).strip(), "tool_calls": tool_calls, "output": out}
 
     choices = data.get("choices") or []
     if not choices:
-        return ""
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+        return {"text": "", "tool_calls": [], "message": {}}
+    msg = choices[0].get("message") or {}
+    tool_calls = []
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        tool_calls.append({"id": tc.get("id", ""), "name": fn.get("name", ""), "arguments": args})
+    return {"text": (msg.get("content") or "").strip(), "tool_calls": tool_calls, "message": msg}
 
 
 # Codes/erreurs indiquant un mauvais endpoint plutot qu'un vrai refus :
@@ -2439,7 +2762,11 @@ async def _generate_opencode(
     Gere les TROIS transports de la passerelle (/chat/completions au format
     OpenAI, /messages au format Anthropic, /responses au format OpenAI
     Responses), detectes automatiquement d'apres l'id du modele et reessayes
-    entre eux si l'endpoint ne correspond pas.
+    entre eux si l'endpoint ne correspond pas. Chaque transport a sa propre
+    boucle de tool-calling (schema natif au transport), sinon un modele comme
+    Qwen3 (transport /messages) qui recoit `tools` sans jamais voir de
+    `tool_use` traite ecrit sa syntaxe d'appel d'outil en texte brut au lieu
+    de l'executer.
 
     OpenCode Go impose par ailleurs :
     - un User-Agent identifiable (pas un nom de lib HTTP) ;
@@ -2457,9 +2784,9 @@ async def _generate_opencode(
             ),
         )
 
-    messages = _plain_messages(history, text)
+    base_messages = _plain_messages(history, text)
     if images:
-        messages[-1]["content"] = [
+        base_messages[-1]["content"] = [
             {"type": "text", "text": text or "(image)"},
             *[
                 {
@@ -2489,6 +2816,8 @@ async def _generate_opencode(
         # Session stable = id de conversation, pour le routage et le cache prompt.
         "x-opencode-session": f"ses_forge_{session_id or uuid.uuid4().hex}",
     }
+    system_prompt = forge_system_prompt()
+
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
     ) as http:
@@ -2498,42 +2827,98 @@ async def _generate_opencode(
                 t for t in ("chat", "messages", "responses") if t != primary
             ]
             for transport in transports:
-                path, payload = _opencode_payload(
-                    transport, model_name, messages, forge_system_prompt()
-                )
-                try:
-                    logger.info(
-                        "Appel OpenCode (modele %s, transport %s)...",
-                        model_name, transport,
+                messages = list(base_messages)
+                tool_steps: list[dict] = []
+                answer = None
+                failed = False
+                retry_other_transport = False
+
+                for iteration in range(MAX_TOOL_ITERS):
+                    path, payload = _opencode_payload(
+                        transport, model_name, messages, system_prompt,
+                        settings.enable_tools,
                     )
-                    resp = await http.post(
-                        f"{settings.opencode_base_url}{path}",
-                        json=payload,
-                        headers=headers,
-                    )
-                except httpx.HTTPError as e:
-                    last_detail = f"reseau: {e}"
+                    try:
+                        logger.info(
+                            "Appel OpenCode (modele %s, transport %s, iter %d)...",
+                            model_name, transport, iteration,
+                        )
+                        resp = await http.post(
+                            f"{settings.opencode_base_url}{path}",
+                            json=payload,
+                            headers=headers,
+                        )
+                    except httpx.HTTPError as e:
+                        last_detail = f"reseau: {e}"
+                        failed = True
+                        break
+
+                    try:
+                        data = resp.json() if resp.content else {}
+                    except Exception:  # noqa: BLE001
+                        data = {}
+
+                    if resp.status_code >= 400 or (
+                        isinstance(data, dict) and data.get("error")
+                    ):
+                        last_detail = _http_error_detail(resp)
+                        logger.warning(
+                            "OpenCode %s/%s -> HTTP %s: %s",
+                            model_name, transport, resp.status_code, last_detail[:200],
+                        )
+                        failed = True
+                        if iteration == 0 and _opencode_wrong_transport(resp.status_code, last_detail):
+                            retry_other_transport = True
+                        break
+
+                    turn = _opencode_extract_turn(transport, data)
+                    if turn["tool_calls"] and settings.enable_tools:
+                        outputs = []
+                        for tc in turn["tool_calls"]:
+                            output = _run_tool(tc["name"], tc["arguments"])
+                            tool_steps.append({
+                                "tool": tc["name"], "input": tc["arguments"], "output": output[:4000],
+                            })
+                            outputs.append(output or "(vide)")
+
+                        if transport == "messages":
+                            messages.append({"role": "assistant", "content": turn["blocks"]})
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "tool_result", "tool_use_id": tc["id"], "content": out}
+                                    for tc, out in zip(turn["tool_calls"], outputs)
+                                ],
+                            })
+                        elif transport == "responses":
+                            messages = messages + (turn.get("output") or []) + [
+                                {"type": "function_call_output", "call_id": tc["id"], "output": out}
+                                for tc, out in zip(turn["tool_calls"], outputs)
+                            ]
+                        else:  # chat
+                            msg = turn.get("message") or {}
+                            messages.append({
+                                "role": "assistant",
+                                "content": msg.get("content") or "",
+                                "tool_calls": msg.get("tool_calls") or [],
+                            })
+                            for tc, out in zip(turn["tool_calls"], outputs):
+                                messages.append({
+                                    "role": "tool", "tool_call_id": tc["id"], "content": out,
+                                })
+                        continue
+
+                    answer = turn["text"]
                     break
 
-                try:
-                    data = resp.json() if resp.content else {}
-                except Exception:  # noqa: BLE001
-                    data = {}
-
-                if resp.status_code >= 400 or (
-                    isinstance(data, dict) and data.get("error")
-                ):
-                    last_detail = _http_error_detail(resp)
-                    logger.warning(
-                        "OpenCode %s/%s -> HTTP %s: %s",
-                        model_name, transport, resp.status_code, last_detail[:200],
-                    )
-                    if _opencode_wrong_transport(resp.status_code, last_detail):
-                        continue  # mauvais endpoint probable : autre transport
+                if failed:
+                    if retry_other_transport:
+                        continue  # essaie un autre transport
                     break  # vrai refus (region, quota, auth...) : modele suivant
 
-                answer = _opencode_extract(transport, data)
-                return (answer or "(reponse vide)", [], model_name)
+                if answer is None:
+                    answer = "⚠️ Trop d'etapes d'outils, reponse non finalisee."
+                return (answer or "(reponse vide)", tool_steps, model_name)
 
     raise HTTPException(
         status_code=502,
@@ -2761,6 +3146,7 @@ async def _stream_gemini(
     images: Optional[list[dict]],
     state: dict,
 ) -> AsyncIterator[dict]:
+    """Gemini en streaming, boucle d'outils incluse (function calling natif)."""
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY absent.")
     from google import genai
@@ -2771,15 +3157,34 @@ async def _stream_gemini(
     config = gtypes.GenerateContentConfig(
         system_instruction=forge_system_prompt(),
         max_output_tokens=settings.claude_max_tokens,
+        tools=[_gemini_tool_declaration()] if settings.enable_tools else None,
     )
     state["model"] = settings.gemini_model
-    stream = await client.aio.models.generate_content_stream(
-        model=settings.gemini_model, contents=contents, config=config
-    )
-    async for chunk in stream:
-        piece = getattr(chunk, "text", None)
-        if piece:
-            yield {"delta": piece}
+
+    for _ in range(MAX_TOOL_ITERS):
+        stream = await client.aio.models.generate_content_stream(
+            model=settings.gemini_model, contents=contents, config=config
+        )
+        calls = []
+        last_chunk = None
+        async for chunk in stream:
+            last_chunk = chunk
+            piece = getattr(chunk, "text", None)
+            if piece:
+                yield {"delta": piece}
+            calls.extend(_gemini_function_calls(chunk))
+        if not calls or not last_chunk:
+            return
+        contents.append(last_chunk.candidates[0].content)
+        parts = []
+        for fc in calls:
+            args = dict(fc.args or {})
+            output = await asyncio.to_thread(_run_tool, fc.name, args)
+            yield {"tool": {"tool": fc.name, "input": args, "output": output}}
+            parts.append(
+                gtypes.Part.from_function_response(name=fc.name, response={"result": output})
+            )
+        contents.append(gtypes.Content(role="user", parts=parts))
 
 
 async def _stream_ndjson_ollama(
@@ -2788,7 +3193,9 @@ async def _stream_ndjson_ollama(
     payload: dict,
     timeout: float,
 ) -> AsyncIterator[dict]:
-    """Flux Ollama (local ou cloud) : une ligne JSON par fragment."""
+    """Flux Ollama (local ou cloud) : une ligne JSON par fragment. Emet
+    {"delta":...} pour le texte et {"tool_calls":[...]} si le modele en produit
+    (Ollama les renvoie complets, sans fragmentation JSON progressive)."""
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(timeout, connect=10.0)
     ) as http:
@@ -2810,31 +3217,62 @@ async def _stream_ndjson_ollama(
                         status_code=502,
                         detail=f"Erreur Ollama: {str(data['error'])[:400]}",
                     )
-                piece = (data.get("message") or {}).get("content") or ""
+                msg = data.get("message") or {}
+                piece = msg.get("content") or ""
                 if piece:
                     yield {"delta": piece}
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls:
+                    yield {"tool_calls": tool_calls}
 
 
 async def _stream_ollama(
     history: list[dict], text: str, state: dict
 ) -> AsyncIterator[dict]:
+    """Ollama local en streaming, boucle d'outils incluse."""
     state["model"] = settings.ollama_model
     messages = _plain_messages(history, text)
-    payload = {
-        "model": settings.ollama_model,
-        "messages": messages,
-        "stream": True,
-        "keep_alive": settings.ollama_keep_alive,
-        "options": {
-            "num_ctx": settings.ollama_num_ctx,
-            "num_predict": settings.ollama_num_predict,
-            "num_thread": settings.ollama_num_thread,
-        },
-    }
-    async for item in _stream_ndjson_ollama(
-        f"{settings.ollama_url}/api/chat", {}, payload, settings.ollama_timeout
-    ):
-        yield item
+    if forge_system_prompt():
+        messages = [{"role": "system", "content": forge_system_prompt()}] + messages
+
+    for _ in range(MAX_TOOL_ITERS):
+        payload = {
+            "model": settings.ollama_model,
+            "messages": messages,
+            "stream": True,
+            "keep_alive": settings.ollama_keep_alive,
+            "options": {
+                "num_ctx": settings.ollama_num_ctx,
+                "num_predict": settings.ollama_num_predict,
+                "num_thread": settings.ollama_num_thread,
+            },
+        }
+        if settings.enable_tools:
+            payload["tools"] = OPENAI_TOOLS
+        calls = None
+        async for item in _stream_ndjson_ollama(
+            f"{settings.ollama_url}/api/chat", {}, payload, settings.ollama_timeout
+        ):
+            if "delta" in item:
+                yield item
+            elif "tool_calls" in item:
+                calls = item["tool_calls"]
+        if not calls:
+            return
+        messages.append({"role": "assistant", "tool_calls": calls})
+        for tc in calls:
+            fn = tc.get("function") or {}
+            name = fn.get("name", "")
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+            args = args or {}
+            output = await asyncio.to_thread(_run_tool, name, args)
+            yield {"tool": {"tool": name, "input": args, "output": output}}
+            messages.append({"role": "tool", "content": output or "(vide)", "tool_name": name})
 
 
 async def _stream_ollama_cloud(
@@ -2844,6 +3282,7 @@ async def _stream_ollama_cloud(
     model_override: Optional[str],
     state: dict,
 ) -> AsyncIterator[dict]:
+    """Ollama Cloud en streaming, boucle d'outils incluse."""
     if not settings.ollama_cloud_api_key:
         raise HTTPException(status_code=503, detail="OLLAMA_CLOUD_API_KEY absent.")
 
@@ -2854,28 +3293,53 @@ async def _stream_ollama_cloud(
     ):
         candidates.append(settings.ollama_cloud_fallback_model)
 
-    messages = _plain_messages(history, text)
+    base_messages = _plain_messages(history, text)
     if images:
-        messages[-1]["images"] = [i["data"] for i in images]
+        base_messages[-1]["images"] = [i["data"] for i in images]
     if forge_system_prompt():
-        messages = [
+        base_messages = [
             {"role": "system", "content": forge_system_prompt()}
-        ] + messages
+        ] + base_messages
 
     last_err: Optional[Exception] = None
     for model_name in candidates:
         state["model"] = model_name
-        payload = {"model": model_name, "messages": messages, "stream": True}
+        messages = list(base_messages)
         produced = False
         try:
-            async for item in _stream_ndjson_ollama(
-                f"{settings.ollama_cloud_url}/chat",
-                {"Authorization": f"Bearer {settings.ollama_cloud_api_key}"},
-                payload,
-                settings.ollama_cloud_timeout,
-            ):
-                produced = True
-                yield item
+            for _ in range(MAX_TOOL_ITERS):
+                payload = {"model": model_name, "messages": messages, "stream": True}
+                if settings.enable_tools:
+                    payload["tools"] = OPENAI_TOOLS
+                calls = None
+                async for item in _stream_ndjson_ollama(
+                    f"{settings.ollama_cloud_url}/chat",
+                    {"Authorization": f"Bearer {settings.ollama_cloud_api_key}"},
+                    payload,
+                    settings.ollama_cloud_timeout,
+                ):
+                    if "delta" in item:
+                        produced = True
+                        yield item
+                    elif "tool_calls" in item:
+                        calls = item["tool_calls"]
+                if not calls:
+                    return
+                messages.append({"role": "assistant", "tool_calls": calls})
+                for tc in calls:
+                    fn = tc.get("function") or {}
+                    name = fn.get("name", "")
+                    args = fn.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                    args = args or {}
+                    output = await asyncio.to_thread(_run_tool, name, args)
+                    produced = True
+                    yield {"tool": {"tool": name, "input": args, "output": output}}
+                    messages.append({"role": "tool", "content": output or "(vide)", "tool_name": name})
             return
         except asyncio.CancelledError:
             raise
@@ -2902,8 +3366,10 @@ async def _stream_opencode(
     state: dict,
 ) -> AsyncIterator[dict]:
     """
-    OpenCode en streaming. Les transports /chat/completions (SSE OpenAI) et
-    /messages (SSE Anthropic) sont streames ; /responses retombe en non-stream.
+    OpenCode en streaming, boucle d'outils incluse pour /chat/completions
+    (SSE OpenAI) et /messages (SSE Anthropic, via `_stream_anthropic_turn`
+    partage avec Claude). /responses retombe en non-stream (boucle d'outils
+    geree par `_generate_opencode`).
     """
     if not settings.opencode_api_key:
         raise HTTPException(status_code=503, detail="OPENCODE_API_KEY absent.")
@@ -2912,10 +3378,12 @@ async def _stream_opencode(
     transport = _opencode_transport(model_name)
 
     if transport == "responses":
-        answer, _, used = await _generate_opencode(
+        answer, steps, used = await _generate_opencode(
             history, text, images, session_id, model_override
         )
         state["model"] = used
+        for s in steps:
+            yield {"tool": s}
         yield {"delta": answer}
         return
 
@@ -2933,10 +3401,6 @@ async def _stream_opencode(
                 for i in images
             ],
         ]
-    path, payload = _opencode_payload(
-        transport, model_name, messages, forge_system_prompt()
-    )
-    payload["stream"] = True
     headers = {
         "Authorization": f"Bearer {settings.opencode_api_key}",
         "x-api-key": settings.opencode_api_key,
@@ -2945,36 +3409,80 @@ async def _stream_opencode(
         "User-Agent": settings.opencode_user_agent,
         "x-opencode-session": f"ses_forge_{session_id or uuid.uuid4().hex}",
     }
-    url = f"{settings.opencode_base_url}{path}"
-
-    if transport == "messages":
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
-        ) as http:
-            async for item in _stream_anthropic_turn(http, url, headers, payload):
-                if "delta" in item:
-                    yield item
-        return
+    system_prompt = forge_system_prompt()
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
     ) as http:
-        async with http.stream("POST", url, headers=headers, json=payload) as resp:
-            if resp.status_code >= 400:
-                body = (await resp.aread()).decode("utf-8", "replace")
-                raise HTTPException(
-                    status_code=502, detail=f"Erreur OpenCode: {body[:400]}"
+        if transport == "messages":
+            for _ in range(MAX_TOOL_ITERS):
+                path, payload = _opencode_payload(
+                    transport, model_name, messages, system_prompt, settings.enable_tools
                 )
-            async for ev in _sse_events(resp):
-                if ev.get("error"):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Erreur OpenCode: {str(ev['error'])[:400]}",
+                payload["stream"] = True
+                final = None
+                async for item in _stream_anthropic_turn(
+                    http, f"{settings.opencode_base_url}{path}", headers, payload
+                ):
+                    if "delta" in item:
+                        yield item
+                    else:
+                        final = item["final"]
+                if not final or final["stop_reason"] != "tool_use":
+                    return
+                messages.append({"role": "assistant", "content": final["blocks"]})
+                results = []
+                for b in final["blocks"]:
+                    if b.get("type") != "tool_use":
+                        continue
+                    output = await asyncio.to_thread(
+                        _run_tool, b.get("name", ""), b.get("input") or {}
                     )
-                for ch in ev.get("choices") or []:
-                    piece = (ch.get("delta") or {}).get("content") or ""
-                    if piece:
-                        yield {"delta": piece}
+                    yield {"tool": {"tool": b.get("name"), "input": b.get("input") or {}, "output": output}}
+                    results.append({
+                        "type": "tool_result", "tool_use_id": b.get("id"), "content": output,
+                    })
+                messages.append({"role": "user", "content": results})
+            return
+
+        # transport == "chat"
+        for _ in range(MAX_TOOL_ITERS):
+            path, payload = _opencode_payload(
+                transport, model_name, messages, system_prompt, settings.enable_tools
+            )
+            payload["stream"] = True
+            final = None
+            async for item in _stream_openai_turn(
+                http, f"{settings.opencode_base_url}{path}", headers, payload
+            ):
+                if "delta" in item:
+                    yield item
+                else:
+                    final = item["final"]
+            if not final or not final["tool_calls"]:
+                return
+            messages.append({
+                "role": "assistant",
+                "content": final["content"] or "",
+                "tool_calls": [
+                    {
+                        "id": tc["id"] or f"call_{i}",
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"] or "{}"},
+                    }
+                    for i, tc in enumerate(final["tool_calls"])
+                ],
+            })
+            for i, tc in enumerate(final["tool_calls"]):
+                try:
+                    tinput = json.loads(tc["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    tinput = {}
+                output = await asyncio.to_thread(_run_tool, tc["name"], tinput)
+                yield {"tool": {"tool": tc["name"], "input": tinput, "output": output}}
+                messages.append({
+                    "role": "tool", "tool_call_id": tc["id"] or f"call_{i}", "content": output,
+                })
 
 
 async def _stream_provider(
@@ -3031,10 +3539,18 @@ async def stream_ai_response(
     """
     requested = provider if provider in PROVIDER_IDS or provider == "auto" else "claude"
     chain = _build_chain(requested)
+    single = len(chain) == 1  # choix explicite : aucune bascule, erreur brute renvoyee
     attempts: list[dict] = []
 
     for pid in chain:
         if not _provider_available(pid):
+            detail = (
+                f"{PROVIDER_LABELS.get(pid, pid)} n'est pas configure "
+                "(cle API absente dans backend/.env)."
+            )
+            if single:
+                yield {"type": "error", "detail": detail, "provider": pid}
+                return
             attempts.append({
                 "provider": pid, "model": _provider_model(pid),
                 "kind": "unconfigured", "error": "cle / configuration absente",
@@ -3065,7 +3581,7 @@ async def stream_ai_response(
         except Exception as e:  # noqa: BLE001
             detail = str(getattr(e, "detail", e))
             kind = _classify_error(detail)
-            if produced:
+            if produced or single:
                 logger.error("Flux interrompu sur %s [%s]: %s", pid, kind, detail[:200])
                 yield {"type": "error", "detail": detail[:400], "provider": pid}
                 return
