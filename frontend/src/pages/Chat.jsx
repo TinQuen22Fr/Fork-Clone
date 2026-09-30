@@ -95,6 +95,8 @@ export default function Chat() {
   const recorderRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   // Initial load - fetch conversations
   useEffect(() => {
@@ -166,6 +168,25 @@ export default function Chat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    setShowScrollBottom(false);
+  };
+
+  const handleMessagesScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBottom(distanceFromBottom > 120);
+  };
+
+  useEffect(() => {
+    if (activeId) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+      setShowScrollBottom(false);
+    }
+  }, [activeId]);
 
   // redirect if logged out
   if (user === false) return <Navigate to="/login" replace />;
@@ -973,7 +994,7 @@ export default function Chat() {
 
         {/* Messages */}
         {activeId && (
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 lg:px-8 py-4 sm:py-6">
+        <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 lg:px-8 py-4 sm:py-6">
           <div className="max-w-4xl mx-auto" data-testid="messages-container">
             {activeId && messages.length === 0 && !loadingMsgs && (
               <EmptyChat />
@@ -1052,7 +1073,7 @@ export default function Chat() {
 
         {/* Input dock */}
         <div className="px-3 sm:px-4 lg:px-8 pt-2 safe-bottom flex-shrink-0">
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-4xl mx-auto relative">
             {favorites.length > 0 && (
               <div
                 className="mb-2 flex gap-1.5 overflow-x-auto pb-1"
@@ -1136,9 +1157,28 @@ export default function Chat() {
                 )}
               </div>
             )}
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              aria-label="Faire défiler vers le bas"
+              className={`scroll-bottom-btn ${showScrollBottom ? "is-visible" : ""}`}
+              data-testid="scroll-to-bottom-btn"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 5v14" />
+                <path d="M19 12l-7 7-7-7" />
+              </svg>
+            </button>
             <form
               onSubmit={sendMessage}
-              className="border-2 border-white/20 bg-[var(--bg-dock-90)] backdrop-blur-xl shadow-[4px_4px_0_0_#ff2a6d] sm:shadow-[8px_8px_0_0_#ff2a6d] flex flex-col sm:flex-row sm:items-end gap-2 p-2 sm:p-3"
+              className="chat-dock flex flex-col"
               data-testid="chat-input-form"
             >
               <input
@@ -1149,181 +1189,191 @@ export default function Chat() {
                 className="hidden"
                 data-testid="image-file-input"
               />
-              {/* Ligne 1 sur mobile : contrôles. Sur >=sm, `contents` fait
-                  disparaître ce conteneur pour garder une seule rangée. */}
-              <div className="flex items-center gap-2 min-w-0 sm:contents">
-                <div
-                  className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
-                  title="Choisir le modèle IA"
-                >
-                  <Cpu className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                  <select
-                    value={provider}
-                    onChange={handleProviderChange}
-                    className="flex-1 min-w-0 bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
-                    data-testid="provider-select"
-                  >
-                    <option value="auto" className="bg-[var(--bg-dock)] text-white">
-                      Auto (meilleur dispo)
-                    </option>
-                    {models.map((m) => (
-                      <option
-                        key={m.id}
-                        value={m.id}
-                        className="bg-[var(--bg-dock)] text-white"
-                      >
-                        {m.label}
-                        {m.available === false ? " (non configuré)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {catalog.length > 0 && (
-                  <div
-                    className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#ffd700]/60 bg-black/40 px-2 py-1"
-                    title="Choisir un modèle précis chez ce provider"
-                  >
-                    <select
-                      value={modelOverride}
-                      onChange={handleModelChange}
-                      className="flex-1 min-w-0 sm:max-w-[150px] bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer"
-                      data-testid="model-select"
+              {/* Bandeau de statut discret */}
+              <div className="chat-status-bar" data-testid="chat-status-bar">
+                <span
+                  className={`chat-status-dot ${sending ? "is-busy" : ""}`}
+                  data-testid="chat-status-dot"
+                />
+                <span className="chat-status-text" data-testid="chat-status-text">
+                  {sending ? "Agent en cours..." : "Agent attend..."}
+                </span>
+              </div>
+              {/* Saisie pleine largeur, multi-lignes, au-dessus de la barre d'outils */}
+              <textarea
+                ref={textareaRef}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={onKeyDown}
+                rows={3}
+                placeholder="Forge a message..."
+                className="chat-textarea w-full outline-none resize-none px-3 sm:px-4"
+                data-testid="chat-text-input"
+              />
+              {/* Barre d'outils : outils/dictée à gauche, providers au centre, envoi à droite */}
+              <div className="chat-toolbar flex items-center gap-2 min-w-0 px-2 sm:px-3 py-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="relative flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setPlusOpen((v) => !v)}
+                      className={`btn-ghost border-2 ${
+                        plusOpen
+                          ? "border-[#ffd700] text-[#ffd700]"
+                          : "border-white/20 hover:border-[#ffd700] hover:text-[#ffd700]"
+                      }`}
+                      title="Outils : fichier, GitHub, fork"
+                      data-testid="plus-menu-btn"
                     >
-                      <option value="" className="bg-[var(--bg-dock)] text-white">
-                        défaut ({activeModel?.model})
+                      <Plus className="w-5 h-5" />
+                    </button>
+                    {plusOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-30"
+                          onClick={() => setPlusOpen(false)}
+                          data-testid="plus-menu-backdrop"
+                        />
+                        <div
+                          className="absolute z-40 bottom-full mb-2 left-0 w-60 border-2 border-white/20 bg-[var(--bg-dock)] shadow-[6px_6px_0_0_#05d9e8]"
+                          data-testid="plus-menu"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPlusOpen(false);
+                              fileInputRef.current?.click();
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#ffd700] transition-colors"
+                            data-testid="menu-attach-file"
+                          >
+                            <Paperclip className="w-4 h-4" /> Joindre un fichier
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPlusOpen(false);
+                              setGithubOpen(true);
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#05d9e8] transition-colors border-t border-white/10"
+                            data-testid="menu-save-github"
+                          >
+                            <Github className="w-4 h-4" /> Enregistrer sur GitHub
+                          </button>
+                          <button
+                            type="button"
+                            onClick={forkConversation}
+                            disabled={!activeId || forking}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#ff2a6d] transition-colors border-t border-white/10 disabled:opacity-40"
+                            data-testid="menu-fork-chat"
+                          >
+                            {forking ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <GitFork className="w-4 h-4" />
+                            )}
+                            Forker ce chat
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleDictation}
+                    disabled={transcribing}
+                    className={`btn-ghost border-2 flex-shrink-0 ${
+                      listening
+                        ? "border-[#ff2a6d] text-[#ff2a6d] animate-pulse"
+                        : "border-white/20 hover:border-[#05d9e8] hover:text-[#05d9e8]"
+                    }`}
+                    title={
+                      listening
+                        ? "Arrêter la dictée"
+                        : "Dicter le message à la voix"
+                    }
+                    data-testid="dictate-btn"
+                  >
+                    {transcribing ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : listening ? (
+                      <MicOff className="w-5 h-5" />
+                    ) : (
+                      <Mic className="w-5 h-5" />
+                    )}
+                  </button>
+                  <VoicePicker />
+                </div>
+                <div className="flex items-center gap-2 flex-1 min-w-0 justify-center">
+                  <div
+                    className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
+                    title="Choisir le modèle IA"
+                  >
+                    <Cpu className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                    <select
+                      value={provider}
+                      onChange={handleProviderChange}
+                      className="flex-1 min-w-0 bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
+                      data-testid="provider-select"
+                    >
+                      <option value="auto" className="bg-[var(--bg-dock)] text-white">
+                        Auto (meilleur dispo)
                       </option>
-                      {catalog.map((m) => (
-                        <option key={m} value={m} className="bg-[var(--bg-dock)] text-white">
-                          {m}
+                      {models.map((m) => (
+                        <option
+                          key={m.id}
+                          value={m.id}
+                          className="bg-[var(--bg-dock)] text-white"
+                        >
+                          {m.label}
+                          {m.available === false ? " (non configuré)" : ""}
                         </option>
                       ))}
                     </select>
                   </div>
-                )}
-                <button
-                  type="button"
-                  onClick={toggleFavorite}
-                  className={`btn-ghost border-2 flex-shrink-0 ${
-                    isFavorite
-                      ? "border-[#ffd700] text-[#ffd700]"
-                      : "border-white/20 hover:border-[#ffd700] hover:text-[#ffd700]"
-                  }`}
-                  title={
-                    isFavorite
-                      ? "Retirer des favoris"
-                      : "Épingler ce modèle dans les favoris"
-                  }
-                  data-testid="toggle-favorite-btn"
-                >
-                  <Star
-                    className="w-5 h-5"
-                    fill={isFavorite ? "currentColor" : "none"}
-                  />
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleDictation}
-                  disabled={transcribing}
-                  className={`btn-ghost border-2 flex-shrink-0 ${
-                    listening
-                      ? "border-[#ff2a6d] text-[#ff2a6d] animate-pulse"
-                      : "border-white/20 hover:border-[#05d9e8] hover:text-[#05d9e8]"
-                  }`}
-                  title={
-                    listening
-                      ? "Arrêter la dictée"
-                      : "Dicter le message à la voix"
-                  }
-                  data-testid="dictate-btn"
-                >
-                  {transcribing ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : listening ? (
-                    <MicOff className="w-5 h-5" />
-                  ) : (
-                    <Mic className="w-5 h-5" />
+                  {catalog.length > 0 && (
+                    <div
+                      className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#ffd700]/60 bg-black/40 px-2 py-1"
+                      title="Choisir un modèle précis chez ce provider"
+                    >
+                      <select
+                        value={modelOverride}
+                        onChange={handleModelChange}
+                        className="flex-1 min-w-0 sm:max-w-[150px] bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer"
+                        data-testid="model-select"
+                      >
+                        <option value="" className="bg-[var(--bg-dock)] text-white">
+                          défaut ({activeModel?.model})
+                        </option>
+                        {catalog.map((m) => (
+                          <option key={m} value={m} className="bg-[var(--bg-dock)] text-white">
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   )}
-                </button>
-                <VoicePicker />
-                <div className="relative flex-shrink-0">
                   <button
                     type="button"
-                    onClick={() => setPlusOpen((v) => !v)}
-                    className={`btn-ghost border-2 ${
-                      plusOpen
+                    onClick={toggleFavorite}
+                    className={`btn-ghost border-2 flex-shrink-0 ${
+                      isFavorite
                         ? "border-[#ffd700] text-[#ffd700]"
                         : "border-white/20 hover:border-[#ffd700] hover:text-[#ffd700]"
                     }`}
-                    title="Outils : fichier, GitHub, fork"
-                    data-testid="plus-menu-btn"
+                    title={
+                      isFavorite
+                        ? "Retirer des favoris"
+                        : "Épingler ce modèle dans les favoris"
+                    }
+                    data-testid="toggle-favorite-btn"
                   >
-                    <Plus className="w-5 h-5" />
+                    <Star
+                      className="w-5 h-5"
+                      fill={isFavorite ? "currentColor" : "none"}
+                    />
                   </button>
-                  {plusOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-30"
-                        onClick={() => setPlusOpen(false)}
-                        data-testid="plus-menu-backdrop"
-                      />
-                      <div
-                        className="absolute z-40 bottom-full mb-2 left-0 w-60 border-2 border-white/20 bg-[var(--bg-dock)] shadow-[6px_6px_0_0_#05d9e8]"
-                        data-testid="plus-menu"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPlusOpen(false);
-                            fileInputRef.current?.click();
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#ffd700] transition-colors"
-                          data-testid="menu-attach-file"
-                        >
-                          <Paperclip className="w-4 h-4" /> Joindre un fichier
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPlusOpen(false);
-                            setGithubOpen(true);
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#05d9e8] transition-colors border-t border-white/10"
-                          data-testid="menu-save-github"
-                        >
-                          <Github className="w-4 h-4" /> Enregistrer sur GitHub
-                        </button>
-                        <button
-                          type="button"
-                          onClick={forkConversation}
-                          disabled={!activeId || forking}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs font-mono uppercase tracking-wider text-gray-300 hover:bg-white/5 hover:text-[#ff2a6d] transition-colors border-t border-white/10 disabled:opacity-40"
-                          data-testid="menu-fork-chat"
-                        >
-                          {forking ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <GitFork className="w-4 h-4" />
-                          )}
-                          Forker ce chat
-                        </button>
-                      </div>
-                    </>
-                  )}
                 </div>
-              </div>
-              {/* Ligne 2 sur mobile : saisie + envoi. */}
-              <div className="flex items-end gap-2 min-w-0 sm:contents">
-                <textarea
-                  ref={textareaRef}
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={onKeyDown}
-                  rows={1}
-                  placeholder="Forge a message..."
-                  className="flex-1 min-w-0 bg-transparent border-none outline-none text-white text-base placeholder:text-gray-600 resize-none max-h-40 py-2"
-                  style={{ minHeight: "2.5rem" }}
-                  data-testid="chat-text-input"
-                />
                 {sending ? (
                   <button
                     type="button"

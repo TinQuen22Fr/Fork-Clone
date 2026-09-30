@@ -868,6 +868,17 @@ def _forge_project_block(project: str) -> str:
     )
 
 
+_FORGE_TOOLS_RULE_BLOCK = (
+    "REGLE OBLIGATOIRE SUR LES OUTILS :\n"
+    "1. Apres avoir execute un ou plusieurs outils, tu DOIS IMPERATIVEMENT "
+    "formuler une reponse textuelle claire et complete pour l'utilisateur.\n"
+    "2. Tu as l'interdiction formelle de renvoyer un message vide ou "
+    "contenant uniquement des appels d'outils.\n"
+    "3. Decris systematiquement ce que tu as fait, les fichiers touches "
+    "et le resultat."
+)
+
+
 _FORGE_NO_PROJECT_BLOCK = (
     "AUCUN PROJET ACTIF :\n"
     "- Cette conversation n'est rattachee a aucun projet du workspace. "
@@ -888,6 +899,7 @@ def forge_system_prompt() -> str:
             f"Ne prétends jamais être Claude, ni Claude Code, ni affilié à Anthropic. "
             f"Réponds selon ta véritable identité de modèle, avec clarté, franchise et concision."
         )
+        blocks.append(_FORGE_TOOLS_RULE_BLOCK)
         return "\n\n".join(blocks)
 
     """System prompt effectif : base + cadrage Forge + regles du projet."""
@@ -908,6 +920,7 @@ def forge_system_prompt() -> str:
             )
     else:
         blocks.append(_FORGE_NO_PROJECT_BLOCK)
+    blocks.append(_FORGE_TOOLS_RULE_BLOCK)
     return "\n\n".join(blocks)
 
 
@@ -1608,6 +1621,8 @@ async def _generate_openai_compat(
     messages = _openai_messages(history, text, images)
     tool_steps: list[dict] = []
 
+    has_streamed_text = False
+    had_tools = False
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(conf["timeout"], connect=10.0)
     ) as http:
@@ -1750,11 +1765,15 @@ async def _stream_openai_compat(
             final = None
             async for item in _stream_openai_turn(http, url, headers, payload):
                 if "delta" in item:
+                    has_streamed_text = True
                     yield item
                 else:
                     final = item["final"]
             if not final or not final["tool_calls"]:
+                if had_tools and not has_streamed_text:
+                    yield {"delta": "\n\n*Actions terminées.*"}
                 return
+            had_tools = True
             messages.append({
                 "role": "assistant",
                 "content": final["content"] or "",
