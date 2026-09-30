@@ -41,6 +41,11 @@ import zipfile
 import uuid
 import logging
 import secrets
+import socket
+import ipaddress
+import hashlib
+from cryptography.fernet import Fernet, InvalidToken
+from urllib.parse import urlparse, urljoin
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
@@ -924,9 +929,22 @@ def forge_system_prompt() -> str:
     return "\n\n".join(blocks)
 
 
+# Garde-fou defensif : bloque toute commande visant a afficher/extraire le
+# contenu de fichiers sensibles (secrets, cles privees), sans retirer shell=True
+# ni restreindre les binaires disponibles (choix d'architecture assume : machine
+# dediee mono-utilisateur). Detection au niveau du texte de la commande, avant
+# toute execution.
+_BASH_SENSITIVE_FILE_RE = re.compile(
+    r"(\.env(?:\.[A-Za-z0-9_\-]+)?|\.pem|id_rsa(?:\.pub)?|id_ed25519(?:\.pub)?|\.key)\b",
+    re.I,
+)
+
+
 def _tool_bash(command: str) -> str:
     if not command:
         return "Erreur: commande vide."
+    if _BASH_SENSITIVE_FILE_RE.search(command):
+        return "Accès aux fichiers de configuration sensibles/secrets interdit via bash."
     # cwd force sur la racine du projet actif : le modele ne travaille jamais
     # a la racine de la Forge ni dans un autre projet du workspace.
     cwd = project_root()
@@ -1106,18 +1124,73 @@ _SCRIPT_RE = re.compile(
 )
 
 
+def _validate_public_url(url: str) -> Optional[str]:
+    """
+    Garde-fou anti-SSRF : resout le nom d'hote et rejette toute IP privee,
+    loopback, lien-local ou reservee. Retourne un message d'erreur explicite
+    si l'URL est interdite, sinon None.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:  # noqa: BLE001
+        return "Erreur: URL invalide."
+    if parsed.scheme not in ("http", "https"):
+        return "Erreur: seuls les schemas http:// et https:// sont autorises."
+    hostname = parsed.hostname
+    if not hostname:
+        return "Erreur: URL invalide (hote manquant)."
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        return f"Erreur: resolution DNS impossible pour '{hostname}': {e}"
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return (
+                f"Erreur: acces interdit a une adresse interne/privee "
+                f"({hostname} -> {ip_str}). Les URL internes, locales ou "
+                f"reservees ne sont pas autorisees (protection anti-SSRF)."
+            )
+    return None
+
+
 def _tool_fetch_url(url: str) -> str:
     """Telecharge une page et en extrait le texte, sans dependance lourde."""
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return "Erreur: l'URL doit commencer par http:// ou https://."
     try:
-        resp = httpx.get(
-            url,
-            timeout=25.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; ClaudeUnchainedForge/1.0)"},
-        )
+        # Suit les redirections manuellement (follow_redirects=False) pour
+        # revalider chaque hote traverse : une redirection ne doit jamais
+        # permettre de contourner le blocage des adresses internes/privees.
+        current_url = url
+        resp = None
+        for _ in range(5):
+            err = _validate_public_url(current_url)
+            if err:
+                return err
+            resp = httpx.get(
+                current_url,
+                timeout=25.0,
+                follow_redirects=False,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ClaudeUnchainedForge/1.0)"},
+            )
+            location = resp.headers.get("location")
+            if resp.status_code in (301, 302, 303, 307, 308) and location:
+                current_url = urljoin(current_url, location)
+                continue
+            break
         resp.raise_for_status()
     except Exception as e:  # noqa: BLE001
         return f"Erreur de telechargement: {str(e)[:300]}"
@@ -1208,7 +1281,7 @@ SECRET_PATTERNS = [
     re.compile(r"\b(gsk_)[A-Za-z0-9]{10,}"),
     re.compile(r"\b(csk-)[A-Za-z0-9]{10,}"),
     re.compile(r"\b(nvapi-)[A-Za-z0-9_\-]{10,}"),
-    re.compile(r"\b(gh[pousr]_)[A-Za-z0-9]{10,}"),
+    re.compile(r"\b(gh[prous]_)[A-Za-z0-9_]+"),  # ghp_, gho_, ghu_, ghs_, ghr_
     re.compile(r"\b(github_pat_)[A-Za-z0-9_]{10,}"),
     re.compile(r"\b(AIza)[A-Za-z0-9_\-]{20,}"),
     re.compile(r"\b(xox[baprs]-)[A-Za-z0-9\-]{10,}"),
@@ -3669,6 +3742,58 @@ async def stream_ai_response(
 
 
 # =========================================================================
+# Rate limiting leger en memoire — protection de /auth/login contre le
+# bruteforce (sans dependance externe type Redis : un dict en RAM suffit pour
+# une instance mono-processus). Cle = IP cliente, valeur = timestamps des
+# echecs recents. Purge periodique pour eviter toute fuite memoire.
+# =========================================================================
+_LOGIN_RATE_LIMIT_MAX = 5
+_LOGIN_RATE_LIMIT_WINDOW = 60.0  # secondes
+_LOGIN_RATE_LIMIT_PURGE_INTERVAL = 300.0  # purge des IP inactives
+
+_login_failures: dict[str, list[float]] = {}
+_login_rate_limit_last_purge = time.monotonic()
+
+
+def _login_rate_limit_purge(now: float) -> None:
+    """Supprime les IP sans echec recent : evite une croissance illimitee du
+    dict en memoire au fil du temps."""
+    global _login_rate_limit_last_purge
+    if now - _login_rate_limit_last_purge < _LOGIN_RATE_LIMIT_PURGE_INTERVAL:
+        return
+    _login_rate_limit_last_purge = now
+    cutoff = now - _LOGIN_RATE_LIMIT_WINDOW
+    stale = [ip for ip, ts in _login_failures.items() if not ts or max(ts) < cutoff]
+    for ip in stale:
+        _login_failures.pop(ip, None)
+
+
+def _login_rate_limit_check(ip: str) -> None:
+    """Leve HTTP 429 si l'IP a deja atteint le seuil d'echecs dans la fenetre."""
+    now = time.monotonic()
+    _login_rate_limit_purge(now)
+    cutoff = now - _LOGIN_RATE_LIMIT_WINDOW
+    attempts = [ts for ts in _login_failures.get(ip, []) if ts >= cutoff]
+    _login_failures[ip] = attempts
+    if len(attempts) >= _LOGIN_RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Trop de tentatives de connexion échouées. Veuillez patienter une minute.",
+        )
+
+
+def _login_rate_limit_record_failure(ip: str) -> None:
+    """Enregistre un echec d'authentification pour cette IP."""
+    now = time.monotonic()
+    _login_failures.setdefault(ip, []).append(now)
+
+
+def _login_rate_limit_reset(ip: str) -> None:
+    """Reinitialise le compteur d'echecs de l'IP (mot de passe valide soumis)."""
+    _login_failures.pop(ip, None)
+
+
+# =========================================================================
 # Auth
 # =========================================================================
 @api_router.post("/auth/register")
@@ -3707,13 +3832,21 @@ async def register(payload: RegisterRequest, response: Response):
 
 
 @api_router.post("/auth/login")
-async def login(payload: LoginRequest, response: Response):
+async def login(payload: LoginRequest, request: Request, response: Response):
     database = get_db()
     email = payload.email.lower().strip()
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate limiting : max 5 echecs / 60s / IP, avant meme de toucher la DB.
+    _login_rate_limit_check(client_ip)
 
     user = await database.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
+        _login_rate_limit_record_failure(client_ip)
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Mot de passe valide : on reinitialise le compteur d'echecs de cette IP.
+    _login_rate_limit_reset(client_ip)
 
     token = create_access_token(user["id"], email)
     set_auth_cookie(response, token)
@@ -3934,7 +4067,7 @@ async def chat_send(
         raise
     except Exception as e:
         logger.exception("Echec de la generation de reponse")
-        raise HTTPException(status_code=500, detail=f"AI error: {e}")
+        raise HTTPException(status_code=500, detail="Une erreur est survenue lors de la generation IA. Consultez les logs du serveur.")
 
     # --- Message assistant ---
     ai_msg_doc = {
@@ -4385,7 +4518,7 @@ async def chat_regenerate(
         raise
     except Exception as e:
         logger.exception("Echec de la regeneration")
-        raise HTTPException(status_code=500, detail=f"AI error: {e}")
+        raise HTTPException(status_code=500, detail="Une erreur est survenue lors de la generation IA. Consultez les logs du serveur.")
 
     new_doc = {
         "id": str(uuid.uuid4()),
@@ -4545,17 +4678,60 @@ class GithubPushRequest(BaseModel):
     private: bool = True
 
 
+# =========================================================================
+# Chiffrement au repos du jeton GitHub (E4)
+# =========================================================================
+# Cle symetrique derivee de JWT_SECRET (deja presente dans .env) : aucune
+# variable d'environnement supplementaire a gerer, aucune dependance lourde.
+# Fernet == AES-128-CBC + HMAC-SHA256, standard et suffisant pour ce cas.
+_fernet_instance: Optional[Fernet] = None
+
+
+def _github_fernet() -> Fernet:
+    global _fernet_instance
+    if _fernet_instance is None:
+        base = (settings.jwt_secret or "insecure-fallback-key").encode("utf-8")
+        derived = hashlib.sha256(base).digest()
+        _fernet_instance = Fernet(base64.urlsafe_b64encode(derived))
+    return _fernet_instance
+
+
+def _encrypt_github_token(token: str) -> str:
+    return _github_fernet().encrypt(token.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_github_token(enc: str) -> str:
+    try:
+        return _github_fernet().decrypt(enc.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        # Jeton corrompu/ancien format : on force un re-enregistrement propre.
+        return ""
+
+
 async def _github_token(user_id: str) -> tuple[str, str]:
     """Jeton a utiliser + origine ('ui' | 'env' | 'none')."""
     doc = await get_db().settings.find_one(
         {"key": "github_token", "user_id": user_id}
     )
-    token = (doc or {}).get("token") or ""
+    enc_token = (doc or {}).get("token") or ""
+    token = _decrypt_github_token(enc_token) if enc_token else ""
     if token:
         return token, "ui"
     if settings.github_pat:
         return settings.github_pat, "env"
     return "", "none"
+
+
+async def _github_token_last4(user_id: str) -> str:
+    """4 derniers caracteres du jeton stocke, sans jamais exposer le jeton complet."""
+    doc = await get_db().settings.find_one(
+        {"key": "github_token", "user_id": user_id}
+    )
+    if doc and doc.get("token_last4"):
+        return doc["token_last4"]
+    if settings.github_pat and len(settings.github_pat) >= 4:
+        return settings.github_pat[-4:]
+    return ""
 
 
 def _redact(text: str, token: str) -> str:
@@ -5257,7 +5433,7 @@ async def get_preview_map(current_user: dict = Depends(get_current_user)):
     }
     missing = [n for n, p in expected.items() if mapped.get(n) != p]
     return {
-        "map_file": map_file,
+        "map_file": os.path.basename(map_file),
         "readable": readable,
         "mapped": mapped,
         "expected": expected,
@@ -5266,6 +5442,94 @@ async def get_preview_map(current_user: dict = Depends(get_current_user)):
         "last_refresh": _preview_map_last,
         "command": settings.preview_map_refresh_cmd,
     }
+
+
+@api_router.get("/audit/export-pdf")
+async def export_audit_pdf(current_user: dict = Depends(get_current_user)):
+    """Genere et renvoie AUDIT_SECURITE.md au format PDF (conversion Markdown
+    -> PDF via reportlab, sans dependance systeme externe)."""
+    audit_path = ROOT_DIR.parent / "AUDIT_SECURITE.md"
+    if not audit_path.is_file():
+        raise HTTPException(status_code=404, detail="AUDIT_SECURITE.md introuvable.")
+
+    try:
+        md_text = audit_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.exception("Lecture AUDIT_SECURITE.md impossible")
+        raise HTTPException(status_code=500, detail="Lecture du rapport d'audit impossible.")
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
+        from reportlab.lib.enums import TA_LEFT
+
+        styles = getSampleStyleSheet()
+        style_h1 = ParagraphStyle("AuditH1", parent=styles["Heading1"], fontSize=16, spaceAfter=10)
+        style_h2 = ParagraphStyle("AuditH2", parent=styles["Heading2"], fontSize=13, spaceBefore=12, spaceAfter=6)
+        style_h3 = ParagraphStyle("AuditH3", parent=styles["Heading3"], fontSize=11, spaceBefore=8, spaceAfter=4)
+        style_body = ParagraphStyle("AuditBody", parent=styles["BodyText"], fontSize=9.5, leading=13, alignment=TA_LEFT)
+        style_bullet = ParagraphStyle("AuditBullet", parent=style_body, leftIndent=0)
+
+        def esc(txt: str) -> str:
+            txt = txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            txt = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", txt)
+            txt = re.sub(r"`([^`]+)`", r"<font face='Courier'>\1</font>", txt)
+            return txt
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            topMargin=1.8 * cm, bottomMargin=1.8 * cm,
+            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+        )
+        flow = []
+        bullets: list[str] = []
+
+        def flush_bullets():
+            if bullets:
+                items = [ListItem(Paragraph(esc(b), style_bullet)) for b in bullets]
+                flow.append(ListFlowable(items, bulletType="bullet", leftIndent=14))
+                bullets.clear()
+
+        for raw_line in md_text.splitlines():
+            line = raw_line.rstrip()
+            if not line.strip():
+                flush_bullets()
+                flow.append(Spacer(1, 4))
+                continue
+            if line.startswith("### "):
+                flush_bullets()
+                flow.append(Paragraph(esc(line[4:]), style_h3))
+            elif line.startswith("## "):
+                flush_bullets()
+                flow.append(Paragraph(esc(line[3:]), style_h2))
+            elif line.startswith("# "):
+                flush_bullets()
+                flow.append(Paragraph(esc(line[2:]), style_h1))
+            elif line.strip().startswith(("- ", "* ")):
+                bullets.append(line.strip()[2:])
+            elif line.strip() == "---":
+                flush_bullets()
+                flow.append(Spacer(1, 6))
+            else:
+                flush_bullets()
+                flow.append(Paragraph(esc(line), style_body))
+        flush_bullets()
+
+        doc.build(flow)
+        pdf_bytes = buf.getvalue()
+        buf.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Generation PDF de l'audit impossible")
+        raise HTTPException(status_code=500, detail="Generation du PDF impossible. Consultez les logs du serveur.")
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="AUDIT_SECURITE.pdf"'},
+    )
 
 
 @api_router.post("/conversations/{conv_id}/project")
@@ -5339,6 +5603,7 @@ async def github_status(
     out = {
         "configured": bool(token),
         "source": source,
+        "token_last4": await _github_token_last4(current_user["id"]),
         "root": settings.workspace_root,
         "projects": [p["name"] for p in list_workspace_projects()],
         "project": None,
@@ -5388,12 +5653,19 @@ async def github_set_token(
     if not token:
         raise HTTPException(status_code=400, detail="Jeton vide.")
     login = (await _gh_api(token, "/user")).get("login")
+    encrypted = _encrypt_github_token(token)
     await get_db().settings.update_one(
         {"key": "github_token", "user_id": current_user["id"]},
-        {"$set": {"token": token, "updated_at": now_iso()}},
+        {
+            "$set": {
+                "token": encrypted,
+                "token_last4": token[-4:] if len(token) >= 4 else token,
+                "updated_at": now_iso(),
+            }
+        },
         upsert=True,
     )
-    return {"ok": True, "login": login, "source": "ui"}
+    return {"ok": True, "login": login, "source": "ui", "last4": token[-4:] if len(token) >= 4 else token}
 
 
 @api_router.delete("/github/token")
@@ -5476,7 +5748,6 @@ async def github_push(
     message = (payload.message or "").strip() or (
         f"Sauvegarde depuis Claude Unchained Forge — {now_iso()[:19]}"
     )
-    remote = f"https://x-access-token:{token}@github.com/{repo}.git"
     work_dir, project_name = await resolve_project_dir(
         payload.project, payload.conversation_id, current_user["id"]
     )
@@ -5528,7 +5799,20 @@ async def github_push(
         rev = _git(["rev-parse", "--short", "HEAD"], work_dir)
         commit_sha = rev.stdout.strip()
 
-        push = _git(["push", remote, f"HEAD:refs/heads/{branch}"], work_dir, timeout=600)
+        # Authentification via header HTTP temporaire : le jeton n'apparait
+        # jamais dans l'URL du remote ni dans la table des processus (ps).
+        basic_auth = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+        push = _git(
+            [
+                "-c",
+                f"http.extraHeader=AUTHORIZATION: basic {basic_auth}",
+                "push",
+                "origin",
+                f"HEAD:refs/heads/{branch}",
+            ],
+            work_dir,
+            timeout=600,
+        )
         if push.returncode != 0:
             err = _redact(push.stderr or push.stdout, token)[:600]
             if "rejected" in err or "non-fast-forward" in err:
@@ -5687,8 +5971,21 @@ async def _synth_kokoro(text: str, voice: str) -> bytes:
     return audio
 
 
+_EDGE_RATE_PITCH_RE = re.compile(r"^[+-]?\d+%$")
+
+
+def _sanitize_edge_param(value: str) -> str:
+    """Valide un parametre rate/pitch edge-tts (ex: "+10%", "-5%"). Retombe sur "+0%" si invalide."""
+    if isinstance(value, str) and _EDGE_RATE_PITCH_RE.match(value.strip()):
+        return value.strip()
+    return "+0%"
+
+
 async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
     import edge_tts
+
+    rate = _sanitize_edge_param(rate)
+    pitch = _sanitize_edge_param(pitch)
 
     async def _stream(v: str) -> bytes:
         buf = bytearray()
@@ -5857,9 +6154,14 @@ app.include_router(api_router)
 # On liste donc les origines explicitement. Si FRONTEND_URL est absent, on
 # n'autorise rien plutot que de servir une configuration silencieusement cassee.
 if settings.frontend_urls:
+    # Origines explicites (FRONTEND_URL) + regex restreinte aux hôtes de
+    # développement local (localhost/127.0.0.1, port quelconque). Aucun
+    # wildcard global "*" n'est utilisé : allow_credentials=True impose des
+    # origines précises, jamais un joker universel.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.frontend_urls,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],

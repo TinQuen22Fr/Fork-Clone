@@ -38,6 +38,7 @@ import {
   ShieldCheck,
   Sun,
   Moon,
+  FileDown,
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
@@ -53,6 +54,9 @@ const SECURITY_AUDIT_PROMPT = `Réalise un audit de sécurité défensif complet
 - Exposition de données sensibles (clés d'API, tokens, secrets hardcodés)
 - Failles web courantes (XSS, CORS, gestion des sessions)
 - Permissions et gestion des erreurs.
+
+RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit. Lis-le intégralement avant toute analyse. N'émets JAMAIS de nouvelle alerte sur un point déjà classé « ✅ Vulnérabilités résolues » ou « ⚪ Risque accepté par design (Machine dédiée / Mono-utilisateur) » dans ce fichier : ces points sont clos et ne doivent pas être ré-audités, sauf si tu détectes une régression technique explicite (le correctif a été supprimé, contourné ou cassé par une modification ultérieure du code). Concentre exclusivement ton analyse sur le code ajouté ou modifié depuis le 01/10/2026. Si une régression est détectée sur un point déjà clos, signale-la explicitement en la reliant à son identifiant d'origine (ex. « Régression sur C2 »). Mets à jour AUDIT_SECURITE.md en conséquence (nouvelle entrée ou réouverture argumentée d'un point, jamais une suppression silencieuse de l'historique).
+
 Donne un rapport clair listant les risques identifiés par niveau de criticité et les correctifs concrets à appliquer.`;
 
 export default function Chat() {
@@ -707,6 +711,27 @@ export default function Chat() {
     sendMessage(null, { text: SECURITY_AUDIT_PROMPT });
   };
 
+  const [exportingAuditPdf, setExportingAuditPdf] = useState(false);
+  const exportAuditPdf = async () => {
+    if (exportingAuditPdf) return;
+    setExportingAuditPdf(true);
+    try {
+      const { data } = await api.get("/audit/export-pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "AUDIT_SECURITE.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setExportingAuditPdf(false);
+    }
+  };
+
   const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
@@ -1023,7 +1048,7 @@ export default function Chat() {
               />
             ))}
             {lastAssistantId && !sending && (
-              <div className="mt-4 mb-2">
+              <div className="mt-4 mb-2 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={runSecurityAudit}
@@ -1033,6 +1058,21 @@ export default function Chat() {
                 >
                   <ShieldCheck className="w-4 h-4" />
                   Audit de sécurité
+                </button>
+                <button
+                  type="button"
+                  onClick={exportAuditPdf}
+                  disabled={exportingAuditPdf}
+                  className="security-audit-btn"
+                  data-testid="export-audit-pdf-btn"
+                  title="Télécharger le rapport d'audit de sécurité au format PDF"
+                >
+                  {exportingAuditPdf ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <FileDown className="w-4 h-4" />
+                  )}
+                  Télécharger le rapport PDF
                 </button>
               </div>
             )}
