@@ -661,3 +661,40 @@ body {
 [data-theme="dark"] .scroll-bottom-btn svg {
     stroke: #f5f5f5;
 }
+
+
+/* Bouton d'action rapide "Audit de sécurité" sous les reponses de l'assistant */
+.security-audit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.04);
+    color: #c9c9c9;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.security-audit-btn:hover {
+    border-color: rgba(5, 217, 232, 0.6);
+    background: rgba(5, 217, 232, 0.08);
+    color: #05d9e8;
+}
+.security-audit-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+[data-theme="light"] .security-audit-btn {
+    border-color: rgba(0, 0, 0, 0.18);
+    background: rgba(0, 0, 0, 0.04);
+    color: #4a4a4a;
+}
+[data-theme="light"] .security-audit-btn:hover {
+    border-color: rgba(8, 145, 178, 0.6);
+    background: rgba(8, 145, 178, 0.08);
+    color: #0891b2;
+}

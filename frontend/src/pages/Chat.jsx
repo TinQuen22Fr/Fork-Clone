@@ -35,6 +35,7 @@ import {
   Github,
   GitFork,
   ExternalLink,
+  ShieldCheck,
   Sun,
   Moon,
 } from "lucide-react";
@@ -47,6 +48,12 @@ import PreviewButton from "@/components/PreviewButton";
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const MAX_FAVORITES = 6;
+const SECURITY_AUDIT_PROMPT = `Réalise un audit de sécurité défensif complet du code du workspace et des modifications récentes. Analyse les points suivants :
+- Injection et validation des entrées (SQL, commandes, path traversal)
+- Exposition de données sensibles (clés d'API, tokens, secrets hardcodés)
+- Failles web courantes (XSS, CORS, gestion des sessions)
+- Permissions et gestion des erreurs.
+Donne un rapport clair listant les risques identifiés par niveau de criticité et les correctifs concrets à appliquer.`;
 
 export default function Chat() {
   const { user, logout } = useAuth();
@@ -695,6 +702,11 @@ export default function Chat() {
     }
   };
 
+  const runSecurityAudit = () => {
+    if (sending) return;
+    sendMessage(null, { text: SECURITY_AUDIT_PROMPT });
+  };
+
   const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
@@ -1010,6 +1022,20 @@ export default function Chat() {
                 regenerating={regenerating}
               />
             ))}
+            {lastAssistantId && !sending && (
+              <div className="mt-4 mb-2">
+                <button
+                  type="button"
+                  onClick={runSecurityAudit}
+                  className="security-audit-btn"
+                  data-testid="security-audit-btn"
+                  title="Lancer un audit de sécurité du workspace"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  Audit de sécurité
+                </button>
+              </div>
+            )}
             {sending && (
               <>
                 {(streamText || streamTools.length > 0) && (
