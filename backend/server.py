@@ -848,7 +848,18 @@ def _forge_project_block(project: str) -> str:
         f"scripts d'installation) et a l'OS hote (/etc, /var/log, /usr, "
         f"systemd, nginx).\n"
         f"- Si une tache semble exiger de sortir de {root}/, ne le fais pas : "
-        f"explique la limite et propose une solution interne au projet."
+        f"explique la limite et propose une solution interne au projet.\n"
+        f"- CE PROJET N'EST PAS LA FORGE EN PRODUCTION QUE L'UTILISATEUR "
+        f"UTILISE POUR TE PARLER, meme si son code est identique ou proche "
+        f"(cas d'auto-hebergement/dogfooding) : c'est une copie isolee en "
+        f"{root}/. Toute modification ici reste dans cette preview et NE "
+        f"MET JAMAIS A JOUR l'instance reelle en production. Si l'utilisateur "
+        f"demande un correctif « en prod », « sur mon serveur » ou « pour de "
+        f"vrai », rappelle-lui explicitement le circuit a suivre : 1) valider "
+        f"le correctif ici en preview, 2) le pousser sur GitHub (bouton "
+        f"Sauvegarder sur GitHub), 3) executer upgrade.sh sur son serveur pour "
+        f"le deployer reellement. Ne dis jamais avoir applique un changement "
+        f"en production : tu n'y as aucun acces depuis ce projet."
     )
 
 
