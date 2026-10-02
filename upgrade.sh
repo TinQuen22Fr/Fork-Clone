@@ -65,7 +65,7 @@ if [ "$DO_PULL" -eq 1 ] && [ -d .git ]; then
   c_step "Mise a jour du code"
   CUR_BRANCH="$(git -c safe.directory=* rev-parse --abbrev-ref HEAD)"
   TARGET="${BRANCH:-$CUR_BRANCH}"
-  if [ -n "$(git -c safe.directory=* status --porcelain)" ]; then
+  if [ -n "$(git -c safe.directory=* status --porcelain --untracked-files=no)" ]; then
     c_warn "modifications locales detectees, mises de cote (git stash)"
     git -c safe.directory=* stash push -u -m "upgrade-$STAMP" >/dev/null
     STASHED=1
