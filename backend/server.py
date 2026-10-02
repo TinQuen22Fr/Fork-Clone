@@ -4106,6 +4106,74 @@ async def chat_send(
     return {"user_message": user_msg_doc, "ai_message": ai_msg_doc}
 
 
+def _summarize_turn(content: str, tools: list[dict], stopped: bool) -> str:
+    """Produit un resume court et lisible en francais d'un tour de l'assistant."""
+    n_chars = len(content or "")
+    n_tools = len(tools)
+    state = "interrompue (deconnexion)" if stopped else "terminee"
+    if n_tools == 0:
+        if n_chars:
+            return f"Reponse {state} : {n_chars} caracteres produits, aucun outil execute."
+        return f"Reponse {state} : aucun texte ni outil."
+    names = ", ".join(dict.fromkeys(str(t.get("tool")) for t in tools))[:120]
+    return (
+        f"Reponse {state} : {n_tools} outil(s) execute(s) ({names}), "
+        f"{n_chars} caracteres produits."
+    )
+
+
+@api_router.get("/chat/status")
+async def chat_status(current_user: dict = Depends(get_current_user)):
+    """
+    Resume lisible des derniers tours, utile quand le client se deconnecte en
+    plein traitement : au retour, il retrouve ce qui a ete fait ou pas fait.
+    """
+    database = get_db()
+    convs = (
+        await database.conversations.find(
+            {"user_id": current_user["id"]},
+            {"id": 1, "title": 1, "project": 1, "updated_at": 1},
+        )
+        .sort("updated_at", -1)
+        .to_list(20)
+    )
+    turns = []
+    for conv in convs:
+        last = await database.messages.find_one(
+            {"conversation_id": conv["id"], "role": "assistant"},
+            sort=[("created_at", -1)],
+        )
+        if not last:
+            continue
+        tools = last.get("tool_steps") or []
+        content = last.get("content") or ""
+        turns.append(
+            {
+                "conversation_id": conv["id"],
+                "title": conv.get("title") or "Sans titre",
+                "project": conv.get("project"),
+                "updated_at": conv.get("updated_at"),
+                "created_at": last.get("created_at"),
+                "summary": _summarize_turn(content, tools, last.get("stopped")),
+                "tool_count": len(tools),
+                "tool_names": [t.get("tool") for t in tools],
+                "char_count": len(content),
+                "stopped": bool(last.get("stopped")),
+            }
+        )
+    # Executions encore en cours cote serveur (mode autonome) : le client peut
+    # ainsi afficher "en cours" s'il revient pendant que ca tourne.
+    running = [
+        {
+            "conversation_id": cid,
+            "started_at": info.get("started_at"),
+            "tool_count": info.get("tools", 0),
+        }
+        for cid, info in list(_ACTIVE_RUNS.items())
+    ]
+    return {"turns": turns, "running": running}
+
+
 @api_router.get("/screenshots/{name}")
 async def get_screenshot(name: str, current_user: dict = Depends(get_current_user)):
     """Sert une capture produite par l'outil screenshot_url."""
@@ -4254,66 +4322,54 @@ async def chat_stream(
     }
 
     async def event_source():
+        # Mode autonome : la generation tourne dans une tache de fond, totalement
+        # decouplee de cette connexion SSE. Si le client se deconnecte, le runner
+        # va jusqu'au bout et persiste le message final (stopped=False). On
+        # publie immediatement l'echo du message utilisateur.
         yield _sse("user_message", public_user_msg)
-        chunks: list[str] = []
-        tool_steps: list[dict] = []
-        meta: Optional[dict] = None
-        stopped = True
+
+        channel = _SSEQueue()
+        project = conv.get("project")
+        _ACTIVE_RUNS[conversation_id] = {
+            "started_at": now_iso(),
+            "queue": channel,
+            "tools": 0,
+            "chars": 0,
+        }
+        _spawn(
+            _run_generation(
+                database,
+                conversation_id,
+                history,
+                prompt_text,
+                images,
+                attachments,
+                provider,
+                model,
+                project,
+                channel,
+            )
+        )
         try:
-            async for ev in stream_ai_response(
-                history=history,
-                text=prompt_text,
-                images=images,
-                provider=provider,
-                session_id=conversation_id,
-                model=(model or "").strip() or None,
-            ):
+            async for ev in channel.stream():
                 if ev["type"] == "delta":
-                    chunks.append(ev["text"])
                     yield _sse("delta", {"text": ev["text"]})
                 elif ev["type"] == "start":
-                    meta = {
-                        "provider": ev["provider"],
-                        "model": ev["model"],
-                        "requested_provider": provider,
-                        "fallback_used": False,
-                        "attempts": [],
-                    }
                     yield _sse("start", ev)
                 elif ev["type"] == "tool":
-                    tool_steps.append(ev["step"])
                     yield _sse("tool", ev["step"])
                 elif ev["type"] == "error":
-                    stopped = False
                     yield _sse("error", {"detail": ev["detail"]})
-                    return
                 elif ev["type"] == "done":
-                    meta = ev
-                    stopped = False
-            if meta is None:
-                return
-            ai_doc = await _persist_assistant(
-                database, conversation_id, "".join(chunks), tool_steps, meta, False
+                    yield _sse("done", ev["doc"])
+        except asyncio.CancelledError:
+            # Client deconnecte : le runner de fond continue sa route. On ne
+            # marque SURTOUT pas la generation comme arretee.
+            logger.info(
+                "Client deconnecte (conv %s) : generation poursuivie en fond",
+                conversation_id,
             )
-            await _autotitle(database, conv, conversation_id, text, attachments)
-            yield _sse("done", ai_doc)
-        finally:
-            # Client parti en cours de route : on garde le texte deja produit.
-            # Les `await` sont interdits ici (le generateur est en cours de
-            # fermeture) : on delegue l'ecriture a une tache detachee.
-            if stopped and chunks:
-                _spawn(
-                    _persist_stopped(
-                        database, conversation_id, "".join(chunks), tool_steps,
-                        meta or {
-                            "provider": provider,
-                            "model": model or provider,
-                            "requested_provider": provider,
-                            "fallback_used": False,
-                            "attempts": [],
-                        },
-                    )
-                )
+            raise
 
     return StreamingResponse(
         event_source(),
@@ -4376,6 +4432,158 @@ async def _persist_stopped(
         )
     except Exception:  # noqa: BLE001
         logger.exception("Sauvegarde de la reponse partielle impossible")
+
+
+# ---------------------------------------------------------------------------
+# Mode autonome : la generation survit a la deconnexion du client.
+#
+# Chaque requete /chat/stream lance un *runner* en tache de fond qui consomme
+# stream_ai_response et persiste le resultat final. Le generateur SSE ne fait
+# plus que relayer les evenements : s'il est ferme (client parti), le runner
+# continue jusqu'a la fin et marque le message `stopped: False`.
+# ---------------------------------------------------------------------------
+_ACTIVE_RUNS: dict = {}   # conversation_id -> {started_at, queue, tools, chars}
+
+
+class _SSEQueue:
+    """File d'evenements d'un tour, partagee entre le runner et le(s) client(s).
+
+    Le runner y publie chaque evenement. Tant qu'au moins un client est abonne,
+    il les recoit en direct. Si le client se deconnecte, le runner continue :
+    les evenements restent dans la file (bornee) et sont ignores.
+    """
+
+    def __init__(self) -> None:
+        self._q: asyncio.Queue = asyncio.Queue()
+        self._closed = False
+
+    async def put(self, ev: dict) -> None:
+        await self._q.put(ev)
+
+    def publish(self, ev: dict) -> None:
+        """Version synchrone : ne bloque jamais le runner."""
+        try:
+            self._q.put_nowait(ev)
+        except asyncio.QueueFull:  # pragma: no cover - file non bornee ici
+            pass
+
+    def close(self) -> None:
+        self._closed = True
+        self._q.put_nowait({"type": "__end__"})
+
+    async def stream(self):
+        """Genere les evenements jusqu'a la fermeture. Utilisable par le SSE."""
+        while True:
+            ev = await self._q.get()
+            if ev.get("type") == "__end__":
+                return
+            yield ev
+
+
+async def _run_generation(
+    database,
+    conversation_id: str,
+    history: list,
+    prompt_text: str,
+    images: list,
+    attachments: list,
+    provider: str,
+    model: Optional[str],
+    project: Optional[str],
+    channel: "_SSEQueue",
+) -> None:
+    """Execute une generation complete, independente de toute connexion client.
+
+    Persiste toujours le resultat : `stopped=False` si la generation est allee
+    a son terme, `stopped=True` seulement en cas d'erreur fatale.
+    """
+    # Le contexte projet/provider doit etre reaffirme dans la tache de fond :
+    # les ContextVar ne sont PAS heritees par asyncio.create_task.
+    set_current_project(project)
+    set_current_provider(provider)
+
+    chunks: list = []
+    tool_steps: list = []
+    meta: Optional[dict] = None
+    stopped = False
+    error_detail: Optional[str] = None
+    try:
+        async for ev in stream_ai_response(
+            history=history,
+            text=prompt_text,
+            images=images,
+            provider=provider,
+            session_id=conversation_id,
+            model=(model or "").strip() or None,
+        ):
+            if ev["type"] == "delta":
+                chunks.append(ev["text"])
+                channel.publish(ev)
+            elif ev["type"] == "start":
+                meta = {
+                    "provider": ev["provider"],
+                    "model": ev["model"],
+                    "requested_provider": provider,
+                    "fallback_used": False,
+                    "attempts": [],
+                }
+                channel.publish(ev)
+            elif ev["type"] == "tool":
+                tool_steps.append(ev["step"])
+                _ACTIVE_RUNS.get(conversation_id, {})["tools"] = len(tool_steps)
+                channel.publish(ev)
+            elif ev["type"] == "error":
+                stopped = True
+                error_detail = ev["detail"]
+                channel.publish(ev)
+                break
+            elif ev["type"] == "done":
+                meta = ev
+        if error_detail and not chunks:
+            # Rien a conserver : on laisse le client afficher l'erreur.
+            channel.close()
+            return
+        ai_doc = await _persist_assistant(
+            database, conversation_id, "".join(chunks), tool_steps,
+            meta or {
+                "provider": provider,
+                "model": model or provider,
+                "requested_provider": provider,
+                "fallback_used": False,
+                "attempts": [],
+            },
+            stopped,
+        )
+        conv = await database.conversations.find_one({"id": conversation_id})
+        if conv:
+            await _autotitle(database, conv, conversation_id, prompt_text, attachments)
+        channel.publish({"type": "done", "doc": ai_doc})
+    except asyncio.CancelledError:  # pragma: no cover
+        if chunks:
+            await _persist_assistant(
+                database, conversation_id, "".join(chunks), tool_steps,
+                meta or {}, True,
+            )
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("Generation en tache de fond interrompue")
+        if chunks:
+            try:
+                await _persist_stopped(
+                    database, conversation_id, "".join(chunks), tool_steps,
+                    meta or {
+                        "provider": provider,
+                        "model": model or provider,
+                        "requested_provider": provider,
+                        "fallback_used": False,
+                        "attempts": [],
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Sauvegarde de secours impossible")
+    finally:
+        _ACTIVE_RUNS.pop(conversation_id, None)
+        channel.close()
 
 
 async def _persist_assistant(
@@ -4461,7 +4669,7 @@ async def chat_regenerate(
         raise HTTPException(status_code=404, detail="Conversation not found")
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
-    set_current_provider(provider)
+    set_current_provider(payload.provider)
 
     msgs = (
         await database.messages.find({"conversation_id": payload.conversation_id})

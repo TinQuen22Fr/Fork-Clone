@@ -70,6 +70,7 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -108,6 +109,8 @@ export default function Chat() {
   const textareaRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [statusTurns, setStatusTurns] = useState([]);
+  const [runningTurns, setRunningTurns] = useState([]);
 
   // Initial load - fetch conversations
   useEffect(() => {
@@ -122,6 +125,7 @@ export default function Chat() {
         })
         .catch(() => {});
       refreshUsage();
+      fetchStatusTurns();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -131,6 +135,19 @@ export default function Chat() {
       .get("/opencode/usage")
       .then(({ data }) => setUsage(data?.available ? data.usage : null))
       .catch(() => setUsage(null));
+  };
+
+  const fetchStatusTurns = () => {
+    api
+      .get("/chat/status")
+      .then(({ data }) => {
+        setStatusTurns(data?.turns || []);
+        setRunningTurns(data?.running || []);
+      })
+      .catch(() => {
+        setStatusTurns([]);
+        setRunningTurns([]);
+      });
   };
 
   // Glisser-déposer d'un fichier n'importe où sur la fenêtre.
@@ -175,6 +192,38 @@ export default function Chat() {
     if (activeId) loadMessages(activeId);
     else setMessages([]);
   }, [activeId]);
+
+  // Mode autonome : au retour de veille / reglage de l'onglet, on resynchronise
+  // avec le serveur. Si une generation tourne encore, elle s'affiche comme
+  // active ; si elle s'est terminee pendant l'absence, le message final
+  // apparait (sans badge "arrete").
+  useEffect(() => {
+    const resync = () => {
+      if (document.visibilityState !== "visible") return;
+      if (activeId) loadMessages(activeId);
+      fetchStatusTurns();
+      fetchConversations();
+    };
+    document.addEventListener("visibilitychange", resync);
+    window.addEventListener("focus", resync);
+    return () => {
+      document.removeEventListener("visibilitychange", resync);
+      window.removeEventListener("focus", resync);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
+  // Tant qu'une generation tourne cote serveur, on re-sonde son etat toutes les
+  // 3 secondes pour basculer automatiquement vers le message final a la fin.
+  useEffect(() => {
+    if (!runningTurns.length) return undefined;
+    const iv = setInterval(() => {
+      fetchStatusTurns();
+      if (activeId) loadMessages(activeId);
+    }, 3000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningTurns.length, activeId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -548,8 +597,12 @@ export default function Chat() {
     } catch (err) {
       const aborted = err?.name === "AbortError";
       if (aborted) {
-        setError("Génération arrêtée.");
-        // Le serveur enregistre le texte déjà produit en tâche de fond.
+        // Mode autonome : la génération continue côté serveur. On informe
+        // l'utilisateur sans crier à l'erreur, puis on resynchronisera.
+        setNotice(
+          "Connexion fermée — la génération continue en tâche de fond."
+        );
+        fetchStatusTurns();
         await new Promise((r) => setTimeout(r, 700));
       } else {
         setError(err?.message || "Erreur inconnue");
@@ -739,6 +792,72 @@ export default function Chat() {
   const catalog = activeModel?.models || [];
   return (
     <div className="h-full w-full flex bg-[var(--bg-main)] text-white overflow-hidden">
+      {(runningTurns.length > 0 || statusTurns.length > 0) && (
+        <div
+          className="fixed top-3 right-3 z-50 max-w-md w-[calc(100vw-1.5rem)] sm:w-auto bg-[var(--bg-sidebar)] border-2 border-amber-400/60 text-white rounded-lg shadow-xl p-4 space-y-2"
+          data-testid="resume-banner"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="font-heading font-bold text-sm tracking-tight">
+              {runningTurns.length > 0
+                ? "Mode autonome — génération en cours côté serveur"
+                : "Reprise — travail pendant ton absence"}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusTurns([]);
+                setRunningTurns([]);
+              }}
+              className="text-gray-400 hover:text-white text-lg leading-none"
+              aria-label="Fermer le résumé"
+            >
+              ×
+            </button>
+          </div>
+
+          {runningTurns.length > 0 && (
+            <ul className="space-y-1 text-[12px] text-gray-200">
+              {runningTurns.slice(0, 5).map((r) => (
+                <li
+                  key={`run-${r.conversation_id}`}
+                  className="flex items-start gap-2"
+                >
+                  <span className="inline-block w-2 h-2 mt-1 flex-shrink-0 rounded-full bg-sky-400 animate-pulse" />
+                  <span>
+                    <span className="text-white font-medium">En cours</span>
+                    {" — "}
+                    {r.tool_count > 0
+                      ? `${r.tool_count} outil(s) exécuté(s)…`
+                      : "réflexion…"}
+                    {" (déconnecté, ça continue toute seule)"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {runningTurns.length === 0 && (
+            <ul className="space-y-1 text-[12px] text-gray-300">
+              {statusTurns.slice(0, 5).map((t) => (
+                <li key={t.conversation_id} className="flex items-start gap-2">
+                  <span
+                    className={`inline-block w-2 h-2 mt-1 flex-shrink-0 rounded-full ${
+                      t.stopped ? "bg-amber-400" : "bg-emerald-400"
+                    }`}
+                  />
+                  <span>
+                    <span className="text-white font-medium">{t.title}</span>
+                    {" — "}
+                    {t.summary}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Sidebar */}
       <aside
         className={`${
@@ -1120,6 +1239,21 @@ export default function Chat() {
             <div ref={messagesEndRef} />
           </div>
         </div>
+        )}
+
+        {/* Notice banner (mode autonome) */}
+        {notice && (
+          <div className="px-3 sm:px-4 lg:px-8 pb-2 flex-shrink-0">
+            <div
+              className="max-w-4xl mx-auto border-2 border-sky-400 bg-sky-400/10 text-sky-200 p-3 text-sm font-mono flex items-center justify-between"
+              data-testid="chat-notice"
+            >
+              <span>{notice}</span>
+              <button onClick={() => setNotice("")} className="ml-2">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Error banner */}
