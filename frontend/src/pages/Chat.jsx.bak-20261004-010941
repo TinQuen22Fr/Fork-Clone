@@ -84,9 +84,6 @@ export default function Chat() {
   const [modelOverride, setModelOverride] = useState(
     () => localStorage.getItem("forge_model_override") || ""
   );
-  const [reasoningEffort, setReasoningEffort] = useState(
-    () => localStorage.getItem("forge_reasoning_effort") || "auto"
-  );
   const [favorites, setFavorites] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("forge_favorites") || "[]");
@@ -525,8 +522,6 @@ export default function Chat() {
         conversation_id: activeId,
         provider,
         model: modelOverride || null,
-        reasoning_effort:
-          reasoningEffort && reasoningEffort !== "auto" ? reasoningEffort : null,
       });
       setMessages((prev) => {
         const copy = [...prev];
@@ -682,8 +677,6 @@ export default function Chat() {
       sentFiles.forEach((f) => form.append("files", f));
       form.append("provider", provider);
       if (modelOverride) form.append("model", modelOverride);
-      if (reasoningEffort && reasoningEffort !== "auto")
-        form.append("reasoning_effort", reasoningEffort);
 
       let acc = "";
       await postSSE("/chat/stream", form, {
@@ -896,11 +889,6 @@ export default function Chat() {
     setModelOverride(value);
     if (value) localStorage.setItem("forge_model_override", value);
     else localStorage.removeItem("forge_model_override");
-  };
-
-  const handleReasoningChange = (value) => {
-    setReasoningEffort(value);
-    localStorage.setItem("forge_reasoning_effort", value);
   };
 
   const onKeyDown = (e) => {
@@ -1784,36 +1772,6 @@ export default function Chat() {
                       fill={isFavorite ? "currentColor" : "none"}
                     />
                   </button>
-                  <div
-                    className="flex items-center gap-px border-2 border-white/20 bg-black/40 px-1 py-1 flex-shrink-0"
-                    title="Effort de raisonnement (modeles compatibles uniquement)"
-                  >
-                    <Brain className="w-4 h-4 text-gray-500 flex-shrink-0 mr-0.5" />
-                    {[
-                      { v: "auto", label: "A", full: "auto" },
-                      { v: "low", label: "L", full: "faible" },
-                      { v: "medium", label: "M", full: "moyen" },
-                      { v: "high", label: "H", full: "eleve" },
-                    ].map((opt) => {
-                      const active = reasoningEffort === opt.v;
-                      return (
-                        <button
-                          key={opt.v}
-                          type="button"
-                          onClick={() => handleReasoningChange(opt.v)}
-                          className={`px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase leading-none border ${
-                            active
-                              ? "bg-[#05d9e8] text-black border-[#05d9e8]"
-                              : "bg-transparent text-gray-400 border-white/20 hover:border-[#05d9e8]/60 hover:text-[#05d9e8]"
-                          }`}
-                          title={`Reasoning: ${opt.full}`}
-                          data-testid={`reasoning-${opt.v}`}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
                 {sending ? (
                   <button

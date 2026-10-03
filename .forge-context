@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-03T22:49:58.713115+00:00
+# Dernière mise à jour : 2026-10-03T23:09:30.623668+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 87ccfdf Add 3 items : 1 (web_search), 10 (base_url), 8 (reasoning_effort).
+- Git : branche claude-ai, dernier commit 71d763e Mise à jour de upgrade.sh et requirements.txt.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -84,6 +84,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] @standard-schema
   [architecture] Item 1 (web_search) : implémente l'outil de recherche DuckDuckGo autonome dans backend/tools/web_search.py et branche-le sur notre registre actuel.
   [architecture] On retient uniquement 3 éléments à forte valeur ajoutée : 1.
+  [architecture] 76: c_ok "branche $TARGET @ $(git -c safe.directory=* rev-parse --short HEAD)"
   [architecture] 165: # Utilise la cle Groq deja configuree ; endpoint compatible OpenAI.
   [architecture] 750: """Format `tools` de l'API OpenAI Responses (schema plat, sans sous-objet
   [architecture] 4. sapirrior/code-edith-old architecture diagram: how it works
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [variable] exit_code: 0
   [chemin] /var/www/forge/workspace/Fork-Clone
   [variable] ./backend/tests:
-  [variable] ./frontend/build:
