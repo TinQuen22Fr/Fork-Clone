@@ -93,6 +93,8 @@ export default function Chat() {
   });
   const [streamText, setStreamText] = useState("");
   const [streamTools, setStreamTools] = useState([]);
+  // Etapes autonomes en cours de streaming : chaque etape = { index, intention, tools, status }
+  const [streamSteps, setStreamSteps] = useState([]);
   const [streamInfo, setStreamInfo] = useState(null);
   const [usage, setUsage] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -585,6 +587,7 @@ export default function Chat() {
     abortRef.current = controller;
     setStreamText("");
     setStreamTools([]);
+    setStreamSteps([]);
     setStreamInfo(null);
     try {
       const form = new FormData();
@@ -610,12 +613,38 @@ export default function Chat() {
             setStreamInfo({ provider: data.provider, model: data.model });
           } else if (event === "tool") {
             setStreamTools((prev) => [...prev, data]);
+            // Rattache aussi l'outil a l'etape autonome courante.
+            setStreamSteps((prev) => {
+              if (prev.length === 0) return prev;
+              const copy = [...prev];
+              const last = { ...copy[copy.length - 1] };
+              last.tools = [...(last.tools || []), data];
+              copy[copy.length - 1] = last;
+              return copy;
+            });
+          } else if (event === "step_start") {
+            // Nouvelle etape : cadre distinct cote rendu.
+            setStreamSteps((prev) => [
+              ...prev,
+              { index: data.index, intention: "", tools: [], status: "running" },
+            ]);
+          } else if (event === "step_done") {
+            // Etape validee et deja persistee cote serveur : on fige le cadre.
+            setStreamSteps((prev) => {
+              const step = data.step || {};
+              const idx = prev.findIndex((x) => x.index === step.index);
+              if (idx === -1) return [...prev, { ...step, status: "done" }];
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], ...step, status: "done" };
+              return copy;
+            });
           } else if (event === "error") {
             setError(data.detail);
           } else if (event === "done") {
             setMessages((prev) => [...prev, data]);
             setStreamText("");
             setStreamTools([]);
+            setStreamSteps([]);
             setStreamInfo(null);
           }
         },
@@ -643,6 +672,7 @@ export default function Chat() {
       abortRef.current = null;
       setStreamText("");
       setStreamTools([]);
+      setStreamSteps([]);
       setStreamInfo(null);
       setSending(false);
       textareaRef.current?.focus();
@@ -1294,6 +1324,7 @@ export default function Chat() {
                       model:
                         streamInfo?.model || modelOverride || activeModel?.model,
                       tool_steps: streamTools,
+                      steps: streamSteps,
                       streaming: true,
                     }}
                   />

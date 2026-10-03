@@ -617,6 +617,11 @@ CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude
 # --- Tool Calling (capacités agentiques) ---------------------------------
 MAX_TOOL_ITERS = 25  # garde-fou contre les boucles d'outils infinies
 
+# Etapes autonomes : une fois une etape validee (outils executes), on
+# tronque ses sorties brutes pour ne pas saturer la fenetre de contexte
+# envoyee au modele au tour suivant (les sorties completes restent en base).
+STEP_LOG_TRUNC = 1200  # caracteres conserves par sortie d'outil validee
+
 # Les captures sont ecrites sur disque et servies par /api/screenshots/{nom}.
 SCREENSHOT_DIR = ROOT_DIR / "static" / "screenshots"
 
@@ -5021,8 +5026,14 @@ async def chat_stream(
                     yield _sse("delta", {"text": ev["text"]})
                 elif ev["type"] == "start":
                     yield _sse("start", ev)
+                elif ev["type"] == "step_start":
+                    yield _sse("step_start", {"index": ev["index"]})
                 elif ev["type"] == "tool":
                     yield _sse("tool", ev["step"])
+                elif ev["type"] == "step_done":
+                    # Evenement de fin d'etape : le client cloture le cadre de
+                    # l'etape courante (evite les coupures de flux tronquees).
+                    yield _sse("step_done", {"step": ev["step"]})
                 elif ev["type"] == "error":
                     yield _sse("error", {"detail": ev["detail"]})
                 elif ev["type"] == "done":
@@ -5145,6 +5156,82 @@ class _SSEQueue:
             yield ev
 
 
+
+# ---------------------------------------------------------------------------
+# Etapes autonomes : chaque etape = un texte d'intention SUIVI de son groupe
+# d'outils. Une des qu'une etape est terminee (ses outils sont executes), elle
+# est persiste en base immediatement. Les sorties brutes des etapes validees
+# sont tronquees pour eviter de saturer la fenetre de contexte du modele.
+# ---------------------------------------------------------------------------
+def _truncate_step_logs(step: dict) -> dict:
+    """Retourne une copie de l'etape avec les sorties d'outils tronquees.
+
+    On garde un en-tete lisible (tete de la sortie) : le detail complet reste
+    disponible dans le document Mongo avant troncature.
+    """
+    tools = []
+    for t in step.get("tools") or []:
+        out = t.get("output") or ""
+        if len(out) > STEP_LOG_TRUNC:
+            out = out[:STEP_LOG_TRUNC] + (
+                f"\n... [sortie tronquee : {len(out)} caracteres au total]"
+            )
+        tools.append({**t, "output": out, "truncated": len(t.get("output") or "") > STEP_LOG_TRUNC})
+    return {**step, "tools": tools}
+
+
+def _new_step(index: int, intention: str) -> dict:
+    return {
+        "index": index,
+        "intention": (intention or "").strip(),
+        "tools": [],
+        "status": "running",
+        "created_at": now_iso(),
+    }
+
+
+async def _ensure_assistant_doc(database, conversation_id: str) -> dict:
+    """Cree (une fois) le document assistant du tour, pret a recevoir ses etapes."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": conversation_id,
+        "role": "assistant",
+        "content": "",
+        "has_image": False,
+        "tool_steps": [],
+        "steps": [],
+        "provider": None,
+        "model": None,
+        "requested_provider": None,
+        "fallback_used": False,
+        "routing": [],
+        "stopped": False,
+        "created_at": now_iso(),
+    }
+    await database.messages.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _persist_step(database, message_id: str, step: dict) -> dict:
+    """Persiste immediatement une etape terminee dans le document du tour."""
+    finished = _truncate_step_logs({**step, "status": "done", "finished_at": now_iso()})
+    truncated_tools = [
+        {**t, "output": (t.get("output") or "")[:4000]} for t in step.get("tools") or []
+    ]
+    await database.messages.update_one(
+        {"id": message_id},
+        {
+            "$push": {
+                "steps": finished,
+                "tool_steps": {"$each": truncated_tools},
+            }
+        },
+    )
+    return finished
+
+
+
 async def _run_generation(
     database,
     conversation_id: str,
@@ -5172,10 +5259,43 @@ async def _run_generation(
     await prepare_turn_context(user_id, project)
 
     chunks: list = []
-    tool_steps: list = []
+    tool_steps: list = []          # liste plate (tronquee) : Fetcher + resume
+    full_tool_steps: list = []     # sorties completes : extractions systeme
     meta: Optional[dict] = None
     stopped = False
     error_detail: Optional[str] = None
+
+    # Document assistant cree a la volee : chaque etape terminee y est ajoutee
+    # immediatement (persistance incrementale par etape).
+    assist_doc: Optional[dict] = None
+    message_id: Optional[str] = None
+
+    # Etape courante : son texte d'intention + son groupe d'outils.
+    step_index = 0
+    current: Optional[dict] = None
+
+    async def _finalize_step(final_status: str = "done") -> None:
+        """Persiste en base l'etape courante et previent le client."""
+        nonlocal current
+        if current is None:
+            return
+        has_content = bool(current.get("intention")) or bool(current.get("tools"))
+        if not has_content:
+            current = None
+            return
+        if message_id:
+            finished = await _persist_step(database, message_id, current)
+            # On emet l'evenement de fin d'etape : le client cloture le cadre
+            # et un event `step_done` empeche toute coupure partielle du flux.
+            channel.publish({"type": "step_done", "step": finished})
+        current = None
+
+    def _start_step(intention: str = "") -> None:
+        nonlocal current, step_index
+        current = _new_step(step_index, intention)
+        channel.publish({"type": "step_start", "index": step_index})
+        step_index += 1
+
     try:
         async for ev in stream_ai_response(
             history=history,
@@ -5185,10 +5305,7 @@ async def _run_generation(
             session_id=conversation_id,
             model=(model or "").strip() or None,
         ):
-            if ev["type"] == "delta":
-                chunks.append(ev["text"])
-                channel.publish(ev)
-            elif ev["type"] == "start":
+            if ev["type"] == "start":
                 meta = {
                     "provider": ev["provider"],
                     "model": ev["model"],
@@ -5196,9 +5313,37 @@ async def _run_generation(
                     "fallback_used": False,
                     "attempts": [],
                 }
+                if assist_doc is None:
+                    assist_doc = await _ensure_assistant_doc(database, conversation_id)
+                    message_id = assist_doc["id"]
+                channel.publish(ev)
+            elif ev["type"] == "delta":
+                chunks.append(ev["text"])
+                # Un texte apres des outils = nouveau groupe : on cloture
+                # l'etape precedente (deja persistee) et on en ouvre une autre.
+                if current is None:
+                    _start_step()
+                elif current.get("tools") and not current.get("_sealed"):
+                    # du texte arrive apres une salve d'outils : on scelle
+                    await _finalize_step()
+                    _start_step()
+                current["intention"] = (current.get("intention") or "") + ev["text"]
                 channel.publish(ev)
             elif ev["type"] == "tool":
-                tool_steps.append(ev["step"])
+                if assist_doc is None:
+                    assist_doc = await _ensure_assistant_doc(database, conversation_id)
+                    message_id = assist_doc["id"]
+                if current is None:
+                    _start_step()
+                current["tools"].append(ev["step"])
+                # Une fois qu'une salve d'outils est ouverte, le texte qui
+                # suivra appartiendra a l'etape SUIVANTE (scellement).
+                if current.get("intention"):
+                    current["_sealed"] = True
+                tool_steps.append(_truncate_step_logs(
+                    {"tools": [ev["step"]]}
+                )["tools"][0])
+                full_tool_steps.append(ev["step"])
                 _ACTIVE_RUNS.get(conversation_id, {})["tools"] = len(tool_steps)
                 channel.publish(ev)
             elif ev["type"] == "error":
@@ -5208,20 +5353,30 @@ async def _run_generation(
                 break
             elif ev["type"] == "done":
                 meta = ev
-        if error_detail and not chunks:
+
+        # Fin de flux : on cloture et persiste l'etape en cours.
+        await _finalize_step("done")
+
+        if error_detail and not chunks and not tool_steps:
             # Rien a conserver : on laisse le client afficher l'erreur.
             channel.close()
             return
-        ai_doc = await _persist_assistant(
-            database, conversation_id, "".join(chunks), tool_steps,
-            meta or {
-                "provider": provider,
-                "model": model or provider,
-                "requested_provider": provider,
-                "fallback_used": False,
-                "attempts": [],
-            },
-            stopped,
+
+        if assist_doc is None:
+            # Aucune etape : on cree tout de meme le document final (reponse
+            # vide ou erreur) pour ne pas perdre le tour.
+            assist_doc = await _ensure_assistant_doc(database, conversation_id)
+            message_id = assist_doc["id"]
+
+        final_meta = meta or {
+            "provider": provider,
+            "model": model or provider,
+            "requested_provider": provider,
+            "fallback_used": False,
+            "attempts": [],
+        }
+        ai_doc = await _finalize_assistant(
+            database, message_id, "".join(chunks), final_meta, stopped
         )
         conv = await database.conversations.find_one({"id": conversation_id})
         if conv:
@@ -5231,25 +5386,37 @@ async def _run_generation(
         # tour sont memorises pour les prochaines conversations.
         if project and user_id:
             try:
-                sys_facts = _extract_system_facts(tool_steps)
+                sys_facts = _extract_system_facts(full_tool_steps)
                 if sys_facts:
                     await remember_context_facts(user_id, project, sys_facts, "system")
             except Exception:  # noqa: BLE001
                 logger.warning("Fetcher: capture systeme impossible")
         channel.publish({"type": "done", "doc": ai_doc})
     except asyncio.CancelledError:  # pragma: no cover
-        if chunks:
-            await _persist_assistant(
-                database, conversation_id, "".join(chunks), tool_steps,
-                meta or {}, True,
-            )
+        if current is not None:
+            try:
+                await _finalize_step("done")
+            except Exception:  # noqa: BLE001
+                pass
+        if message_id and (chunks or tool_steps):
+            try:
+                await _finalize_assistant(
+                    database, message_id, "".join(chunks), meta or {}, True
+                )
+            except Exception:  # noqa: BLE001
+                pass
         raise
     except Exception:  # noqa: BLE001
         logger.exception("Generation en tache de fond interrompue")
-        if chunks:
+        if current is not None:
             try:
-                await _persist_stopped(
-                    database, conversation_id, "".join(chunks), tool_steps,
+                await _finalize_step("done")
+            except Exception:  # noqa: BLE001
+                pass
+        if message_id and (chunks or tool_steps):
+            try:
+                await _finalize_assistant(
+                    database, message_id, "".join(chunks),
                     meta or {
                         "provider": provider,
                         "model": model or provider,
@@ -5257,12 +5424,35 @@ async def _run_generation(
                         "fallback_used": False,
                         "attempts": [],
                     },
+                    True,
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("Sauvegarde de secours impossible")
     finally:
         _ACTIVE_RUNS.pop(conversation_id, None)
         channel.close()
+
+
+async def _finalize_assistant(
+    database,
+    message_id: str,
+    content: str,
+    meta: dict,
+    stopped: bool,
+) -> dict:
+    """Cloture le document assistant : contenu final, meta, statut."""
+    update = {
+        "content": redact_secrets(content) or "(reponse vide)",
+        "provider": meta.get("provider"),
+        "model": meta.get("model"),
+        "requested_provider": meta.get("requested_provider"),
+        "fallback_used": meta.get("fallback_used", False),
+        "routing": meta.get("attempts", []),
+        "stopped": stopped,
+    }
+    await database.messages.update_one({"id": message_id}, {"$set": update})
+    doc = await database.messages.find_one({"id": message_id}, {"_id": 0})
+    return doc or {"id": message_id, **update}
 
 
 async def _persist_assistant(

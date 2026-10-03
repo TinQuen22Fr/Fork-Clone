@@ -64,6 +64,7 @@ function ChatMessage({
   const [ttsError, setTtsError] = useState("");
   const [copiedTools, setCopiedTools] = useState(false);
   const [copiedStep, setCopiedStep] = useState(null);
+  const [copiedStepGroup, setCopiedStepGroup] = useState(null);
   const [speaking, setSpeaking] = useState(false);
 
   const copyUser = async () => {
@@ -159,6 +160,25 @@ function ChatMessage({
     }
   };
 
+  const formatStepGroup = (st) => {
+    const parts = [];
+    if (st.intention) parts.push(`Intention : ${st.intention}`);
+    (Array.isArray(st.tools) ? st.tools : []).forEach((s, j) => {
+      parts.push(`[Outils ${j + 1}] ${formatStep(s)}`);
+    });
+    return parts.join("\n\n");
+  };
+
+  const copyStepGroup = async (st, i) => {
+    try {
+      await navigator.clipboard.writeText(formatStepGroup(st));
+      setCopiedStepGroup(i);
+      setTimeout(() => setCopiedStepGroup(null), 1500);
+    } catch (_) {
+      // ignore
+    }
+  };
+
   const copyTools = async () => {
     try {
       await navigator.clipboard.writeText(
@@ -234,6 +254,77 @@ function ChatMessage({
             </span>
           )}
         </div>
+
+        {Array.isArray(message.steps) && message.steps.length > 0 && (
+          <div
+            className="mb-3 space-y-2"
+            data-testid={`steps-${message.id}`}
+          >
+            {message.steps.map((st, i) => {
+              const toolCount = Array.isArray(st.tools) ? st.tools.length : 0;
+              const isDone = st.status === "done";
+              return (
+                <details
+                  key={st.index ?? i}
+                  className="group border-2 border-[#05d9e8]/50 bg-[#05d9e8]/5"
+                  data-testid={`step-${message.id}-${st.index ?? i}`}
+                >
+                  <summary className="px-3 py-1.5 flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-[#05d9e8] transition-transform group-open:rotate-90">
+                      {"\u25b6"}
+                    </span>
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-[#05d9e8]">
+                      Etape {(st.index ?? i) + 1}
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] uppercase tracking-wider ${
+                        isDone ? "text-green-400" : "text-[#ffd700]"
+                      }`}
+                    >
+                      {isDone ? "terminee" : "en cours"}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-gray-500">
+                      {toolCount} outil{toolCount > 1 ? "s" : ""}
+                    </span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        copyStepGroup(st, st.index ?? i);
+                      }}
+                      className="flex items-center gap-1 border border-[#05d9e8]/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#05d9e8] hover:bg-[#05d9e8]/15 transition-colors"
+                      title="Copier cette etape"
+                      data-testid={`copy-step-${message.id}-${st.index ?? i}`}
+                    >
+                      {copiedStepGroup === (st.index ?? i) ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      {copiedStepGroup === (st.index ?? i) ? "Copie" : "Copier"}
+                    </span>
+                  </summary>
+                  {st.intention && (
+                    <div className="px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap border-t border-[#05d9e8]/30 border-b border-[#05d9e8]/20">
+                      {st.intention}
+                    </div>
+                  )}
+                  {Array.isArray(st.tools) && st.tools.length > 0 && (
+                    <div className="px-3 py-2 space-y-2 border-t border-[#05d9e8]/20">
+                      {st.tools.map((s, j) => (
+                        <div key={j} className="border-l-2 border-[#ffd700]/50 pl-3">
+                          <div className="text-[#ffd700] font-mono text-xs mb-1 break-all">
+                            {"\u2192"} {s.tool}({s.input && (s.input.command || s.input.path || JSON.stringify(s.input))})
+                          </div>
+                          <pre className="bg-black/50 p-2 text-[11px] text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
+                            {s.output}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </details>
+              );
+            })}
+          </div>
+        )}
 
         {Array.isArray(message.tool_steps) && message.tool_steps.length > 0 && (
           <details
@@ -429,6 +520,7 @@ export default React.memo(ChatMessage, (a, b) =>
   a.message.id === b.message.id &&
   a.message.content === b.message.content &&
   a.message.tool_steps === b.message.tool_steps &&
+  a.message.steps === b.message.steps &&
   a.isLast === b.isLast &&
   a.regenerating === b.regenerating
 );
