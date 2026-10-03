@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-03T21:25:31.297520+00:00
+# Dernière mise à jour : 2026-10-03T22:39:58.849799+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 292c5fc feat(agent): refonte execution par etapes atomiques, persistance mongo et troncature logs.
+- Git : branche claude-ai, dernier commit 029989b Correctifs divers et fonction roolback (pré-Build).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -25,6 +25,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/test_kokoro_optional.py
   backend/tests/test_regression.py
   backend/tests/test_tts_bugs.py
+  backend/tools/
+  backend/tools/web_search.py
   backend/capture_ui.py
   backend/env.example
   backend/patch_backend.py
@@ -34,6 +36,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/requirements.txt
   backend/reset_password.py
   backend/server.py
+  backend/server.py.bak_item10
   backend/test_rollback.txt
   deploy/
   deploy/KNOWN_ISSUE_preview_map_readonly.md
@@ -63,24 +66,32 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/src/constants/
   frontend/src/context/
   frontend/src/hooks/
-  frontend/src/lib/
-  frontend/src/pages/
-  frontend/src/App.css
 - Faits memorises (les plus importants d'abord) :
+  [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] Corrige cette fausse détection d'absence immédiatement : stocke les tâches déjà notifiées pour ne JAMAIS réafficher la modale en boucle, ne déclenche pas de refresh au moindre changement de focus/visibilité, et temporise strictement le polling du statut.
   [regle] Regarde directement la condition qui affiche le bouton dans ChatMessage.jsx et vérifie pourquoi la prop ne passe pas depuis Chat.jsx.
   [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
   [regle] Termine obligatoirement par la vérification py_compile de server.py et un résumé textuel clair de tes modifications.
   [regle] ok mais avant je souhaite que tu "améliore" et trouve une solution pour éviter ces trop nombreux bloc réponse vide quand je suis en mode auto ou claude
   [regle] Émets des événements de fin d'étape pour éviter les coupures de flux et tronque les logs bruts des étapes validées pour ne pas saturer le contexte avec Claude.
+  [architecture] DEPLOIEMENT.md
   [architecture] Ajoute un endpoint d'API /api/workspace/projects/{name}/rollback permettant de restaurer immédiatement le workspace à l'état du dernier snapshot enregistré.
   [architecture] Vérifie la version de Node et de Python disponibles via bash, liste les packages installés dans package.json, inspecte les routes principales définies dans server.py, puis affiche un compte-rendu synthétique de la stack et des composants détectés.
   [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
-  [architecture] DEPLOIEMENT.md
-  [architecture] vite v6.4.3 building for production...
-  [architecture] @standard-schema
-  [architecture] json-schema-traverse
   [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
+  [architecture] @standard-schema
+  [architecture] Item 1 (web_search) : implémente l'outil de recherche DuckDuckGo autonome dans backend/tools/web_search.py et branche-le sur notre registre actuel.
+  [architecture] On retient uniquement 3 éléments à forte valeur ajoutée : 1.
+  [architecture] 165: # Utilise la cle Groq deja configuree ; endpoint compatible OpenAI.
+  [architecture] 750: """Format `tools` de l'API OpenAI Responses (schema plat, sans sous-objet
+  [architecture] adapte a l'architecture actuelle de The Forge (backend Python, httpx, sortie
+  [architecture] 4. sapirrior/code-edith-old architecture diagram: how it works
+  [architecture] Code Edith A lightweight, terminal-based AI coding agent. Connects to any OpenAI-compatible API endpoint — hosted providers or self-hosted models both work.
+  [architecture] Fichiers cibles impactés dans notre architecture
+  [architecture] Identifie les mécanismes, fonctions et stratégies d'édition de code qui apportent une réelle valeur ajoutée à l'architecture actuelle de la Forge.
+  [architecture] vite v6.4.3 building for production...
+  [architecture] json-schema-traverse
   [architecture] Côté frontend dans frontend/src/components/ChatMessage.jsx, ajoute un bouton compact Annuler l'étape appelant cet endpoint.
   [architecture] Ajoute un endpoint d'API permettant d'annuler les modifications de l'étape courante ou précédente en restaurant cet instantané Git.
   [architecture] **Architecture des routes** : router unique `APIRouter(prefix="/api")` (l.
@@ -94,16 +105,5 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [chemin] cwd: /var/www/forge/workspace/Fork-Clone
   [variable] exit_code: 0
   [chemin] /var/www/forge/workspace/Fork-Clone
-  [variable] * Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le
-  [variable] * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
-  [variable] Erreur: fichier introuvable: frontend/src/components/ChatMessage.jsx
-  [variable] const abortRef = useRef(null);
-  [variable] const fileInputRef = useRef(null);
-  [variable] const recognitionRef = useRef(null);
-  [variable] const recorderRef = useRef(null);
-  [variable] exit_code: 2
-  [variable] 5166:def _truncate_step_logs(step: dict) -> dict:
-  [variable] 623:STEP_LOG_TRUNC = 1200 # caracteres conserves par sortie d'outil validee
-  [variable] 1313:def _extract_system_facts(tool_steps: list[dict]) -> list[dict]:
-  [variable] 1958: tool_steps: list[dict] = []
-  [variable] 2070: tool_steps: list[dict] = []
+  [variable] ./backend/tests:
+  [variable] ./frontend/build:

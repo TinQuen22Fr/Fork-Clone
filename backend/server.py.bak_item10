@@ -56,45 +56,6 @@ def set_current_provider(pid: str):
 from datetime import datetime, timezone, timedelta
 from typing import Optional, AsyncIterator
 
-# --- Item 8 : effort de raisonnement (reasoning_effort) -------------------
-# Valeurs acceptees par les API compatibles OpenAI (gpt-oss, o-series, etc.).
-_REASONING_EFFORTS = ("low", "medium", "high")
-# Familles de modeles qui honorent `reasoning_effort`. Envoyer ce parametre a
-# un modele qui ne le supporte pas provoque un 400 : on ne l'injecte donc que
-# pour les modeles explicitement compatibles ("selon le modele").
-_REASONING_MODEL_RE = re.compile(
-    r"(gpt-oss|gpt-5|gpt-4\.1|o[134](?:-|$)|qwen3|deepseek-r1|"
-    r"reasoning|thinking|glm-4\.\d|magistral)",
-    re.I,
-)
-# Override explicite du tour courant, pose par les routes /chat/* (ContextVar :
-# le patron deja utilise pour le provider/projet, sans alourdir les signatures).
-_current_reasoning_effort: ContextVar[str] = ContextVar(
-    "current_reasoning_effort", default=""
-)
-
-
-def set_current_reasoning_effort(value: Optional[str]) -> None:
-    """Pose l'effort de raisonnement demande pour le tour courant (vide = auto)."""
-    _current_reasoning_effort.set((value or "").strip().lower())
-
-
-def _resolve_reasoning_effort(model: str) -> str:
-    """Determine le `reasoning_effort` a envoyer pour un modele donne.
-
-    - Rien si le modele ne fait pas partie des familles compatibles ;
-    - la valeur demandee par l'utilisateur si elle est valide (low/medium/high) ;
-    - sinon `medium` comme defaut raisonnable pour les modeles compatibles.
-    """
-    if not model or not _REASONING_MODEL_RE.search(model):
-        return ""
-    requested = _current_reasoning_effort.get()
-    if requested in _REASONING_EFFORTS:
-        return requested
-    if requested == "off":
-        return ""
-    return "medium"
-
 import bcrypt
 import jwt
 import httpx
@@ -137,35 +98,6 @@ def _env_bool(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw.lower() in ("1", "true", "yes", "on")
-
-def _normalize_base_url(raw: str, *, assume_v1: bool = True) -> str:
-    """Normalise une URL de base compatible OpenAI.
-
-    - supprime les espaces et les slashs de fin ;
-    - retire un suffixe deja complet ("/chat/completions", "/completions") ;
-    - ajoute le segment de version ("/v1") s'il est absent, sauf si l'URL
-      se termine deja par un segment de version ("/v1", "/v2", "/v1beta"…).
-
-    Aucune modification du comportement existant quand l'URL est deja propre.
-    """
-    url = (raw or "").strip().rstrip("/")
-    if not url:
-        return ""
-    low = url.lower()
-    # URL deja complete : on retire l'endpoint pour ne garder que la base.
-    for suffix in ("/chat/completions", "/completions"):
-        if low.endswith(suffix):
-            url = url[: -len(suffix)].rstrip("/")
-            low = url.lower()
-            break
-    if not assume_v1:
-        return url
-    # Un segment de version est-il deja present en fin d'URL ?
-    last = url.rsplit("/", 1)[-1].lower()
-    if last.startswith("v") and any(ch.isdigit() for ch in last):
-        return url
-    return url + "/v1"
-
 
 
 class Settings:
@@ -253,10 +185,7 @@ class Settings:
             up = pid.upper()
             self.free_providers[pid] = {
                 "label": label,
-                "base_url": _normalize_base_url(
-                    _env(f"{up}_BASE_URL", default_base),
-                    assume_v1=(pid == "proxy"),
-                ),
+                "base_url": _env(f"{up}_BASE_URL", default_base).rstrip("/"),
                 "api_key": _env(f"{up}_API_KEY"),
                 # Vide = premier modele decouvert dynamiquement.
                 "model": _env(f"{up}_MODEL"),
@@ -595,7 +524,6 @@ class RegenerateRequest(BaseModel):
     conversation_id: str
     provider: str = "claude"
     model: Optional[str] = None
-    reasoning_effort: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -2305,10 +2233,6 @@ async def _generate_openai_compat(
                 "messages": messages,
                 "max_tokens": settings.claude_max_tokens,
             }
-            # Item 8 : effort de raisonnement, uniquement si le modele le supporte.
-            _effort = _resolve_reasoning_effort(model_name)
-            if _effort:
-                payload["reasoning_effort"] = _effort
             if settings.enable_tools:
                 payload["tools"] = OPENAI_TOOLS
             resp = await http.post(
@@ -2437,10 +2361,6 @@ async def _stream_openai_compat(
                 "max_tokens": settings.claude_max_tokens,
                 "stream": True,
             }
-            # Item 8 : effort de raisonnement, uniquement si le modele le supporte.
-            _effort = _resolve_reasoning_effort(model_name)
-            if _effort:
-                payload["reasoning_effort"] = _effort
             if settings.enable_tools:
                 payload["tools"] = OPENAI_TOOLS
             final = None
@@ -4611,7 +4531,6 @@ async def chat_send(
     files: list[UploadFile] = File(default=[]),
     provider: str = Form("claude"),
     model: Optional[str] = Form(None),
-    reasoning_effort: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     database = get_db()
@@ -4624,7 +4543,6 @@ async def chat_send(
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
     set_current_provider(provider)
-    set_current_reasoning_effort(reasoning_effort)
 
     if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
@@ -4948,7 +4866,6 @@ async def chat_stream(
     files: list[UploadFile] = File(default=[]),
     provider: str = Form("claude"),
     model: Optional[str] = Form(None),
-    reasoning_effort: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -4968,7 +4885,6 @@ async def chat_stream(
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
     set_current_provider(provider)
-    set_current_reasoning_effort(reasoning_effort)
     if provider not in PROVIDER_IDS and provider != "auto":
         raise HTTPException(status_code=400, detail="provider invalide")
 
@@ -5569,7 +5485,6 @@ async def chat_regenerate(
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
     set_current_provider(payload.provider)
-    set_current_reasoning_effort(payload.reasoning_effort)
 
     msgs = (
         await database.messages.find({"conversation_id": payload.conversation_id})
