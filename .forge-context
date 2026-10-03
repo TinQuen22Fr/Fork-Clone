@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-03T15:56:06.747937+00:00
+# Dernière mise à jour : 2026-10-03T21:25:31.297520+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 6b481f3 Add : Fetcher.
+- Git : branche claude-ai, dernier commit 292c5fc feat(agent): refonte execution par etapes atomiques, persistance mongo et troncature logs.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -34,6 +34,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/requirements.txt
   backend/reset_password.py
   backend/server.py
+  backend/test_rollback.txt
   deploy/
   deploy/KNOWN_ISSUE_preview_map_readonly.md
   deploy/ensure-rwpaths.sh
@@ -65,10 +66,23 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/src/lib/
   frontend/src/pages/
   frontend/src/App.css
-  frontend/src/App.jsx
 - Faits memorises (les plus importants d'abord) :
+  [regle] Corrige cette fausse détection d'absence immédiatement : stocke les tâches déjà notifiées pour ne JAMAIS réafficher la modale en boucle, ne déclenche pas de refresh au moindre changement de focus/visibilité, et temporise strictement le polling du statut.
+  [regle] Regarde directement la condition qui affiche le bouton dans ChatMessage.jsx et vérifie pourquoi la prop ne passe pas depuis Chat.jsx.
+  [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
+  [regle] Termine obligatoirement par la vérification py_compile de server.py et un résumé textuel clair de tes modifications.
+  [regle] ok mais avant je souhaite que tu "améliore" et trouve une solution pour éviter ces trop nombreux bloc réponse vide quand je suis en mode auto ou claude
   [regle] Émets des événements de fin d'étape pour éviter les coupures de flux et tronque les logs bruts des étapes validées pour ne pas saturer le contexte avec Claude.
+  [architecture] Ajoute un endpoint d'API /api/workspace/projects/{name}/rollback permettant de restaurer immédiatement le workspace à l'état du dernier snapshot enregistré.
   [architecture] Vérifie la version de Node et de Python disponibles via bash, liste les packages installés dans package.json, inspecte les routes principales définies dans server.py, puis affiche un compte-rendu synthétique de la stack et des composants détectés.
+  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
+  [architecture] DEPLOIEMENT.md
+  [architecture] vite v6.4.3 building for production...
+  [architecture] @standard-schema
+  [architecture] json-schema-traverse
+  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
+  [architecture] Côté frontend dans frontend/src/components/ChatMessage.jsx, ajoute un bouton compact Annuler l'étape appelant cet endpoint.
+  [architecture] Ajoute un endpoint d'API permettant d'annuler les modifications de l'étape courante ou précédente en restaurant cet instantané Git.
   [architecture] **Architecture des routes** : router unique `APIRouter(prefix="/api")` (l.
   [architecture] - **Données / formulaires** : `@tanstack/react-query`, `swr`, `axios`, `zod`, `react-hook-form` + `@hookform/resolvers`.
   [architecture] - **Frontend** moderne (React 19, Radix/shadcn, TanStack Query) organisé en `pages` / `components` / `hooks` / `context` / `lib`.
@@ -76,34 +90,20 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] Routes principales (`/api/...`) — 47 endpoints
   [architecture] Stack backend — `backend/server.py`
   [architecture] Stack frontend — `frontend/`
-  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
   [architecture] Fonctions async def (endpoints probables):
   [chemin] cwd: /var/www/forge/workspace/Fork-Clone
   [variable] exit_code: 0
-  [variable] 241: data-testid={`steps-${message.id}`}
+  [chemin] /var/www/forge/workspace/Fork-Clone
   [variable] * Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le
   [variable] * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
-  [variable] 244: const toolCount = Array.isArray(st.tools) ? st.tools.length : 0;
-  [variable] 245: const isDone = st.status === "done";
-  [variable] 252: <summary className="px-3 py-1.5 flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
-  [variable] c'est parfait mais il faudrait que ce cadre bleu par exemple enfin avec les itérations maintenant qui s'affiche bien dans le convenablement on est la possibilité de copier ce résultat de tout ce qui est a été exécuté pour pouvoir éventuellement le coller ailleurs par exemple
-  [variable] 247: data-testid={`step-${message.id}-${st.index ?? i}`}
-  [variable] 288: data-testid={`tool-steps-${message.id}`}
-  [variable] 330: data-testid={`copy-tool-step-${message.id}-${i}`}
-  [variable] 478: a.message.tool_steps === b.message.tool_steps &&
   [variable] Erreur: fichier introuvable: frontend/src/components/ChatMessage.jsx
-  [variable] 7248), `allow_origins=settings.frontend_urls` (config cohérente, pas de `"*"` avec credentials).
-  [variable] Bonne nouvelle : la capture que tu m'envoies montre justement que **la refonte par étapes fonctionne** — le message s'affiche bien dans un cadre distinct **« ETAPE 1 / TERMINEE »** avec le texte d'intention dedans.
-  [variable] === package.json files ===
-  [variable] Erreur: fichier introuvable: backend/requirements.txt
-  [variable] Erreur: fichier introuvable: frontend/package.json
-  [variable] Nombre de routes @app.xxx:
-  [chemin] /var/www/forge/workspace/Fork-Clone
+  [variable] const abortRef = useRef(null);
+  [variable] const fileInputRef = useRef(null);
+  [variable] const recognitionRef = useRef(null);
+  [variable] const recorderRef = useRef(null);
+  [variable] exit_code: 2
   [variable] 5166:def _truncate_step_logs(step: dict) -> dict:
   [variable] 623:STEP_LOG_TRUNC = 1200 # caracteres conserves par sortie d'outil validee
-  [variable] === git status complet ===
-  [variable] === recherche de mes helpers/etape ===
-  [chemin] warning: unable to access '/home/quentin/.config/git/ignore': Permission denied
-  [variable] 168: self.history_turns: int = int(_env("HISTORY_TURNS", "20"))
-  [variable] 2506: return history[-settings.history_turns :]
-  [variable] 2516: recent = pending[-settings.history_turns :]
+  [variable] 1313:def _extract_system_facts(tool_steps: list[dict]) -> list[dict]:
+  [variable] 1958: tool_steps: list[dict] = []
+  [variable] 2070: tool_steps: list[dict] = []

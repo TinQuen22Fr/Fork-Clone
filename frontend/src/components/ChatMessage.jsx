@@ -58,6 +58,8 @@ function ChatMessage({
   onFeedback,
   onDelete,
   regenerating = false,
+  project,
+  onRollbackStep,
 }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
@@ -65,6 +67,7 @@ function ChatMessage({
   const [copiedTools, setCopiedTools] = useState(false);
   const [copiedStep, setCopiedStep] = useState(null);
   const [copiedStepGroup, setCopiedStepGroup] = useState(null);
+  const [rollbackBusy, setRollbackBusy] = useState(false);
   const [speaking, setSpeaking] = useState(false);
 
   const copyUser = async () => {
@@ -300,6 +303,40 @@ function ChatMessage({
                       {copiedStepGroup === (st.index ?? i) ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                       {copiedStepGroup === (st.index ?? i) ? "Copie" : "Copier"}
                     </span>
+                    {project && onRollbackStep && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        data-testid={`rollback-step-${message.id}-${st.index ?? i}`}
+                        title="Annuler cette etape : restaure le workspace au snapshot precedent"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (rollbackBusy) return;
+                          const dest = st.index ?? i;
+                          const nombre = dest + 1;
+                          if (
+                            window.confirm(
+                              `Annuler l'etape ${nombre} ? Les modifications de fichiers effectuees par cette etape seront restaurees au snapshot precedent.`
+                            )
+                          ) {
+                            setRollbackBusy(true);
+                            Promise.resolve(
+                              onRollbackStep ? onRollbackStep(message.id) : null
+                            ).finally(() => setRollbackBusy(false));
+                          }
+                        }}
+                        className={`flex items-center gap-1 border px-1.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors ${
+                          rollbackBusy
+                            ? "border-gray-500 text-gray-500 cursor-wait"
+                            : "border-[#ff6b6b]/40 text-[#ff6b6b] hover:bg-[#ff6b6b]/15"
+                        }`}
+                      >
+                        <RotateCcw
+                          className={`w-3 h-3 ${rollbackBusy ? "animate-spin" : ""}`}
+                        />
+                        {rollbackBusy ? "Restauration..." : "Annuler cette etape"}
+                      </span>
+                    )}
                   </summary>
                   {st.intention && (
                     <div className="px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap border-t border-[#05d9e8]/30 border-b border-[#05d9e8]/20">

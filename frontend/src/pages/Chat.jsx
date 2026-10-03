@@ -145,17 +145,66 @@ export default function Chat() {
       .catch(() => setUsage(null));
   };
 
-  const fetchStatusTurns = () => {
+  // Cle localStorage pour ne JAMAIS reafficher en boucle un tour deja notifie
+  // (fermeture de la banniere = memorisation definitive, meme apres reload).
+  const SEEN_TURNS_KEY = "forge_seen_status_turns";
+  const loadSeenTurns = () => {
+    try {
+      const raw = window.localStorage.getItem(SEEN_TURNS_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+      return new Set();
+    }
+  };
+  const saveSeenTurns = (set) => {
+    try {
+      // On borne la taille pour ne pas accumuler indefiniment.
+      const arr = Array.from(set).slice(-200);
+      window.localStorage.setItem(SEEN_TURNS_KEY, JSON.stringify(arr));
+    } catch {
+      // Stockage indisponible (navigation privee, quota) : on ignore.
+    }
+  };
+  const lastStatusFetchRef = useRef(0);
+  const STATUS_MIN_INTERVAL_MS = 15000; // cooldown strict anti-spam reseau
+
+  const fetchStatusTurns = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastStatusFetchRef.current < STATUS_MIN_INTERVAL_MS) {
+      return;
+    }
+    lastStatusFetchRef.current = now;
     api
       .get("/chat/status")
       .then(({ data }) => {
-        setStatusTurns(data?.turns || []);
-        setRunningTurns(data?.running || []);
+        const seen = loadSeenTurns();
+        const turns = data?.turns || [];
+        const running = data?.running || [];
+        // On ne garde que les tours jamais notifies auparavant (par id de
+        // conversation + horodatage de fin) pour eviter toute reapparition.
+        const freshTurns = turns.filter((t) => {
+          const key = `${t.conversation_id}:${t.created_at || ""}`;
+          return !seen.has(key);
+        });
+        setStatusTurns(freshTurns);
+        setRunningTurns(running);
       })
       .catch(() => {
         setStatusTurns([]);
         setRunningTurns([]);
       });
+  };
+
+  const dismissStatusBanner = () => {
+    // Marque definitivement les tours affiches comme "deja vus" avant de
+    // vider l'etat local, afin qu'un futur resync ne les re-propose jamais.
+    const seen = loadSeenTurns();
+    statusTurns.forEach((t) => {
+      seen.add(`${t.conversation_id}:${t.created_at || ""}`);
+    });
+    saveSeenTurns(seen);
+    setStatusTurns([]);
+    setRunningTurns([]);
   };
 
   // Glisser-déposer d'un fichier n'importe où sur la fenêtre.
@@ -201,34 +250,48 @@ export default function Chat() {
     else setMessages([]);
   }, [activeId]);
 
-  // Mode autonome : au retour de veille / reglage de l'onglet, on resynchronise
-  // avec le serveur. Si une generation tourne encore, elle s'affiche comme
-  // active ; si elle s'est terminee pendant l'absence, le message final
-  // apparait (sans badge "arrete").
+  // Mode autonome : on resynchronise avec le serveur UNIQUEMENT lors d'un
+  // vrai retour d'absence (onglet reellement cache puis revisible pendant au
+  // moins ABSENCE_MIN_MS), jamais sur un simple clic/changement de focus
+  // interne a la page. Un cooldown reseau strict (fetchStatusTurns) protege
+  // en plus contre tout spam de requetes.
+  const hiddenAtRef = useRef(null);
+  const ABSENCE_MIN_MS = 20000; // il faut au moins 20s d'onglet cache pour compter comme une "absence"
+
   useEffect(() => {
-    const resync = () => {
-      if (document.visibilityState !== "visible") return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      // Retour a "visible" : on ne resynchronise que si on etait reellement
+      // parti assez longtemps (evite tout resync sur un simple changement
+      // de focus de fenetre ou un clic furtif hors onglet).
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+      if (!hiddenAt) return;
+      const absenceDuration = Date.now() - hiddenAt;
+      if (absenceDuration < ABSENCE_MIN_MS) return;
       if (activeId) loadMessages(activeId);
       fetchStatusTurns();
       fetchConversations();
     };
-    document.addEventListener("visibilitychange", resync);
-    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      document.removeEventListener("visibilitychange", resync);
-      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   // Tant qu'une generation tourne cote serveur, on re-sonde son etat toutes les
-  // 3 secondes pour basculer automatiquement vers le message final a la fin.
+  // 8 secondes (au lieu de 3) pour basculer automatiquement vers le message
+  // final a la fin, sans matraquer le reseau ni le navigateur.
   useEffect(() => {
     if (!runningTurns.length) return undefined;
     const iv = setInterval(() => {
       fetchStatusTurns();
       if (activeId) loadMessages(activeId);
-    }, 3000);
+    }, 8000);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningTurns.length, activeId]);
@@ -483,6 +546,24 @@ export default function Chat() {
       await api.patch(`/messages/${message.id}/feedback`, { feedback: newVal });
     } catch (e) {
       setError(formatApiError(e));
+    }
+  };
+
+  const handleRollbackStep = async (messageId) => {
+    const project = activeConv?.project;
+    if (!project) {
+      setError("Aucun projet actif pour le rollback.");
+      return;
+    }
+    setNotice("Restauration du workspace en cours...");
+    try {
+      await api.post(`/workspace/projects/${encodeURIComponent(project)}/rollback`);
+      setNotice("Workspace restaure au dernier snapshot. Rechargement des messages...");
+      if (activeId) await loadMessages(activeId);
+      else setMessages((prev) => [...prev]);
+    } catch (e) {
+      setError(formatApiError(e));
+      setNotice("");
     }
   };
 
@@ -862,10 +943,7 @@ export default function Chat() {
             </div>
             <button
               type="button"
-              onClick={() => {
-                setStatusTurns([]);
-                setRunningTurns([]);
-              }}
+              onClick={dismissStatusBanner}
               className="text-gray-400 hover:text-white text-lg leading-none"
               aria-label="Fermer le résumé"
             >
@@ -1280,6 +1358,8 @@ export default function Chat() {
                 onFeedback={submitFeedback}
                 onDelete={deleteMessage}
                 regenerating={regenerating}
+                project={activeConv?.project}
+                onRollbackStep={handleRollbackStep}
               />
             ))}
             {lastAssistantId && !sending && (
@@ -1327,6 +1407,8 @@ export default function Chat() {
                       steps: streamSteps,
                       streaming: true,
                     }}
+                    project={activeConv?.project}
+                    onRollbackStep={handleRollbackStep}
                   />
                 )}
                 {!streamText && (
