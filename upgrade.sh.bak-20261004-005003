@@ -111,22 +111,8 @@ if [ "$DO_BACKEND" -eq 1 ]; then
   [ -x "$VENV_DIR/bin/python" ] || die "venv introuvable ($VENV_DIR) — lance install.sh"
   HASH_FILE="$APP_DIR/.upgrade-requirements.sha"
   NEW_HASH="$(sha256sum backend/requirements.txt | cut -d' ' -f1)"
-  NEEDS_INSTALL=0
-  if [ "$(cat "$HASH_FILE" 2>/dev/null)" != "$NEW_HASH" ]; then
-    NEEDS_INSTALL=1
-  fi
-  # Filet de securite : le hash du fichier ne prouve pas que le venv est a jour
-  # (venv desynchronise, install pip interrompue, paquet ajoute apres coup...).
-  # On verifie l'importabilite reelle des paquets critiques : si l'un manque,
-  # on force l'installation meme si requirements.txt est inchange.
-  for mod in ddgs httpx fastapi uvicorn; do
-    if ! "$VENV_DIR/bin/python" -c "import $mod" >/dev/null 2>&1; then
-      c_warn "module manquant dans le venv : $mod -> installation forcee"
-      NEEDS_INSTALL=1
-    fi
-  done
-  if [ "$NEEDS_INSTALL" -eq 0 ]; then
-    c_ok "requirements.txt inchange et dependances critiques presentes, installation sautee"
+  if [ "$(cat "$HASH_FILE" 2>/dev/null)" = "$NEW_HASH" ]; then
+    c_ok "requirements.txt inchange, installation sautee"
   else
     "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null
     "$VENV_DIR/bin/pip" install --upgrade-strategy only-if-needed \

@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-03T22:39:58.849799+00:00
+# Dernière mise à jour : 2026-10-03T22:49:58.713115+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 029989b Correctifs divers et fonction roolback (pré-Build).
+- Git : branche claude-ai, dernier commit 87ccfdf Add 3 items : 1 (web_search), 10 (base_url), 8 (reasoning_effort).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -67,8 +67,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/src/context/
   frontend/src/hooks/
 - Faits memorises (les plus importants d'abord) :
-  [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
+  [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
   [regle] Corrige cette fausse détection d'absence immédiatement : stocke les tâches déjà notifiées pour ne JAMAIS réafficher la modale en boucle, ne déclenche pas de refresh au moindre changement de focus/visibilité, et temporise strictement le polling du statut.
   [regle] Regarde directement la condition qui affiche le bouton dans ChatMessage.jsx et vérifie pourquoi la prop ne passe pas depuis Chat.jsx.
   [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
@@ -78,14 +78,14 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] DEPLOIEMENT.md
   [architecture] Ajoute un endpoint d'API /api/workspace/projects/{name}/rollback permettant de restaurer immédiatement le workspace à l'état du dernier snapshot enregistré.
   [architecture] Vérifie la version de Node et de Python disponibles via bash, liste les packages installés dans package.json, inspecte les routes principales définies dans server.py, puis affiche un compte-rendu synthétique de la stack et des composants détectés.
-  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
   [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
+  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
+  [architecture] adapte a l'architecture actuelle de The Forge (backend Python, httpx, sortie
   [architecture] @standard-schema
   [architecture] Item 1 (web_search) : implémente l'outil de recherche DuckDuckGo autonome dans backend/tools/web_search.py et branche-le sur notre registre actuel.
   [architecture] On retient uniquement 3 éléments à forte valeur ajoutée : 1.
   [architecture] 165: # Utilise la cle Groq deja configuree ; endpoint compatible OpenAI.
   [architecture] 750: """Format `tools` de l'API OpenAI Responses (schema plat, sans sous-objet
-  [architecture] adapte a l'architecture actuelle de The Forge (backend Python, httpx, sortie
   [architecture] 4. sapirrior/code-edith-old architecture diagram: how it works
   [architecture] Code Edith A lightweight, terminal-based AI coding agent. Connects to any OpenAI-compatible API endpoint — hosted providers or self-hosted models both work.
   [architecture] Fichiers cibles impactés dans notre architecture
