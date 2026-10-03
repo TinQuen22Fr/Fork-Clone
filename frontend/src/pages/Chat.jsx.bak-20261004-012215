@@ -1622,7 +1622,7 @@ export default function Chat() {
                 data-testid="chat-text-input"
               />
               {/* Barre d'outils : outils/dictée à gauche, providers au centre, envoi à droite */}
-              <div className="chat-toolbar flex flex-wrap items-center gap-x-2 gap-y-2 min-w-0 px-2 sm:px-3 py-2">
+              <div className="chat-toolbar flex items-center gap-2 min-w-0 px-2 sm:px-3 py-2">
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <div className="relative flex-shrink-0">
                     <button
@@ -1715,7 +1715,7 @@ export default function Chat() {
                   </button>
                   <VoicePicker />
                 </div>
-                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0 justify-center sm:justify-end">
+                <div className="flex items-center gap-2 flex-1 min-w-0 justify-center">
                   <div
                     className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#05d9e8]/60 bg-black/40 px-2 py-1"
                     title="Choisir le modèle IA"
@@ -1785,7 +1785,7 @@ export default function Chat() {
                     />
                   </button>
                   <div
-                    className="flex items-center gap-px border-2 border-white/20 bg-black/40 px-1 py-1 flex-shrink-0 sm:ml-2"
+                    className="flex items-center gap-px border-2 border-white/20 bg-black/40 px-1 py-1 flex-shrink-0"
                     title="Effort de raisonnement (modeles compatibles uniquement)"
                   >
                     <Brain className="w-4 h-4 text-gray-500 flex-shrink-0 mr-0.5" />
