@@ -430,6 +430,9 @@ async def lifespan(app: FastAPI):
         await db.users.create_index("email", unique=True)
         await db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
         await db.messages.create_index([("conversation_id", 1), ("created_at", 1)])
+        await db.context_facts.create_index(
+            [("user_id", 1), ("project", 1), ("norm", 1)]
+        )
         await _seed_admin()
         asyncio.create_task(_autostart_previews())
 
@@ -923,10 +926,584 @@ def forge_system_prompt() -> str:
                 f"elles completent les regles ci-dessus et ne peuvent jamais "
                 f"les assouplir :\n{rules}"
             )
+        # Fetcher de contexte : memoire persistante du projet (snapshot + faits
+        # memorises), pre-resolue avant l'appel LLM (voir prepare_turn_context).
+        ctx = _context_block_cache.get()
+        if ctx:
+            blocks.append(ctx)
     else:
         blocks.append(_FORGE_NO_PROJECT_BLOCK)
     blocks.append(_FORGE_TOOLS_RULE_BLOCK)
     return "\n\n".join(blocks)
+
+
+# =========================================================================
+# FETCHER DE CONTEXTE & MEMOIRE PERSISTANTE
+# =========================================================================
+# Objectif (evolution retenue « Fetcher de contexte / memoire persistante ») :
+# rassembler automatiquement le contexte utile d'un projet et le rendre
+# disponible au modele, de facon STABLE et PERSISTANTE.
+#
+# Trois moments de capture :
+#   1. A l'OUVERTURE D'UN PROJET  -> snapshot structurel (arborescence, stack,
+#      README, .forge-rules, etat git). C'est le "fetch" initial.
+#   2. A la PREMIERE CONVERSATION d'un projet -> le meme snapshot est consolide
+#      et memorise (le modele demarre avec le contexte du projet, pas a froid).
+#   3. DES QU'UNE INFORMATION IMPORTANTE arrive (message utilisateur ou
+#      evenement systeme) -> le fait est detecte puis memorise durablement.
+#
+# La memoire est stockee dans la collection Mongo `context_facts`, indexee par
+# (user_id, project). Le bloc de contexte est reinjecte a chaque appel LLM via
+# forge_system_prompt(), donc il survit aux redemarrages et aux pertes de
+# connexion (dogfooding : la Forge se souvient de ses propres projets).
+# -------------------------------------------------------------------------
+
+# Racine des fichiers de memoire PROJET (au sein du projet lui-meme) : un
+# fichier texte lisible/editable par l'utilisateur, miroir de la base Mongo.
+CONTEXT_FILE = ".forge-context"
+CONTEXT_FILE_MAX_CHARS = int(_env("FORGE_CONTEXT_FILE_MAX_CHARS", "8000"))
+# Nb max de faits memoires reinjectes par projet (les plus importants d'abord).
+CONTEXT_MAX_FACTS = int(_env("FORGE_CONTEXT_MAX_FACTS", "40"))
+# Taille du snapshot d'arborescence (fichiers listes).
+CONTEXT_TREE_MAX_ENTRIES = int(_env("FORGE_CONTEXT_TREE_MAX_ENTRIES", "80"))
+# Profondeur maximale du scan d'arborescence.
+CONTEXT_TREE_MAX_DEPTH = int(_env("FORGE_CONTEXT_TREE_MAX_DEPTH", "3"))
+
+# Dossiers ignorés lors du scan (dependances reinstallables / bruit).
+_CONTEXT_SKIP_DIRS = {
+    ".git", "node_modules", "__pycache__", "venv", ".venv", "env",
+    "dist", "build", ".next", ".turbo", ".cache", ".mypy_cache",
+    ".pytest_cache", "coverage", ".idea", ".vscode", "static",
+}
+
+# Fichiers de description de stack : lus pour deduire la nature du projet.
+_CONTEXT_MANIFESTS = (
+    "package.json", "requirements.txt", "pyproject.toml", "Pipfile",
+    "go.mod", "Cargo.toml", "composer.json", "Gemfile", "pom.xml",
+    "build.gradle", "Dockerfile", "docker-compose.yml", "Makefile",
+)
+
+# Mots-clés signalant une information IMPORTANTE dans un texte (heuristique
+# locale, sans appel LLM : cout zero, fonctionne hors-ligne).
+# ---------------------------------------------------------------------
+# CAPTURE DES FAITS — priorisation & anti-bruit
+#
+# Le Fetcher ne memorise PAS tout ce qui passe : il classe chaque passage
+# selon sa priorite et ignore le bruit (logs, politesses, phrases sans
+# enjeu). Ordre de priorite conforme au cadrage produit :
+#   4  instruction/decision/regle EXPLICITE (utilisateur)
+#   3  architecture / choix technique acte
+#   2  chemin systeme cle ou variable d'environnement identifiee
+#   1  fait factuel minimum (version, port, url, domaine)
+#   0  bruit -> ignore
+# ---------------------------------------------------------------------
+
+# Categorie 4 (maximale) : l'utilisateur formule une regle / instruction.
+_RULE_KEYWORDS = (
+    "il faut", "tu dois", "on doit", "je veux que", "je souhaite que",
+    "ne jamais", "ne pas", "toujours", "interdit", "obligatoire",
+    "souviens-toi", "souviens", "retiens", "note bien", "notez bien",
+    "a retenir", "a ne pas oublier", "rappel important", "regle", "consigne",
+    "a partir de maintenant", "desormais", "pour l'avenir", "decision",
+)
+
+# Categorie 3 (haute) : decisions explicites et architecture figee.
+_ARCH_KEYWORDS = (
+    "architecture", "on utilise", "on a choisi", "on retient",
+    "convention", "pattern", "stack", "techno",
+    "base de donnees", "collection", "schema", "endpoint", "contrat api",
+    "deploiement", "production", "branche", "depot", "migration",
+)
+
+# Categorie 2 (moyenne) : chemins SYSTEME cles uniquement. Un simple /tmp ou
+# un chemin relatif ne doit PAS declencher a lui seul une memorisation.
+_SYS_PATH_RE = re.compile(
+    r"(?<![\w/])("
+    r"/(?:etc|opt|srv|usr|var|home|root|mnt|media)"
+    r"(?:/[\w.@-]+)+"
+    r")"
+)
+_ENV_VAR_RE = re.compile(
+    r"\b([A-Z][A-Z0-9_]{2,})\b"
+    r"(?=\s*[=:]|\s+(?:est|sont|contient|vaut|doit etre)\b)",
+    re.IGNORECASE,
+)
+
+# Categorie 1 : motifs factuels minimaux (version, port, url, domaine).
+_FACT_PATTERNS = (
+    (re.compile(r"\bv?\d+\.\d+(?:\.\d+)?\b"), "version"),
+    (re.compile(r"\bport\s*[:=]?\s*(\d{2,5})\b", re.I), "port"),
+    (re.compile(r"\bhttps?://[\w.-]+(?::\d+)?(?:/[\w./-]*)?", re.I), "url"),
+    (re.compile(r"\b([a-z0-9-]+\.(?:fr|com|org|net|io|dev|ai))\b", re.I), "domaine"),
+)
+
+# Duree minimale d'une phrase candidate a la memorisation.
+_MIN_SENTENCE_LEN = 12
+
+
+def _project_context_file(name: str) -> Optional[Path]:
+    root = project_root(name)
+    return (root / CONTEXT_FILE) if root is not None else None
+
+
+def _scan_project_tree(root: Path) -> list[str]:
+    """Arborescence compacte du projet (fichiers, profondeur limitee)."""
+    lines: list[str] = []
+    base_depth = len(root.parts)
+
+    def walk(d: Path):
+        try:
+            entries = sorted(d.iterdir(), key=lambda p: (p.is_file(), p.name))
+        except OSError:
+            return
+        for e in entries:
+            if len(lines) >= CONTEXT_TREE_MAX_ENTRIES:
+                return
+            if e.name in _CONTEXT_SKIP_DIRS or e.name.startswith(".forge-"):
+                continue
+            depth = len(e.parts) - base_depth
+            if depth > CONTEXT_TREE_MAX_DEPTH:
+                continue
+            rel = e.relative_to(root)
+            if e.is_dir():
+                lines.append(f"{rel}/")
+                walk(e)
+            else:
+                lines.append(str(rel))
+
+    walk(root)
+    if len(lines) >= CONTEXT_TREE_MAX_ENTRIES:
+        lines.append("... (arborescence tronquee)")
+    return lines
+
+
+def _detect_stack(root: Path) -> list[str]:
+    """Deduit la stack technique des fichiers manifestes presents."""
+    found: list[str] = []
+    for m in _CONTEXT_MANIFESTS:
+        if (root / m).is_file():
+            found.append(m)
+    # Signatures plus parlantes.
+    stack: list[str] = []
+    if (root / "package.json").is_file():
+        try:
+            pkg = json.loads((root / "package.json").read_text(errors="replace"))
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            notable = [
+                k for k in ("react", "vue", "next", "vite", "express",
+                            "fastapi", "axios", "tailwindcss", "typescript")
+                if k in deps
+            ]
+            stack.append("Node/JS" + (f" ({', '.join(notable)})" if notable else ""))
+        except Exception:  # noqa: BLE001
+            stack.append("Node/JS")
+    if (root / "requirements.txt").is_file() or (root / "pyproject.toml").is_file():
+        stack.append("Python")
+    if (root / "go.mod").is_file():
+        stack.append("Go")
+    if (root / "Cargo.toml").is_file():
+        stack.append("Rust")
+    if (root / "Dockerfile").is_file() or (root / "docker-compose.yml").is_file():
+        stack.append("Docker")
+    if found:
+        stack.append(f"manifestes: {', '.join(found)}")
+    return stack
+
+
+def _git_head_info(root: Path) -> dict:
+    """Branche + dernier commit du projet (sans dependance GitPython)."""
+    info: dict = {}
+    if not (root / ".git").exists():
+        return info
+    try:
+        branch = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if branch:
+            info["branch"] = branch
+        last = subprocess.run(
+            ["git", "-C", str(root), "log", "-1", "--pretty=%h %s"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if last:
+            info["last_commit"] = last
+    except Exception:  # noqa: BLE001
+        pass
+    return info
+
+
+def _read_readme_excerpt(root: Path) -> str:
+    """Premier extrait du README : donne l'intention du projet."""
+    for name in ("README.md", "README.rst", "README.txt", "readme.md"):
+        f = root / name
+        if f.is_file():
+            try:
+                txt = f.read_text(encoding="utf-8", errors="replace")
+                return txt.strip()[:1500]
+            except OSError:
+                return ""
+    return ""
+
+
+def fetch_project_snapshot(name: str) -> dict:
+    """
+    FETCH à l'ouverture d'un projet : photographie structurelle complete.
+
+    Retourne un dict {project, root, stack, tree, git, readme, rules, is_repo}
+    utilisé tel quel pour la mémoire et pour le bloc de contexte du prompt.
+    """
+    root = project_root(name)
+    if root is None:
+        return {"project": name, "root": None, "exists": False}
+    rules = _read_project_rules(name)
+    return {
+        "project": name,
+        "root": str(root),
+        "exists": True,
+        "is_repo": (root / ".git").exists(),
+        "stack": _detect_stack(root),
+        "tree": _scan_project_tree(root),
+        "git": _git_head_info(root),
+        "readme": _read_readme_excerpt(root),
+        "rules": rules,
+        "fetched_at": now_iso(),
+    }
+
+
+def _norm_fact(text: str) -> str:
+    """Clé de deduplication : texte normalisé (minuscules, espaces compresses)."""
+    return re.sub(r"\s+", " ", (text or "").strip().lower())[:200]
+
+
+def _fact_priority(text: str) -> tuple[int, str]:
+    """
+    Classe un fait selon sa PRIORITE (0 = a ignorer, plus haut = plus important).
+
+      4 = instruction/decision/regle EXPLICITE
+      3 = architecture / choix technique acte
+      2 = chemin systeme cle ou variable d'environnement
+      1 = fait factuel minimum (version, port, url, domaine)
+      0 = bruit -> non memorise
+
+    Anti-bruit strict : un simple mot isole ("erreur", "api", "version") ne
+    suffit pas ; il faut un marqueur d'instruction, un mot d'architecture,
+    un chemin SYSTEME, ou un motif factuel fort.
+    """
+    low = (text or "").lower().strip()
+    if len(low) < _MIN_SENTENCE_LEN:
+        return 0, ""
+
+    if any(k in low for k in _RULE_KEYWORDS):
+        return 4, "regle"
+    if any(k in low for k in _ARCH_KEYWORDS):
+        return 3, "architecture"
+    if _SYS_PATH_RE.search(text or ""):
+        return 2, "chemin"
+    if _ENV_VAR_RE.search(text or ""):
+        return 2, "variable"
+    if len(low) >= 20:
+        for pat, kind in _FACT_PATTERNS:
+            if pat.search(text or ""):
+                return 1, kind
+    return 0, ""
+
+
+def _looks_important(text: str) -> bool:
+    """Ce texte merite-t-il d'etre memorise ? (priorite >= 1)"""
+    return _fact_priority(text)[0] > 0
+
+
+def _extract_fact_labels(text: str) -> list[str]:
+    """Etiquettes de fait detectees, pour enrichir/organiser la memoire."""
+    labels: list[str] = []
+    _, kind = _fact_priority(text)
+    if kind and kind not in labels:
+        labels.append(kind)
+    for pat, k in _FACT_PATTERNS:
+        if pat.search(text or "") and k not in labels:
+            labels.append(k)
+    return labels
+
+
+async def remember_context_facts(
+    user_id: str,
+    project: str,
+    facts: list[dict],
+    source: str = "user",
+) -> int:
+    """
+    Memorise durablement des faits (message utilisateur ou evènement systeme).
+
+    Chaque fait : {"text": str, "kind": str, "labels": [...], "source": str}.
+    Deduplication par (project, norm) ; un fait deja connu voit son compteur de
+    confirmation incrementé. Retourne le nombre de nouveaux faits inseres.
+    """
+    if not project or not facts:
+        return 0
+    database = get_db()
+    inserted = 0
+    now = now_iso()
+    for f in facts:
+        text = re.sub(r"\s+", " ", (f.get("text") or "").strip())
+        if not text:
+            continue
+        norm = _norm_fact(text)
+        existing = await database.context_facts.find_one(
+            {"user_id": user_id, "project": project, "norm": norm}, {"_id": 1}
+        )
+        if existing:
+            await database.context_facts.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"updated_at": now}, "$inc": {"confirmations": 1}},
+            )
+            continue
+        await database.context_facts.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "project": project,
+            "text": text[:1000],
+            "norm": norm,
+            "kind": f.get("kind") or "note",
+            "labels": f.get("labels") or [],
+            "priority": int(f.get("priority") or 0),
+            "source": f.get("source") or source,
+            "confirmations": 1,
+            "created_at": now,
+            "updated_at": now,
+        })
+        inserted += 1
+    return inserted
+
+
+async def capture_user_facts(user_id: str, project: str, text: str) -> int:
+    """
+    Capture les informations IMPORTANTES d'un message utilisateur.
+
+    Ne memorise pas tout : uniquement les passages qui declenchent
+    l'heuristique `_looks_important` (phrases decoupees sur la ponctuation).
+    """
+    if not project or not text:
+        return 0
+    # Decoupage en phrases : on memorise l'unité de sens, pas le pave entier.
+    candidates = re.split(r"(?<=[.!?;\n])\s+", text)
+    facts: list[dict] = []
+    for c in candidates:
+        c = c.strip()
+        if not c or len(c) > 500:
+            continue
+        priority, kind = _fact_priority(c)
+        if priority <= 0:
+            continue  # bruit : non memorise
+        facts.append({
+            "text": c,
+            "kind": kind or "user",
+            "priority": priority,
+            "labels": _extract_fact_labels(c),
+            "source": "user",
+        })
+    return await remember_context_facts(user_id, project, facts, "user")
+
+
+def _extract_system_facts(tool_steps: list[dict]) -> list[dict]:
+    """
+    Faits SYSTEME importants reveles par les outils d'un tour.
+
+    On ne memorise que les sorties porteuses de chemins SYSTEME cles, de
+    variables d'environnement (noms seulement, jamais les valeurs : le
+    redact_secrets amont les a deja masquees) ou de marqueurs d'architecture.
+    Sortie volontairement tres filtree (anti-bruit : pas les listings, pas les
+    simple lignes de statut).
+    """
+    facts: list[dict] = []
+    seen: set[str] = set()
+    for step in tool_steps or []:
+        tool = step.get("tool") or ""
+        out = step.get("output") or ""
+        if not out:
+            continue
+        for line in out.splitlines():
+            line = line.strip()
+            if len(line) < _MIN_SENTENCE_LEN or len(line) > 300:
+                continue
+            pr, kind = _fact_priority(line)
+            if pr < 2:
+                continue  # rien de structurel : on ignore
+            key = _norm_fact(line)
+            if key in seen:
+                continue
+            seen.add(key)
+            facts.append({
+                "text": line,
+                "kind": kind,
+                "priority": pr,
+                "labels": _extract_fact_labels(line),
+                "source": "system",
+                "tool": tool,
+            })
+    return facts[:8]  # borne anti-saturation de la collection
+
+
+async def recall_context_facts(user_id: str, project: str) -> list[dict]:
+    """Rappelle les faits memorises d'un projet (plus confirmes/recents d'abord)."""
+    if not project:
+        return []
+    database = get_db()
+    docs = await database.context_facts.find(
+        {"user_id": user_id, "project": project}, {"_id": 0}
+    ).sort([("priority", -1), ("confirmations", -1), ("updated_at", -1)]).to_list(CONTEXT_MAX_FACTS)
+    return docs
+
+
+async def fetch_and_store_project(
+    user_id: str, project: str, source: str = "system"
+) -> dict:
+    """
+    FETCH COMPLET d'un projet (ouverture de projet / premiere conversation).
+
+    Consolide le snapshot structurel en memoire : la stack, l'etat git et les
+    regles locales deviennent des faits persistants. Idempotent (deduplication).
+    """
+    snap = fetch_project_snapshot(project)
+    if not snap.get("exists"):
+        return {"ok": False, "project": project, "reason": "projet introuvable"}
+
+    facts: list[dict] = []
+    if snap.get("stack"):
+        facts.append({
+            "text": f"Stack technique de {project} : {', '.join(snap['stack'])}.",
+            "kind": "snapshot", "source": source,
+        })
+    if snap.get("git"):
+        g = snap["git"]
+        facts.append({
+            "text": (
+                f"Depot git de {project} — branche {g.get('branch', '?')}"
+                + (f", dernier commit : {g.get('last_commit')}" if g.get("last_commit") else "")
+                + "."
+            ),
+            "kind": "snapshot", "source": source,
+        })
+    if snap.get("rules"):
+        facts.append({
+            "text": f"Regles locales du projet {project} : {snap['rules'][:500]}",
+            "kind": "rules", "source": source,
+        })
+    if snap.get("readme"):
+        facts.append({
+            "text": f"Extrait README {project} : {snap['readme'][:500]}",
+            "kind": "readme", "source": source,
+        })
+
+    inserted = await remember_context_facts(user_id, project, facts, source)
+    logger.info(
+        "Fetcher: projet %s — snapshot consolide (%d nouveau(x) fait(s))",
+        project, inserted,
+    )
+    return {"ok": True, "project": project, "inserted": inserted, "snapshot": snap}
+
+def _render_context_block(snap: dict, facts: list[dict]) -> str:
+    """
+    Construit le bloc de contexte « MEMOIRE DU PROJET » injecte dans le prompt.
+
+    Sert au modele pour repartir avec le contexte reel du projet (structure,
+    stack, regles, faits memorises) sans que l'utilisateur ait a tout repeter.
+    """
+    if not snap or not snap.get("exists"):
+        return ""
+    lines: list[str] = [f"MEMOIRE PERSISTANTE DU PROJET « {snap['project']} » :"]
+    lines.append(
+        "- Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte "
+        "des captures automatiques faites a l'ouverture du projet et a chaque "
+        "information importante. Fie-toi a lui au lieu de re-scanner."
+    )
+    if snap.get("stack"):
+        lines.append(f"- Stack : {', '.join(snap['stack'])}.")
+    if snap.get("git"):
+        g = snap["git"]
+        lines.append(
+            f"- Git : branche {g.get('branch', '?')}"
+            + (f", dernier commit {g.get('last_commit')}" if g.get("last_commit") else "")
+            + "."
+        )
+    tree = snap.get("tree") or []
+    if tree:
+        lines.append("- Arborescence (extrait) :\n  " + "\n  ".join(tree[:60]))
+    if facts:
+        lines.append("- Faits memorises (les plus importants d'abord) :")
+        for f in facts[:CONTEXT_MAX_FACTS]:
+            tag = f.get("kind") or "note"
+            lines.append(f"  [{tag}] {f.get('text', '')[:400]}")
+    return "\n".join(lines)
+
+
+def sync_context_file(name: str, snap: dict, facts: list[dict]) -> None:
+    """
+    Miroir disque lisible de la memoire (<projet>/.forge-context).
+
+    Permet a l'utilisateur de voir/editer ce que la Forge retient. Jamais
+    bloquant : un echec d'ecriture est ignore (la base Mongo reste la source).
+    """
+    path = _project_context_file(name)
+    if path is None:
+        return
+    try:
+        header = (
+            "# Mémoire de contexte — généré automatiquement par The Forge\n"
+            "# Ce fichier est un miroir lisible de la mémoire du Fetcher.\n"
+            f"# Dernière mise à jour : {now_iso()}\n\n"
+        )
+        body = _render_context_block(snap, facts)
+        path.write_text((header + body)[:CONTEXT_FILE_MAX_CHARS], encoding="utf-8")
+    except OSError:
+        pass
+
+
+async def get_project_context(user_id: str, project: str) -> str:
+    """
+    Contexte pret a injecter dans le prompt pour un projet donne.
+
+    Combine le snapshot structurel frais et les faits memorises. Utilise par
+    forge_system_prompt() — donc actif des la premiere conversation du projet.
+    """
+    if not project:
+        return ""
+    snap = fetch_project_snapshot(project)
+    facts = await recall_context_facts(user_id, project)
+    block = _render_context_block(snap, facts)
+    # Miroir disque en tache de fond (pas de blocage du tour).
+    try:
+        asyncio.get_running_loop().create_task(
+            asyncio.to_thread(sync_context_file, project, snap, facts)
+        )
+    except RuntimeError:
+        pass
+    return block
+
+
+# Contexte projet du tour courant : rempli par les routes avant generate, lu par
+# forge_system_prompt() (asynchrone -> on met en cache le bloc resolu).
+_context_block_cache: ContextVar[str] = ContextVar("forge_context_block", default="")
+
+
+async def prepare_turn_context(user_id: Optional[str], project: Optional[str]) -> str:
+    """
+    Pre-resout le bloc de contexte du projet pour le tour courant et le range
+    dans le ContextVar lu par forge_system_prompt().
+
+    Appelee en amont de chaque appel LLM (routes /chat/*), y compris dans la
+    tache de fond du mode autonome (les ContextVar ne sont pas heritees par
+    asyncio.create_task : il faut donc la reaffirmer explicitement).
+    """
+    block = ""
+    if user_id and project:
+        try:
+            block = await get_project_context(user_id, project)
+        except Exception:  # noqa: BLE001
+            logger.warning("Fetcher: contexte indisponible pour %s", project)
+            block = ""
+    _context_block_cache.set(block)
+    return block
 
 
 # Garde-fou defensif : bloque toute commande visant a afficher/extraire le
@@ -3909,6 +4486,13 @@ async def create_conversation(
         await _assign_project_meta(current_user["id"], name)
         doc["project"] = name
     await database.conversations.insert_one(doc)
+    # Fetcher : ouverture/creation de conversation liee a un projet -> on
+    # consolide la memoire du projet (snapshot structurel + faits persistants).
+    if doc.get("project"):
+        try:
+            await fetch_and_store_project(current_user["id"], doc["project"], "system")
+        except Exception:  # noqa: BLE001
+            logger.warning("Fetcher: consolidation a l'ouverture impossible")
     doc.pop("_id", None)
     return doc
 
@@ -4053,6 +4637,24 @@ async def chat_send(
     )
     history = await prepare_history(database, conversation_id, history)
 
+    # --- Fetcher de contexte : memoire persistante du projet -------------
+    # Pre-resout le bloc de contexte (snapshot + faits) du tour courant et le
+    # range dans le ContextVar lu par forge_system_prompt(). Capture ensuite les
+    # informations IMPORTANTES du message utilisateur (priorisees, anti-bruit).
+    await prepare_turn_context(current_user["id"], conv.get("project"))
+    if conv.get("project"):
+        try:
+            n_new = await capture_user_facts(
+                current_user["id"], conv.get("project"), text
+            )
+            if n_new:
+                logger.info(
+                    "Fetcher: %d fait(s) memorise(s) depuis le message utilisateur",
+                    n_new,
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("Fetcher: capture utilisateur impossible")
+
     # --- Generation ---
     try:
         ai_response, tool_steps, meta = await generate_ai_response(
@@ -4172,6 +4774,61 @@ async def chat_status(current_user: dict = Depends(get_current_user)):
         for cid, info in list(_ACTIVE_RUNS.items())
     ]
     return {"turns": turns, "running": running}
+
+
+@api_router.get("/context/{project}")
+async def get_context(
+    project: str, current_user: dict = Depends(get_current_user)
+):
+    """
+    Memoire persistante d'un projet (Fetcher de contexte).
+
+    Renvoie le snapshot structurel (stack, arborescence, git) et les faits
+    memorises, classes par priorite. Utile pour l'UI et pour l'utilisateur qui
+    veut voir ce que la Forge retient de son projet.
+    """
+    name = _valid_project_name(project)
+    snap = fetch_project_snapshot(name)
+    facts = await recall_context_facts(current_user["id"], name)
+    return {
+        "project": name,
+        "exists": snap.get("exists", False),
+        "snapshot": {
+            "stack": snap.get("stack", []),
+            "git": snap.get("git", {}),
+            "tree": snap.get("tree", []),
+            "readme": snap.get("readme", ""),
+            "rules": snap.get("rules", ""),
+            "fetched_at": snap.get("fetched_at"),
+        },
+        "facts": [
+            {
+                "text": f.get("text"),
+                "kind": f.get("kind"),
+                "priority": f.get("priority", 0),
+                "source": f.get("source"),
+                "confirmations": f.get("confirmations", 1),
+                "updated_at": f.get("updated_at"),
+            }
+            for f in facts
+        ],
+        "count": len(facts),
+    }
+
+
+@api_router.post("/context/{project}/refresh")
+async def refresh_context(
+    project: str, current_user: dict = Depends(get_current_user)
+):
+    """
+    Force un nouveau FETCH complet du projet (re-scan + consolidation).
+
+    A utiliser quand les fichiers du projet ont change : le snapshot et les
+    faits issus de la structure (stack, git, regles, README) sont refaits.
+    """
+    name = _valid_project_name(project)
+    result = await fetch_and_store_project(current_user["id"], name, "system")
+    return result
 
 
 @api_router.get("/screenshots/{name}")
@@ -4306,6 +4963,13 @@ async def chat_stream(
     }
     await database.messages.insert_one(user_msg_doc)
 
+    # --- Fetcher : capture des informations importantes de l'utilisateur ---
+    if conv.get("project"):
+        try:
+            await capture_user_facts(current_user["id"], conv.get("project"), text)
+        except Exception:  # noqa: BLE001
+            logger.warning("Fetcher: capture utilisateur impossible (stream)")
+
     history = (
         await database.messages.find(
             {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
@@ -4348,6 +5012,7 @@ async def chat_stream(
                 model,
                 project,
                 channel,
+                current_user["id"],
             )
         )
         try:
@@ -4491,6 +5156,7 @@ async def _run_generation(
     model: Optional[str],
     project: Optional[str],
     channel: "_SSEQueue",
+    user_id: Optional[str] = None,
 ) -> None:
     """Execute une generation complete, independente de toute connexion client.
 
@@ -4501,6 +5167,9 @@ async def _run_generation(
     # les ContextVar ne sont PAS heritees par asyncio.create_task.
     set_current_project(project)
     set_current_provider(provider)
+    # Fetcher de contexte : on re-resout la memoire du projet DANS cette tache
+    # de fond (le ContextVar du bloc de contexte n'est pas herite non plus).
+    await prepare_turn_context(user_id, project)
 
     chunks: list = []
     tool_steps: list = []
@@ -4557,6 +5226,16 @@ async def _run_generation(
         conv = await database.conversations.find_one({"id": conversation_id})
         if conv:
             await _autotitle(database, conv, conversation_id, prompt_text, attachments)
+        # Fetcher : les faits SYSTEME importants (chemins systeme, variables
+        # d'environnement, decisions techniques) reveles par les outils de ce
+        # tour sont memorises pour les prochaines conversations.
+        if project and user_id:
+            try:
+                sys_facts = _extract_system_facts(tool_steps)
+                if sys_facts:
+                    await remember_context_facts(user_id, project, sys_facts, "system")
+            except Exception:  # noqa: BLE001
+                logger.warning("Fetcher: capture systeme impossible")
         channel.publish({"type": "done", "doc": ai_doc})
     except asyncio.CancelledError:  # pragma: no cover
         if chunks:
@@ -5237,6 +5916,11 @@ async def create_project(
     meta = await _assign_project_meta(
         current_user["id"], name, (payload.preview_url or "").strip() or None
     )
+    # Fetcher : ouverture d'un nouveau projet -> premier snapshot memorise.
+    try:
+        await fetch_and_store_project(current_user["id"], name, "system")
+    except Exception:  # noqa: BLE001
+        logger.warning("Fetcher: snapshot a la creation impossible")
     return {
         "name": name,
         "path": str(d),
@@ -5756,6 +6440,11 @@ async def link_conversation_project(
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Fetcher : rattachement conversation<->projet = moment d'ouverture.
+    try:
+        await fetch_and_store_project(current_user["id"], name, "system")
+    except Exception:  # noqa: BLE001
+        logger.warning("Fetcher: consolidation au rattachement impossible")
     # Toujours resynchroniser la map, meme si le projet existait deja : un lien
     # conversation<->projet fait hors du flux normal laissait la map perimee.
     _schedule_preview_map_refresh()

@@ -39,6 +39,7 @@ import {
   Sun,
   Moon,
   FileDown,
+  Brain,
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
@@ -101,6 +102,9 @@ export default function Chat() {
   const [githubOpen, setGithubOpen] = useState(false);
   const [forking, setForking] = useState(false);
   const [projectUrls, setProjectUrls] = useState({});
+  // Memoire de contexte du projet actif (Fetcher) — bandeau discret.
+  const [projectContext, setProjectContext] = useState(null);
+  const [contextOpen, setContextOpen] = useState(false);
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -111,6 +115,8 @@ export default function Chat() {
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [statusTurns, setStatusTurns] = useState([]);
   const [runningTurns, setRunningTurns] = useState([]);
+
+  const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
 
   // Initial load - fetch conversations
   useEffect(() => {
@@ -308,6 +314,28 @@ export default function Chat() {
       setError(formatApiError(e));
     }
   };
+
+  // Fetcher : récupère la mémoire de contexte du projet actif (snapshot + faits
+  // mémorisés) dès qu'on ouvre une conversation rattachée à un projet.
+  useEffect(() => {
+    const pid = activeConv?.project;
+    if (!pid) {
+      setProjectContext(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get(`/context/${encodeURIComponent(pid)}`)
+      .then(({ data }) => {
+        if (!cancelled) setProjectContext(data);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConv?.project]);
 
   const startTask = async (prompt, project) => {
     try {
@@ -785,7 +813,6 @@ export default function Chat() {
     }
   };
 
-  const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
   const activeModel = models.find((m) => m.id === provider);
@@ -1142,6 +1169,65 @@ export default function Chat() {
             </div>
           </div>
         </header>
+
+        {/* Bandeau discret : mémoire de contexte (Fetcher) du projet actif */}
+        {activeConv?.project && projectContext?.exists && (
+          <div className="border-b border-white/5 bg-white/[0.02] px-3 sm:px-4 lg:px-8 py-1.5">
+            <div className="max-w-4xl mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-gray-500">
+              <button
+                type="button"
+                onClick={() => setContextOpen((o) => !o)}
+                className="flex items-center gap-1.5 text-gray-500 hover:text-[#05d9e8] transition-colors bg-transparent border-0 p-0"
+                title="Mémoire de contexte du projet (Fetcher)"
+                data-testid="context-badge"
+              >
+                <Brain className="w-3 h-3" />
+                <span>contexte</span>
+                <span className="text-[#05d9e8]">{projectContext.count || 0}</span>
+                <span className="text-gray-600">fait(s)</span>
+              </button>
+              {(projectContext.snapshot?.stack || []).length > 0 && (
+                <span className="truncate max-w-[40%]">
+                  {projectContext.snapshot.stack.join(" · ")}
+                </span>
+              )}
+              {projectContext.snapshot?.git?.last_commit && (
+                <span className="truncate max-w-[35%] text-gray-600">
+                  ⎇ {projectContext.snapshot.git.branch || "?"} ·{" "}
+                  {projectContext.snapshot.git.last_commit}
+                </span>
+              )}
+            </div>
+            {/* Détail dépliable : les faits mémorisés, classés par priorité */}
+            {contextOpen && (projectContext.facts || []).length > 0 && (
+              <div className="max-w-4xl mx-auto mt-1.5 mb-1 border border-white/5 rounded-sm divide-y divide-white/5">
+                {projectContext.facts.map((f, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 px-2 py-1 text-[10px] font-mono"
+                  >
+                    <span
+                      className={
+                        "flex-shrink-0 px-1 rounded-sm " +
+                        (f.priority >= 4
+                          ? "text-[#ff2a6d]"
+                          : f.priority === 3
+                          ? "text-[#ffd700]"
+                          : f.priority === 2
+                          ? "text-[#05d9e8]"
+                          : "text-gray-600")
+                      }
+                      title={`priorité ${f.priority}`}
+                    >
+                      [{f.kind}]
+                    </span>
+                    <span className="text-gray-400 break-words">{f.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Hub d'accueil tant qu'aucune session n'est ouverte */}
         {!activeId && (
