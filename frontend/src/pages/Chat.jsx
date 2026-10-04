@@ -8,11 +8,28 @@
  * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError, postSSE } from "@/lib/api";
 import ChatMessage from "@/components/ChatMessage";
+import StreamingBubble from "@/components/StreamingBubble";
+import {
+  resetStream,
+  setStreamText,
+  setStreamInfo,
+  addStreamTool,
+  startStreamStep,
+  finishStreamStep,
+  getStreamHasContent,
+  subscribe as subscribeStream,
+} from "@/lib/streamStore";
 import {
   Plus,
   Send,
@@ -46,6 +63,11 @@ import VoicePicker from "@/components/VoicePicker";
 import { useTheme } from "@/hooks/useTheme";
 import ProjectHub from "@/components/ProjectHub";
 import PreviewButton from "@/components/PreviewButton";
+import ThemeToggle from "@/components/chat/ThemeToggle";
+import UsageBadge from "@/components/chat/UsageBadge";
+import EmptyChat from "@/components/chat/EmptyChat";
+import Sidebar from "@/components/chat/Sidebar"
+import ChatHeader from "@/components/chat/ChatHeader";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -87,6 +109,12 @@ export default function Chat() {
   const [reasoningEffort, setReasoningEffort] = useState(
     () => localStorage.getItem("forge_reasoning_effort") || "auto"
   );
+  // Abonnement minimal : ne change qu'a la transition vide -> non vide.
+  const streamingHasContent = useSyncExternalStore(
+    subscribeStream,
+    getStreamHasContent,
+    getStreamHasContent
+  );
   const [favorites, setFavorites] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("forge_favorites") || "[]");
@@ -94,11 +122,6 @@ export default function Chat() {
       return [];
     }
   });
-  const [streamText, setStreamText] = useState("");
-  const [streamTools, setStreamTools] = useState([]);
-  // Etapes autonomes en cours de streaming : chaque etape = { index, intention, tools, status }
-  const [streamSteps, setStreamSteps] = useState([]);
-  const [streamInfo, setStreamInfo] = useState(null);
   const [usage, setUsage] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [listening, setListening] = useState(false);
@@ -359,11 +382,46 @@ export default function Chat() {
     }
   };
 
+  // Reconciliateur : reconstruit la liste en conservant les REFERENCES des
+  // messages inchanges, pour que React.memo(ChatMessage) court-circuite leur
+  // re-rendu. Le backend renvoie des documents neufs a chaque poll (8s), donc
+  // sans ceci chaque poll re-rendait toute la conversation (jusqu'a 2000 msg).
+  const reconcileMessages = useCallback((prev, next) => {
+    if (!prev.length) return next;
+    const prevById = new Map();
+    for (const m of prev) prevById.set(m.id, m);
+    let changed = prev.length !== next.length;
+    const merged = next.map((m, i) => {
+      const old = prevById.get(m.id);
+      if (!old) {
+        changed = true;
+        return m;
+      }
+      // Champs dont un changement doit forcer le re-rendu du message.
+      const same =
+        old.content === m.content &&
+        old.tool_steps === m.tool_steps &&
+        old.steps === m.steps &&
+        old.feedback === m.feedback &&
+        old.role === m.role &&
+        old.updated_at === m.updated_at;
+      if (same) {
+        if (prev[i] !== old) changed = true;
+        return old; // reference conservee -> memo efficace
+      }
+      changed = true;
+      return m;
+    });
+    // Aucun changement ET meme ordre -> on garde le tableau precedent (ref stable).
+    if (!changed) return prev;
+    return merged;
+  }, []);
+
   const loadMessages = async (cid) => {
     setLoadingMsgs(true);
     try {
       const { data } = await api.get(`/conversations/${cid}/messages`);
-      setMessages(data);
+      setMessages((prev) => reconcileMessages(prev, data));
     } catch (e) {
       setError(formatApiError(e));
     } finally {
@@ -671,10 +729,7 @@ export default function Chat() {
 
     const controller = new AbortController();
     abortRef.current = controller;
-    setStreamText("");
-    setStreamTools([]);
-    setStreamSteps([]);
-    setStreamInfo(null);
+    resetStream();
     try {
       const form = new FormData();
       form.append("conversation_id", convId);
@@ -700,40 +755,18 @@ export default function Chat() {
           } else if (event === "start") {
             setStreamInfo({ provider: data.provider, model: data.model });
           } else if (event === "tool") {
-            setStreamTools((prev) => [...prev, data]);
-            // Rattache aussi l'outil a l'etape autonome courante.
-            setStreamSteps((prev) => {
-              if (prev.length === 0) return prev;
-              const copy = [...prev];
-              const last = { ...copy[copy.length - 1] };
-              last.tools = [...(last.tools || []), data];
-              copy[copy.length - 1] = last;
-              return copy;
-            });
+            addStreamTool(data);
           } else if (event === "step_start") {
             // Nouvelle etape : cadre distinct cote rendu.
-            setStreamSteps((prev) => [
-              ...prev,
-              { index: data.index, intention: "", tools: [], status: "running" },
-            ]);
+            startStreamStep(data.index);
           } else if (event === "step_done") {
             // Etape validee et deja persistee cote serveur : on fige le cadre.
-            setStreamSteps((prev) => {
-              const step = data.step || {};
-              const idx = prev.findIndex((x) => x.index === step.index);
-              if (idx === -1) return [...prev, { ...step, status: "done" }];
-              const copy = [...prev];
-              copy[idx] = { ...copy[idx], ...step, status: "done" };
-              return copy;
-            });
+            finishStreamStep(data.step);
           } else if (event === "error") {
             setError(data.detail);
           } else if (event === "done") {
             setMessages((prev) => [...prev, data]);
-            setStreamText("");
-            setStreamTools([]);
-            setStreamSteps([]);
-            setStreamInfo(null);
+            resetStream();
           }
         },
       });
@@ -758,10 +791,7 @@ export default function Chat() {
       fetchConversations();
     } finally {
       abortRef.current = null;
-      setStreamText("");
-      setStreamTools([]);
-      setStreamSteps([]);
-      setStreamInfo(null);
+      resetStream();
       setSending(false);
       textareaRef.current?.focus();
     }
@@ -1005,172 +1035,29 @@ export default function Chat() {
         </div>
       )}
 
-      {/* Sidebar */}
-      <aside
-        className={`${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } lg:translate-x-0 fixed lg:relative z-30 lg:z-auto top-0 left-0 h-full w-72 max-w-[85vw] flex-shrink-0 bg-[var(--bg-sidebar)] border-r-2 border-white/20 flex flex-col transition-transform`}
-        data-testid="chat-sidebar"
-      >
-        <div className="p-5 border-b-2 border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <img src="/logo-64.png" alt="" className="w-7 h-7 flex-shrink-0" />
-            <div>
-              <div className="font-heading font-black text-sm tracking-tight">
-                THE FORGE
-              </div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-mono">
-                claude
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            <button
-              className="lg:hidden btn-ghost"
-              onClick={() => setSidebarOpen(false)}
-              data-testid="close-sidebar-btn"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
+      {/* Sidebar (extrait -> components/chat/Sidebar.jsx) */}
+      <Sidebar
+        onClose={() => setSidebarOpen(false)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        conversations={conversations}
+        activeId={activeId}
+        onSelectConversation={(id) => {
+          setActiveId(id);
+          setSidebarOpen(false);
+        }}
+        onNewConversation={newConversation}
+        editingId={editingId}
+        editingTitle={editingTitle}
+        onEditingTitleChange={setEditingTitle}
+        onStartRename={startRename}
+        onCancelRename={cancelRename}
+        onSubmitRename={submitRename}
+        onDeleteConversation={deleteConversation}
+        user={user}
+        onLogout={logout}
+      />
 
-        <div className="p-4">
-          <button
-            onClick={newConversation}
-            className="btn-primary w-full flex items-center justify-center gap-2"
-            data-testid="new-chat-btn"
-          >
-            <Plus className="w-4 h-4" />
-            New Chat
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-3 pb-4">
-          <div className="text-xs uppercase tracking-[0.2em] text-gray-500 font-bold px-2 mb-2">
-            Recent
-          </div>
-          {conversations.length === 0 && (
-            <div className="text-gray-600 text-sm px-2">No conversations yet.</div>
-          )}
-          {conversations.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => {
-                setActiveId(c.id);
-                setSidebarOpen(false);
-              }}
-              className={`group flex items-center gap-2 px-3 py-2.5 cursor-pointer border-2 mb-2 transition-all ${
-                c.id === activeId
-                  ? "border-[#ff2a6d] bg-[#ff2a6d]/10 shadow-[4px_4px_0_0_#ffd700]"
-                  : "border-transparent hover:border-white/20 hover:bg-white/5"
-              }`}
-              data-testid={`conv-item-${c.id}`}
-            >
-              <MessageSquare className="w-4 h-4 flex-shrink-0 text-gray-400" />
-              {editingId === c.id ? (
-                <form
-                  onSubmit={(e) => submitRename(c.id, e)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex-1 flex items-center gap-1"
-                >
-                  <input
-                    autoFocus
-                    value={editingTitle}
-                    onChange={(e) => setEditingTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") cancelRename();
-                    }}
-                    onBlur={() => submitRename(c.id)}
-                    className="flex-1 min-w-0 bg-black/60 border border-[#ffd700] text-sm px-1.5 py-1 outline-none text-white"
-                    data-testid={`rename-input-${c.id}`}
-                  />
-                  <button
-                    type="submit"
-                    className="text-[#ffd700] hover:text-white flex-shrink-0"
-                    data-testid={`rename-submit-${c.id}`}
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                </form>
-              ) : (
-                <>
-                  <div className="flex-1 truncate text-sm font-medium">
-                    {c.title || "New Chat"}
-                  </div>
-                  <button
-                    onClick={(e) => startRename(c, e)}
-                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-[#ffd700] transition-opacity"
-                    title="Rename"
-                    data-testid={`rename-conv-${c.id}`}
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteConversation(c.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-[#ff2a6d] transition-opacity"
-                    title="Delete"
-                    data-testid={`delete-conv-${c.id}`}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="p-4 border-t-2 border-white/10">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="text-xs uppercase tracking-[0.2em] text-gray-500 font-bold">
-                Signed in
-              </div>
-              <div className="text-sm font-medium truncate" data-testid="current-user-email">
-                {user?.email}
-              </div>
-            </div>
-            <button
-              onClick={logout}
-              className="btn-ghost border-2 border-white/20 hover:border-[#ff2a6d] hover:text-[#ff2a6d]"
-              title="Logout"
-              data-testid="logout-btn"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div
-            className="mt-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.15em] text-gray-600"
-            data-testid="license-footer"
-          >
-            <a
-              href="https://www.gnu.org/licenses/gpl-3.0.html"
-              target="_blank"
-              rel="noreferrer"
-              className="border border-white/15 px-1.5 py-0.5 hover:border-[#ffd700] hover:text-[#ffd700] transition-colors"
-              title="Logiciel libre sous GNU GPL v3"
-              data-testid="license-badge"
-            >
-              GPLv3
-            </a>
-            <a
-              href="https://github.com/TinQuen22Fr/Fork-Clone/tree/claude-ai"
-              target="_blank"
-              rel="noreferrer"
-              className="hover:text-[#ffd700] transition-colors"
-              title="Code source libre — Copyright (C) 2026 Quentin Dumont"
-              data-testid="source-code-link"
-            >
-              Code source
-            </a>
-          </div>
-        </div>
-      </aside>
 
       {githubOpen && (
         <GithubSaveDialog
@@ -1208,87 +1095,23 @@ export default function Chat() {
       {/* Main */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <header className="border-b-2 border-white/10 px-3 sm:px-4 lg:px-8 py-3 sm:py-4 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <button
-              className="lg:hidden btn-ghost flex-shrink-0"
-              onClick={() => setSidebarOpen(true)}
-              data-testid="open-sidebar-btn"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            <div className="min-w-0 flex flex-col gap-1">
-              {activeId && (
-                <button
-                  className="self-start text-gray-500 hover:text-white hover:opacity-100 opacity-60 transition-all duration-150 cursor-pointer bg-transparent border-0 p-0 leading-none"
-                  onClick={() => {
-                    abortRequest();
-                    setActiveId(null);
-                  }}
-                  title="Retour au choix des projets"
-                  data-testid="close-session-btn"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-              <div className="text-[10px] uppercase tracking-[0.3em] text-[#ffd700] font-bold">
-                // active session
-              </div>
-              <div className="font-heading font-black truncate text-base sm:text-lg">
-                {activeConv?.title || "No conversation selected"}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
-            {activeConv?.project && (
-              <PreviewButton
-                project={activeConv.project}
-                previewUrl={
-                  projectUrls[activeConv.project] ?? activeConv.preview_url ?? ""
-                }
-                onSaved={(url) =>
-                  setProjectUrls((prev) => ({ ...prev, [activeConv.project]: url }))
-                }
-              />
-            )}
-            {usage && <UsageBadge usage={usage} />}
-            <div
-              className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[220px] lg:max-w-[420px] text-right"
-              data-testid="active-model-label"
-            >
-            {provider === "auto" ? (
-              <>
-                AUTO:{" "}
-                <span className="text-[#05d9e8]">
-                  {autoChain.length
-                    ? models.find((m) => m.id === autoChain[0])?.model ||
-                      autoChain[0]
-                    : "aucun provider configuré"}
-                </span>
-                {autoChain.length > 1 && (
-                  <span className="text-gray-600">
-                    {" "}
-                    → {autoChain.slice(1).join(" → ")}
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                {activeModel?.label || provider}:{" "}
-                <span className="text-[#05d9e8]">
-                  {modelOverride || activeModel?.model || "…"}
-                </span>
-                {modelOverride && (
-                  <span className="text-[#ffd700]"> (choisi)</span>
-                )}
-                {activeModel && activeModel.available === false && (
-                  <span className="text-[#ff2a6d]"> (non configuré)</span>
-                )}
-              </>
-            )}
-            </div>
-          </div>
-        </header>
+        <ChatHeader
+          onOpenSidebar={() => setSidebarOpen(true)}
+          activeId={activeId}
+          onCloseSession={() => setActiveId(null)}
+          onAbortRequest={abortRequest}
+          activeConv={activeConv}
+          projectUrls={projectUrls}
+          onProjectUrlSaved={(project, url) =>
+            setProjectUrls((prev) => ({ ...prev, [project]: url }))
+          }
+          usage={usage}
+          provider={provider}
+          autoChain={autoChain}
+          models={models}
+          activeModel={activeModel}
+          modelOverride={modelOverride}
+        />
 
         {/* Bandeau discret : mémoire de contexte (Fetcher) du projet actif */}
         {activeConv?.project && projectContext?.exists && (
@@ -1405,25 +1228,13 @@ export default function Chat() {
             )}
             {sending && (
               <>
-                {(streamText || streamTools.length > 0) && (
-                  <ChatMessage
-                    key="streaming"
-                    message={{
-                      id: "streaming",
-                      role: "assistant",
-                      content: streamText,
-                      provider: streamInfo?.provider || provider,
-                      model:
-                        streamInfo?.model || modelOverride || activeModel?.model,
-                      tool_steps: streamTools,
-                      steps: streamSteps,
-                      streaming: true,
-                    }}
-                    project={activeConv?.project}
-                    onRollbackStep={handleRollbackStep}
-                  />
-                )}
-                {!streamText && (
+                <StreamingBubble
+                  provider={provider}
+                  model={modelOverride || activeModel?.model}
+                  project={activeConv?.project}
+                  onRollbackStep={handleRollbackStep}
+                />
+                {!streamingHasContent && (
                   <div className="flex gap-4 mb-6">
                     <div className="w-10 h-10 border-2 border-white/30 bg-[var(--bg-dock)] flex items-center justify-center flex-shrink-0">
                       <img src="/logo-64.png" alt="" className="w-7 h-7 pulse-glow" />
@@ -1845,141 +1656,6 @@ export default function Chat() {
           </div>
         </div>
       </main>
-    </div>
-  );
-}
-
-function ThemeToggle({ theme, onToggle }) {
-  return (
-    <div
-      className="theme-toggle-group"
-      data-testid="theme-toggle"
-      title="Changer de thème"
-    >
-      <button
-        type="button"
-        className={`theme-toggle-btn ${theme === "dark" ? "active" : ""}`}
-        onClick={() => theme !== "dark" && onToggle()}
-        title="Thème sombre"
-        data-testid="theme-toggle-dark"
-      >
-        <Moon className="w-3.5 h-3.5" />
-      </button>
-      <button
-        type="button"
-        className={`theme-toggle-btn ${theme === "light" ? "active" : ""}`}
-        onClick={() => theme !== "light" && onToggle()}
-        title="Thème clair"
-        data-testid="theme-toggle-light"
-      >
-        <Sun className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  );
-}
-
-function UsageBadge({ usage }) {
-  const windows = [
-    { key: "rolling", label: "5H" },
-    { key: "weekly", label: "SEM" },
-    { key: "monthly", label: "MOIS" },
-  ].filter((w) => usage?.[w.key]);
-  if (!windows.length) return null;
-
-  const color = (p) =>
-    p >= 90 ? "#ff2a6d" : p >= 70 ? "#ffd700" : "#05d9e8";
-
-  return (
-    <div
-      className="hidden md:flex items-center gap-2 border-2 border-white/20 bg-black/40 px-2 py-1"
-      title={
-        "Forfait OpenCode Go — " +
-        windows
-          .map(
-            (w) =>
-              `${w.label} : ${Math.round(usage[w.key].percent)}% utilisé (reset ${new Date(
-                usage[w.key].resetsAt
-              ).toLocaleString("fr-FR")})`
-          )
-          .join(" · ")
-      }
-      data-testid="usage-badge"
-    >
-      <Gauge className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
-      {windows.map((w) => {
-        const pct = Math.min(100, Math.max(0, usage[w.key].percent || 0));
-        return (
-          <div key={w.key} className="flex items-center gap-1">
-            <span className="text-[9px] font-mono text-gray-500">{w.label}</span>
-            <div className="w-10 h-1.5 bg-white/10">
-              <div
-                className="h-full transition-all"
-                style={{ width: `${pct}%`, backgroundColor: color(pct) }}
-              />
-            </div>
-            <span
-              className="text-[9px] font-mono"
-              style={{ color: color(pct) }}
-              data-testid={`usage-${w.key}`}
-            >
-              {Math.round(pct)}%
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function EmptyState({ onStart }) {
-  return (
-    <div className="flex flex-col items-center justify-center text-center py-20">
-      <img src="/icon-192.png" alt="" className="w-24 h-24 mb-6 border-2 border-white/20" />
-      <h2 className="font-heading text-3xl md:text-5xl font-black tracking-tighter mb-4">
-        WELCOME TO <span className="text-[#ffd700]">THE FORGE</span>
-      </h2>
-      <p className="text-gray-400 max-w-md mb-8">
-        Start a new conversation to unleash Claude.
-      </p>
-      <button
-        onClick={onStart}
-        className="btn-primary flex items-center gap-2"
-        data-testid="empty-state-new-chat-btn"
-      >
-        <Plus className="w-4 h-4" /> Start Chat
-      </button>
-    </div>
-  );
-}
-
-function EmptyChat() {
-  const suggestions = [
-    "Write me a function in Rust that...",
-    "Explain quantum entanglement in 3 lines",
-    "Roast my CV (paste below)",
-    "Generate a startup name and pitch",
-  ];
-  return (
-    <div className="py-12">
-      <div className="text-center mb-10">
-        <div className="text-xs uppercase tracking-[0.3em] text-[#ffd700] font-bold mb-2">
-          // session initialized
-        </div>
-        <h2 className="font-heading text-3xl md:text-4xl font-black tracking-tighter">
-          WHAT DO WE <span className="text-[#ff2a6d]">FORGE</span> TODAY?
-        </h2>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
-        {suggestions.map((s, i) => (
-          <div
-            key={i}
-            className="border-2 border-white/15 p-4 text-sm text-gray-300 hover:border-[#ffd700] hover:text-white hover:shadow-[4px_4px_0_0_#05d9e8] transition-all cursor-default"
-            data-testid={`suggestion-${i}`}
-          >
-            {s}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

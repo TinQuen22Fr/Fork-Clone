@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-03T23:27:43.224425+00:00
+# Dernière mise à jour : 2026-10-04T16:03:35.394886+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 3da6590 Ajout selecteur degrés de raisonement UI.
+- Git : branche claude-ai, dernier commit e8243ae Modification boutons UI.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -36,6 +36,9 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/requirements.txt
   backend/reset_password.py
   backend/server.py
+  backend/server.py.bak-20261004-014341
+  backend/server.py.bak-20261004-014704
+  backend/server.py.bak-20261004-015527
   backend/server.py.bak_item10
   backend/test_rollback.txt
   deploy/
@@ -63,22 +66,26 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/sw.js
   frontend/src/
   frontend/src/components/
-  frontend/src/constants/
-  frontend/src/context/
-  frontend/src/hooks/
 - Faits memorises (les plus importants d'abord) :
+  [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
+  [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Tu dis ne pas être deepseek pourtant c'est bien ça que j'ai sélectionné
+  [regle] 269: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Bon ok étape 1 de toute façon il y à le roolback et surtout j'ai un commit pour revenir si il faut en arrière et un .env de restauration.
+  [regle] Nontoujours pareil !
+  [regle] le menu ne fonctionne pas, on ne le vois pas
   [regle] Corrige cette fausse détection d'absence immédiatement : stocke les tâches déjà notifiées pour ne JAMAIS réafficher la modale en boucle, ne déclenche pas de refresh au moindre changement de focus/visibilité, et temporise strictement le polling du statut.
   [regle] Regarde directement la condition qui affiche le bouton dans ChatMessage.jsx et vérifie pourquoi la prop ne passe pas depuis Chat.jsx.
   [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
   [regle] Termine obligatoirement par la vérification py_compile de server.py et un résumé textuel clair de tes modifications.
   [regle] ok mais avant je souhaite que tu "améliore" et trouve une solution pour éviter ces trop nombreux bloc réponse vide quand je suis en mode auto ou claude
   [regle] Émets des événements de fin d'étape pour éviter les coupures de flux et tronque les logs bruts des étapes validées pour ne pas saturer le contexte avec Claude.
+  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
   [architecture] DEPLOIEMENT.md
   [architecture] Ajoute un endpoint d'API /api/workspace/projects/{name}/rollback permettant de restaurer immédiatement le workspace à l'état du dernier snapshot enregistré.
   [architecture] Vérifie la version de Node et de Python disponibles via bash, liste les packages installés dans package.json, inspecte les routes principales définies dans server.py, puis affiche un compte-rendu synthétique de la stack et des composants détectés.
-  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
   [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
   [architecture] adapte a l'architecture actuelle de The Forge (backend Python, httpx, sortie
   [architecture] @standard-schema
@@ -100,10 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] - **Frontend** moderne (React 19, Radix/shadcn, TanStack Query) organisé en `pages` / `components` / `hooks` / `context` / `lib`.
   [architecture] - **Monorepo** : `backend/` (FastAPI + MongoDB) · `frontend/` (React 19 + Vite 6) · `deploy/` · docs racine (`DEPLOIEMENT.md`, `AUDIT_SECURITE.md`, `FETCHER_CONTEXTE.md`, `FONCTIONS_AJOUTEES.md`).
   [architecture] Routes principales (`/api/...`) — 47 endpoints
-  [architecture] Stack backend — `backend/server.py`
-  [architecture] Stack frontend — `frontend/`
-  [architecture] Fonctions async def (endpoints probables):
-  [chemin] cwd: /var/www/forge/workspace/Fork-Clone
-  [variable] exit_code: 0
-  [chemin] /var/www/forge/workspace/Fork-Clone
-  [variable] ./backend/tests:

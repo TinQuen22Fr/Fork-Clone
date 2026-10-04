@@ -87,3 +87,7 @@ credentials.json
 *.key
 .credentials
 backend/models/
+
+# Sauvegardes de refactoring (ne pas committer)
+*.bak-*
+*.bak_*

@@ -53,6 +53,26 @@ _current_provider: ContextVar[str] = ContextVar("current_provider", default="cla
 
 def set_current_provider(pid: str):
     _current_provider.set(pid or "claude")
+
+# --- Selecteur de modele Claude -------------------------------------------
+# Le jeton OAuth d'abonnement donne acces a plusieurs modeles. On expose une
+# liste statique (l'API Anthropic n'a pas d'endpoint /models utilisable ici).
+# `model_override` choisi cote UI est propage via ce ContextVar, sans toucher
+# au defaut configure dans CLAUDE_MODEL.
+CLAUDE_MODELS: tuple[str, ...] = (
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-4-5-20251001",
+    "claude-fable-5-1",
+    "claude-opus-4-1",
+    "claude-sonnet-4-6",
+)
+
+_current_claude_model: ContextVar[str] = ContextVar("current_claude_model", default="")
+
+def _resolve_claude_model() -> str:
+    """Modele Claude a utiliser : override du tour si present, sinon defaut."""
+    return _current_claude_model.get() or settings.claude_model
 from datetime import datetime, timezone, timedelta
 from typing import Optional, AsyncIterator
 
@@ -2660,8 +2680,10 @@ async def _dispatch_provider(
 ) -> tuple[str, list[dict], str]:
     """Retourne (texte, tool_steps, modele_reellement_utilise)."""
     if pid == "claude":
+        if model_override:
+            _current_claude_model.set(model_override)
         answer, steps = await _generate_claude(history, text, images)
-        return answer, steps, settings.claude_model
+        return answer, steps, _resolve_claude_model()
     if pid == "gemini":
         return await _generate_gemini(history, text, images)
     if pid == "ollama_cloud":
@@ -3656,7 +3678,7 @@ async def _generate_opencode(
 async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
     """Un appel à l'API Messages d'Anthropic (avec outils si activés)."""
     payload = {
-        "model": settings.claude_model,
+        "model": _resolve_claude_model(),
         "max_tokens": settings.claude_max_tokens,
         "system": (
             [
@@ -3813,7 +3835,7 @@ async def _stream_claude(
         raise HTTPException(
             status_code=503, detail="CLAUDE_CODE_OAUTH_TOKEN absent."
         )
-    state["model"] = settings.claude_model
+    state["model"] = _resolve_claude_model()
     messages = _build_messages(history, text, images)
     headers = {
         "authorization": f"Bearer {settings.claude_token}",
@@ -3823,7 +3845,7 @@ async def _stream_claude(
     async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as http:
         for _ in range(MAX_TOOL_ITERS):
             payload = {
-                "model": settings.claude_model,
+                "model": _resolve_claude_model(),
                 "max_tokens": settings.claude_max_tokens,
                 "system": (
                     [
@@ -4230,6 +4252,8 @@ async def _stream_provider(
     state: dict,
 ) -> AsyncIterator[dict]:
     if pid == "claude":
+        if model_override:
+            _current_claude_model.set(model_override)
         async for i in _stream_claude(history, text, images, state):
             yield i
     elif pid == "gemini":
@@ -5284,6 +5308,7 @@ async def _run_generation(
     # les ContextVar ne sont PAS heritees par asyncio.create_task.
     set_current_project(project)
     set_current_provider(provider)
+    _current_claude_model.set(model or "")
     # Fetcher de contexte : on re-resout la memoire du projet DANS cette tache
     # de fond (le ContextVar du bloc de contexte n'est pas herite non plus).
     await prepare_turn_context(user_id, project)
@@ -5570,6 +5595,7 @@ async def chat_regenerate(
     set_current_project(conv.get("project"))
     set_current_provider(payload.provider)
     set_current_reasoning_effort(payload.reasoning_effort)
+    _current_claude_model.set(payload.model or "")
 
     msgs = (
         await database.messages.find({"conversation_id": payload.conversation_id})
@@ -5686,6 +5712,17 @@ async def _fetch_catalog(pid: str) -> list[str]:
     if cached and (time.time() - cached[0]) < _CATALOG_TTL:
         return cached[1]
 
+    # Claude : catalogue statique (pas d'endpoint /models exploitable).
+    if pid == "claude":
+        ids = list(CLAUDE_MODELS)
+        # Le modele configure (CLAUDE_MODEL) doit toujours etre proposable,
+        # meme s'il sort de la liste statique (ex: variantes plus recentes).
+        configured = (settings.claude_model or "").strip()
+        if configured and configured not in ids:
+            ids.insert(0, configured)
+        _CATALOG_CACHE[pid] = (time.time(), ids)
+        return ids
+
     ids: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as http:
@@ -5736,7 +5773,9 @@ async def _fetch_catalog(pid: str) -> list[str]:
 async def list_models(current_user: dict = Depends(get_current_user)):
     """Providers detectes dynamiquement + modele reel et catalogue de chacun."""
     catalogs: dict[str, list[str]] = {}
-    for pid in ("opencode", "ollama_cloud", *FREE_PROVIDER_IDS):
+    # Claude expose un catalogue statique : on l'inclut explicitement pour que
+    # le selecteur de modele precis s'affiche aussi pour ce provider.
+    for pid in ("claude", "opencode", "ollama_cloud", *FREE_PROVIDER_IDS):
         if _provider_available(pid):
             catalogs[pid] = await _fetch_catalog(pid)
 
