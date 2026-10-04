@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-04T19:59:18.430981+00:00
+# Dernière mise à jour : 2026-10-04T22:40:01.447411+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 4919a7f refactor(chat): extraction modulaire de Chat.jsx (Etape 3)  - Phase A: ThemeToggle, UsageBadge, EmptyState, EmptyChat - Phase B: Sidebar (17 props) - Phase C: ChatHeader (13 props) - Chat.jsx: 1998 -> 1662 lignes (-17%) - .gitignore: exclusion des sauvegardes *.bak-*.
+- Git : branche claude-ai, dernier commit be09aef correction ChatHeader.jsx.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -39,6 +39,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-20261004-014341
   backend/server.py.bak-20261004-014704
   backend/server.py.bak-20261004-015527
+  backend/server.py.bak-perf-20261004-234622
   backend/server.py.bak_item10
   backend/test_rollback.txt
   deploy/
@@ -65,12 +66,15 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/maskable-512.png
   frontend/public/sw.js
   frontend/src/
-  frontend/src/components/
 - Faits memorises (les plus importants d'abord) :
+  [regle] Première chose il faut impérativement que les graphiques sois Implémentif (pour affichage correct sur mobile tablette tactile...) après par contre peu on approfondir la vitesse de chargement qui est encore lent je trouve sur ordi en wifi ?
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] écarté et **pourquoi**, pour ne pas réouvrir dix fois le même débat.
+  [regle] // Cle localStorage pour ne JAMAIS reafficher en boucle un tour deja notifie
+  [regle] (en faite quand je clique sur un projet j'ai la fenetre de chat qui s'ouvre mais seul l'espace où l'on tape le message se lance il faut attendre un peut pour que le chat s'affiche voilà ce que je veux dire par lent).
   [regle] Tu dis ne pas être deepseek pourtant c'est bien ça que j'ai sélectionné
   [regle] 269: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
   [regle] Bon ok étape 1 de toute façon il y à le roolback et surtout j'ai un commit pour revenir si il faut en arrière et un .env de restauration.
@@ -82,28 +86,24 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Termine obligatoirement par la vérification py_compile de server.py et un résumé textuel clair de tes modifications.
   [regle] ok mais avant je souhaite que tu "améliore" et trouve une solution pour éviter ces trop nombreux bloc réponse vide quand je suis en mode auto ou claude
   [regle] Émets des événements de fin d'étape pour éviter les coupures de flux et tronque les logs bruts des étapes validées pour ne pas saturer le contexte avec Claude.
-  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
   [architecture] DEPLOIEMENT.md
+  [architecture] -rw-rw-r-- 1 quentin quentin 15452 Oct 3 22:25 DEPLOIEMENT.md
   [architecture] Ajoute un endpoint d'API /api/workspace/projects/{name}/rollback permettant de restaurer immédiatement le workspace à l'état du dernier snapshot enregistré.
   [architecture] Vérifie la version de Node et de Python disponibles via bash, liste les packages installés dans package.json, inspecte les routes principales définies dans server.py, puis affiche un compte-rendu synthétique de la stack et des composants détectés.
   [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
+  [architecture] vite v6.4.3 building for production...
+  [architecture] --cf-stack-plus-sign: #bdbdbd;
   [architecture] adapte a l'architecture actuelle de The Forge (backend Python, httpx, sortie
   [architecture] @standard-schema
   [architecture] Item 1 (web_search) : implémente l'outil de recherche DuckDuckGo autonome dans backend/tools/web_search.py et branche-le sur notre registre actuel.
   [architecture] On retient uniquement 3 éléments à forte valeur ajoutée : 1.
-  [architecture] 76: c_ok "branche $TARGET @ $(git -c safe.directory=* rev-parse --short HEAD)"
-  [architecture] 165: # Utilise la cle Groq deja configuree ; endpoint compatible OpenAI.
-  [architecture] 750: """Format `tools` de l'API OpenAI Responses (schema plat, sans sous-objet
-  [architecture] 4. sapirrior/code-edith-old architecture diagram: how it works
-  [architecture] Code Edith A lightweight, terminal-based AI coding agent. Connects to any OpenAI-compatible API endpoint — hosted providers or self-hosted models both work.
-  [architecture] Fichiers cibles impactés dans notre architecture
-  [architecture] Identifie les mécanismes, fonctions et stratégies d'édition de code qui apportent une réelle valeur ajoutée à l'architecture actuelle de la Forge.
-  [architecture] vite v6.4.3 building for production...
-  [architecture] json-schema-traverse
-  [architecture] Côté frontend dans frontend/src/components/ChatMessage.jsx, ajoute un bouton compact Annuler l'étape appelant cet endpoint.
-  [architecture] Ajoute un endpoint d'API permettant d'annuler les modifications de l'étape courante ou précédente en restaurant cet instantané Git.
-  [architecture] **Architecture des routes** : router unique `APIRouter(prefix="/api")` (l.
-  [architecture] - **Données / formulaires** : `@tanstack/react-query`, `swr`, `axios`, `zod`, `react-hook-form` + `@hookform/resolvers`.
-  [architecture] - **Frontend** moderne (React 19, Radix/shadcn, TanStack Query) organisé en `pages` / `components` / `hooks` / `context` / `lib`.
-  [architecture] - **Monorepo** : `backend/` (FastAPI + MongoDB) · `frontend/` (React 19 + Vite 6) · `deploy/` · docs racine (`DEPLOIEMENT.md`, `AUDIT_SECURITE.md`, `FETCHER_CONTEXTE.md`, `FONCTIONS_AJOUTEES.md`).
-  [architecture] Routes principales (`/api/...`) — 47 endpoints
+  [architecture] Claude Code, Cursor, Codex, and Gemini CLI all accept custom API endpoints via environment variables like
+  [architecture] 1181:def _detect_stack(root: Path) -> list[str]:
+  [architecture] "@tanstack/react-query": "5.56.2",
+  [architecture] --cf-stack-behind-bg: #2c3133;
+  [architecture] --cf-stack-behind-bg: #ebf0f2;
+  [architecture] --cf-stack-behind-opacity: .5;
+  [architecture] --cf-stack-behind-opacity: 1;
+  [architecture] --cf-stack-card-bg: #2e3133;
+  [architecture] --cf-stack-card-bg: #ffffff;
+  [architecture] --cf-stack-card-body-icon: #45494d;

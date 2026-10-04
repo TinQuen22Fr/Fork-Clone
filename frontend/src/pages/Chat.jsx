@@ -66,6 +66,7 @@ import PreviewButton from "@/components/PreviewButton";
 import ThemeToggle from "@/components/chat/ThemeToggle";
 import UsageBadge from "@/components/chat/UsageBadge";
 import EmptyChat from "@/components/chat/EmptyChat";
+import MessagesSkeleton from "@/components/chat/MessagesSkeleton";
 import Sidebar from "@/components/chat/Sidebar"
 import ChatHeader from "@/components/chat/ChatHeader";
 
@@ -482,20 +483,35 @@ export default function Chat() {
     if (project?.preview_url) {
       setProjectUrls((prev) => ({ ...prev, [project.name]: project.preview_url }));
     }
+    // Fermeture immediate du hub : on ne bloque pas l'UI sur l'aller-retour
+    // reseau de creation/reouverture de conversation.
+    setSidebarOpen(false);
+
+    // Chemin rapide : la conversation est deja connue en memoire (chargee au
+    // montage via fetchConversations). Aucun appel reseau n'est necessaire,
+    // le fil s'ouvre instantanement.
     const existing = conversations.find((c) => c.project === project.name);
     if (existing) {
+      setMessages([]);
       setActiveId(existing.id);
-      setSidebarOpen(false);
       return;
     }
+
+    // Sinon on cree directement la conversation attachee au projet. On evite
+    // volontairement un GET /conversations bloquant au prealable : c'est cet
+    // aller-retour qui differait l'affichage du fil. fetchConversations()
+    // reste responsable de la reconciliation de la liste en arriere-plan.
     try {
       const { data } = await api.post("/conversations", {
         title: project.name,
         project: project.name,
       });
       setConversations((prev) => [data, ...prev]);
-      setActiveId(data.id);
       setMessages([]);
+      setActiveId(data.id);
+      // Reconciliation de fond (non bloquante) pour recuperer une eventuelle
+      // conversation existante creee dans une autre session.
+      fetchConversations();
     } catch (e) {
       setError(formatApiError(e));
     }
@@ -933,8 +949,10 @@ export default function Chat() {
     localStorage.setItem("forge_reasoning_effort", value);
   };
 
+  // Saisie multi-lignes : Entree insere un retour a la ligne (PAS d'envoi).
+  // L'envoi se fait via le bouton, ou via la touche de commande + Entree.
   const onKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && (e.getModifierState?.("Control") || e.getModifierState?.("Meta"))) {
       e.preventDefault();
       sendMessage();
     }
@@ -1116,26 +1134,31 @@ export default function Chat() {
         {/* Bandeau discret : mémoire de contexte (Fetcher) du projet actif */}
         {activeConv?.project && projectContext?.exists && (
           <div className="border-b border-white/5 bg-white/[0.02] px-3 sm:px-4 lg:px-8 py-1.5">
-            <div className="max-w-4xl mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-gray-500">
+            <div className="max-w-3xl mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-gray-500">
               <button
                 type="button"
                 onClick={() => setContextOpen((o) => !o)}
-                className="flex items-center gap-1.5 text-gray-500 hover:text-[#05d9e8] transition-colors bg-transparent border-0 p-0"
+                className="flex items-center gap-1.5 py-1.5 sm:py-0 text-gray-500 hover:text-[#05d9e8] transition-colors bg-transparent border-0 p-0 touch-manipulation"
                 title="Mémoire de contexte du projet (Fetcher)"
                 data-testid="context-badge"
               >
                 <Brain className="w-3 h-3" />
                 <span>contexte</span>
                 <span className="text-[#05d9e8]">{projectContext.count || 0}</span>
-                <span className="text-gray-600">fait(s)</span>
+                <span className="text-gray-600">
+                  fait(s)
+                  {(projectContext.facts || []).length <
+                    (projectContext.count || 0) &&
+                    ` · ${(projectContext.facts || []).length} affichés`}
+                </span>
               </button>
               {(projectContext.snapshot?.stack || []).length > 0 && (
-                <span className="truncate max-w-[40%]">
+                <span className="truncate max-w-full sm:max-w-[40%]">
                   {projectContext.snapshot.stack.join(" · ")}
                 </span>
               )}
               {projectContext.snapshot?.git?.last_commit && (
-                <span className="truncate max-w-[35%] text-gray-600">
+                <span className="truncate max-w-full sm:max-w-[35%] text-gray-600">
                   ⎇ {projectContext.snapshot.git.branch || "?"} ·{" "}
                   {projectContext.snapshot.git.last_commit}
                 </span>
@@ -1143,11 +1166,11 @@ export default function Chat() {
             </div>
             {/* Détail dépliable : les faits mémorisés, classés par priorité */}
             {contextOpen && (projectContext.facts || []).length > 0 && (
-              <div className="max-w-4xl mx-auto mt-1.5 mb-1 border border-white/5 rounded-sm divide-y divide-white/5">
+              <div className="max-w-3xl mx-auto mt-1.5 mb-1 border border-white/5 rounded-sm divide-y divide-white/5 max-h-[40vh] overflow-y-auto">
                 {projectContext.facts.map((f, i) => (
                   <div
                     key={i}
-                    className="flex items-start gap-2 px-2 py-1 text-[10px] font-mono"
+                    className="flex items-start gap-2 px-2 py-2 sm:py-1 text-[10px] font-mono"
                   >
                     <span
                       className={
@@ -1180,7 +1203,10 @@ export default function Chat() {
         {/* Messages */}
         {activeId && (
         <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 lg:px-8 py-4 sm:py-6">
-          <div className="max-w-4xl mx-auto" data-testid="messages-container">
+          <div className="max-w-3xl mx-auto" data-testid="messages-container">
+            {activeId && messages.length === 0 && loadingMsgs && (
+              <MessagesSkeleton />
+            )}
             {activeId && messages.length === 0 && !loadingMsgs && (
               <EmptyChat />
             )}
@@ -1267,7 +1293,7 @@ export default function Chat() {
         {notice && (
           <div className="px-3 sm:px-4 lg:px-8 pb-2 flex-shrink-0">
             <div
-              className="max-w-4xl mx-auto border-2 border-sky-400 bg-sky-400/10 text-sky-200 p-3 text-sm font-mono flex items-center justify-between"
+              className="max-w-3xl mx-auto border-2 border-sky-400 bg-sky-400/10 text-sky-200 p-3 text-sm font-mono flex items-center justify-between"
               data-testid="chat-notice"
             >
               <span>{notice}</span>
@@ -1282,7 +1308,7 @@ export default function Chat() {
         {error && (
           <div className="px-3 sm:px-4 lg:px-8 pb-2 flex-shrink-0">
             <div
-              className="max-w-4xl mx-auto border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 text-[#ff2a6d] p-3 text-sm font-mono flex items-center justify-between"
+              className="max-w-3xl mx-auto border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 text-[#ff2a6d] p-3 text-sm font-mono flex items-center justify-between"
               data-testid="chat-error"
             >
               <span>{error}</span>
@@ -1295,7 +1321,7 @@ export default function Chat() {
 
         {/* Input dock */}
         <div className="px-3 sm:px-4 lg:px-8 pt-2 safe-bottom flex-shrink-0">
-          <div className="max-w-4xl mx-auto relative">
+          <div className="max-w-3xl mx-auto relative">
             {favorites.length > 0 && (
               <div
                 className="mb-2 flex gap-1.5 overflow-x-auto pb-1"
@@ -1427,8 +1453,8 @@ export default function Chat() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKeyDown}
-                rows={3}
-                placeholder="Forge a message..."
+                rows={2}
+                placeholder="Forge a message... (Entree = nouvelle ligne)"
                 className="chat-textarea w-full outline-none resize-none px-3 sm:px-4"
                 data-testid="chat-text-input"
               />

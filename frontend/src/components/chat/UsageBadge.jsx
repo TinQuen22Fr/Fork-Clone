@@ -13,7 +13,7 @@ export default function UsageBadge({ usage }) {
 
   return (
     <div
-      className="hidden md:flex items-center gap-2 border-2 border-white/20 bg-black/40 px-2 py-1"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 border-2 border-white/20 bg-black/40 px-2 py-1 max-w-full"
       title={
         "Forfait OpenCode Go — " +
         windows
@@ -31,9 +31,9 @@ export default function UsageBadge({ usage }) {
       {windows.map((w) => {
         const pct = Math.min(100, Math.max(0, usage[w.key].percent || 0));
         return (
-          <div key={w.key} className="flex items-center gap-1">
+          <div key={w.key} className="flex items-center gap-1 shrink-0">
             <span className="text-[9px] font-mono text-gray-500">{w.label}</span>
-            <div className="w-10 h-1.5 bg-white/10">
+            <div className="w-8 sm:w-10 h-1.5 bg-white/10 shrink-0">
               <div
                 className="h-full transition-all"
                 style={{ width: `${pct}%`, backgroundColor: color(pct) }}

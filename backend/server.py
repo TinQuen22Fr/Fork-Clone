@@ -1065,6 +1065,9 @@ CONTEXT_FILE = ".forge-context"
 CONTEXT_FILE_MAX_CHARS = int(_env("FORGE_CONTEXT_FILE_MAX_CHARS", "8000"))
 # Nb max de faits memoires reinjectes par projet (les plus importants d'abord).
 CONTEXT_MAX_FACTS = int(_env("FORGE_CONTEXT_MAX_FACTS", "40"))
+# Nb max de faits renvoyes a l'UI (plus large que le prompt : l'utilisateur
+# doit pouvoir consulter l'integralite de la memoire d'un projet).
+CONTEXT_UI_MAX_FACTS = int(_env("FORGE_CONTEXT_UI_MAX_FACTS", "500"))
 # Taille du snapshot d'arborescence (fichiers listes).
 CONTEXT_TREE_MAX_ENTRIES = int(_env("FORGE_CONTEXT_TREE_MAX_ENTRIES", "80"))
 # Profondeur maximale du scan d'arborescence.
@@ -1247,6 +1250,43 @@ def _read_readme_excerpt(root: Path) -> str:
     return ""
 
 
+# --- Cache des snapshots de projet --------------------------------------
+# `fetch_project_snapshot` scanne le disque (arborescence, git via 2
+# sous-processus, README) : c'est de loin le cout dominant a l'ouverture d'un
+# projet et a chaque appel /context. Le dossier ne change pas entre deux
+# ouvertures rapprochees : on memorise donc le snapshot avec un TTL court,
+# invalide automatiquement si le mtime de la racine ou du .git change.
+_SNAPSHOT_TTLS = float(_env("FORGE_SNAPSHOT_TTL", "15"))
+# {project: (timestamp, signature_mtime, snapshot)}
+_SNAPSHOT_CACHE: dict[str, tuple[float, float, dict]] = {}
+
+
+def _project_sig(root: Optional[Path]) -> float:
+    """Signature d'invalidation : mtime de la racine et du .git du projet."""
+    if root is None:
+        return 0.0
+    sig = 0.0
+    try:
+        sig = root.stat().st_mtime
+    except OSError:
+        return 0.0
+    try:
+        git_dir = root / ".git"
+        if git_dir.exists():
+            sig = max(sig, git_dir.stat().st_mtime)
+    except OSError:
+        pass
+    return sig
+
+
+def invalidate_project_snapshot(name: str = "") -> None:
+    """Purge le cache snapshot (projet precis, ou tout si name est vide)."""
+    if not name:
+        _SNAPSHOT_CACHE.clear()
+        return
+    _SNAPSHOT_CACHE.pop(name, None)
+
+
 def fetch_project_snapshot(name: str) -> dict:
     """
     FETCH à l'ouverture d'un projet : photographie structurelle complete.
@@ -1257,8 +1297,17 @@ def fetch_project_snapshot(name: str) -> dict:
     root = project_root(name)
     if root is None:
         return {"project": name, "root": None, "exists": False}
+
+    now = time.monotonic()
+    sig = _project_sig(root)
+    cached = _SNAPSHOT_CACHE.get(name)
+    if cached is not None:
+        ts, cached_sig, snap = cached
+        if (now - ts) < _SNAPSHOT_TTLS and cached_sig == sig:
+            return snap
+
     rules = _read_project_rules(name)
-    return {
+    snap = {
         "project": name,
         "root": str(root),
         "exists": True,
@@ -1270,6 +1319,8 @@ def fetch_project_snapshot(name: str) -> dict:
         "rules": rules,
         "fetched_at": now_iso(),
     }
+    _SNAPSHOT_CACHE[name] = (now, sig, snap)
+    return snap
 
 
 def _norm_fact(text: str) -> str:
@@ -1454,6 +1505,27 @@ async def recall_context_facts(user_id: str, project: str) -> list[dict]:
         {"user_id": user_id, "project": project}, {"_id": 0}
     ).sort([("priority", -1), ("confirmations", -1), ("updated_at", -1)]).to_list(CONTEXT_MAX_FACTS)
     return docs
+
+
+async def recall_context_facts_ui(user_id: str, project: str) -> list[dict]:
+    """Variante UI : renvoie jusqu'a CONTEXT_UI_MAX_FACTS faits (liste complete
+    pour le panneau deroulant), sans le plafond serre du prompt LLM."""
+    if not project:
+        return []
+    database = get_db()
+    return await database.context_facts.find(
+        {"user_id": user_id, "project": project}, {"_id": 0}
+    ).sort([("priority", -1), ("confirmations", -1), ("updated_at", -1)]).to_list(CONTEXT_UI_MAX_FACTS)
+
+
+async def count_context_facts(user_id: str, project: str) -> int:
+    """Total REEL de faits memorises pour un projet (sans plafond)."""
+    if not project:
+        return 0
+    database = get_db()
+    return await database.context_facts.count_documents(
+        {"user_id": user_id, "project": project}
+    )
 
 
 async def fetch_and_store_project(
@@ -4541,13 +4613,24 @@ async def create_conversation(
         await _assign_project_meta(current_user["id"], name)
         doc["project"] = name
     await database.conversations.insert_one(doc)
-    # Fetcher : ouverture/creation de conversation liee a un projet -> on
-    # consolide la memoire du projet (snapshot structurel + faits persistants).
+    # Fetcher : consolidation de la memoire du projet. JAMAIS bloquante : elle
+    # scanne le disque et ecrit en base, ce qui allongeait artificiellement le
+    # temps de reponse a l'ouverture d'un projet. On la lance en tache de fond
+    # (le snapshot est de toute facon deja en cache si le hub l'a affiche).
     if doc.get("project"):
+        uid = current_user["id"]
+        project_name = doc["project"]
+
+        async def _bg_fetch(_uid=uid, _name=project_name):
+            try:
+                await fetch_and_store_project(_uid, _name, "system")
+            except Exception:  # noqa: BLE001
+                logger.warning("Fetcher: consolidation a l'ouverture impossible")
+
         try:
-            await fetch_and_store_project(current_user["id"], doc["project"], "system")
-        except Exception:  # noqa: BLE001
-            logger.warning("Fetcher: consolidation a l'ouverture impossible")
+            asyncio.get_running_loop().create_task(_bg_fetch())
+        except RuntimeError:
+            pass
     doc.pop("_id", None)
     return doc
 
@@ -4846,7 +4929,8 @@ async def get_context(
     """
     name = _valid_project_name(project)
     snap = fetch_project_snapshot(name)
-    facts = await recall_context_facts(current_user["id"], name)
+    facts = await recall_context_facts_ui(current_user["id"], name)
+    total = await count_context_facts(current_user["id"], name)
     return {
         "project": name,
         "exists": snap.get("exists", False),
@@ -4869,7 +4953,9 @@ async def get_context(
             }
             for f in facts
         ],
-        "count": len(facts),
+        # Total REEL en base (independant du plafond de la liste transmise).
+        "count": total,
+        "shown": len(facts),
     }
 
 
@@ -6146,19 +6232,48 @@ async def _projects_meta(user_id: str) -> dict:
 
 @api_router.get("/workspace/projects")
 async def workspace_projects(current_user: dict = Depends(get_current_user)):
-    """Projets du workspace + URL de preview et nb de conversations."""
+    """Projets du workspace + URL de preview et nb de conversations.
+
+    Performance : les N projets etaient traites en boucle SEQUENTIELLE (2-3
+    appels `await` chacun : meta, count Mongo, statut preview), ce qui donnait
+    un temps de reponse proportionnel au nombre de projets. On regroupe
+    desormais les appels par type et on les parallelise via asyncio.gather.
+    """
     database = get_db()
-    meta = await _projects_meta(current_user["id"])
+    uid = current_user["id"]
+    meta = await _projects_meta(uid)
     projects = list_workspace_projects()
-    for p in projects:
+
+    # 1) Metadonnees manquantes : on ne complete (et n'ecrit) que si necessaire,
+    #    en parallele. C'est la seule etape susceptible d'ecrire en base.
+    to_assign = [
+        p["name"] for p in projects
+        if not (meta.get(p["name"]) or {}).get("preview_url")
+        or not (meta.get(p["name"]) or {}).get("preview_port")
+    ]
+    if to_assign:
+        assigned = await asyncio.gather(
+            *(_assign_project_meta(uid, n) for n in to_assign)
+        )
+        for n, m in zip(to_assign, assigned):
+            meta[n] = m
+
+    # 2) Compteurs de conversations : un seul gather pour tous les projets.
+    counts = await asyncio.gather(
+        *(
+            database.conversations.count_documents(
+                {"user_id": uid, "project": p["name"]}
+            )
+            for p in projects
+        )
+    )
+
+    # 3) Assemblage (statut preview : lecture synchrone en memoire, sans I/O).
+    for p, conv_count in zip(projects, counts):
         m = meta.get(p["name"]) or {}
-        if not m.get("preview_url") or not m.get("preview_port"):
-            m = await _assign_project_meta(current_user["id"], p["name"])
         p["preview_url"] = m.get("preview_url") or ""
         p["preview_port"] = m.get("preview_port")
-        p["conversations"] = await database.conversations.count_documents(
-            {"user_id": current_user["id"], "project": p["name"]}
-        )
+        p["conversations"] = conv_count
         if p["preview_port"]:
             st = preview_mgr().status(p["name"], p["preview_port"])
             p["preview_phase"] = st["phase"]
@@ -6173,6 +6288,7 @@ async def create_project(
     """Cree le sous-dossier du projet dans WORKSPACE_ROOT."""
     name = _valid_project_name(payload.name)
     d = _ensure_project_dir(name)
+    invalidate_project_snapshot(name)
     meta = await _assign_project_meta(
         current_user["id"], name, (payload.preview_url or "").strip() or None
     )
@@ -6410,6 +6526,7 @@ async def delete_project(
         raise HTTPException(
             status_code=500, detail=f"Suppression du dossier impossible : {exc}"
         )
+    invalidate_project_snapshot(pname)
 
     conv_ids = [
         c["id"]
@@ -6693,6 +6810,7 @@ async def link_conversation_project(
     """Rattache une conversation a un projet (cree le dossier si besoin)."""
     name = _valid_project_name(payload.name)
     _ensure_project_dir(name)
+    invalidate_project_snapshot(name)
     meta = await _assign_project_meta(current_user["id"], name)
     res = await get_db().conversations.update_one(
         {"id": conv_id, "user_id": current_user["id"]},

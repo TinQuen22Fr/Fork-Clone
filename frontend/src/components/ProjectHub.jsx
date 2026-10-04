@@ -16,7 +16,25 @@ import {
   Download,
   Upload,
   X,
+  MoreVertical,
+  Trash2,
+  RefreshCw,
+  Server,
 } from "lucide-react";
+
+/* Couleurs de teinte pour le fallback visuel (projets sans URL de preview). */
+const FALLBACK_HUES = ["#ff2a6d", "#ffd700", "#05d9e8", "#a855f7", "#22c55e", "#f97316"];
+
+/* Genere un visuel de repli deterministe a partir du nom du projet : monogramme
+   + degrade teinte. Utile pour les projets non-web (Arduino, ESP32, API locale,
+   logiciel installable sur l'ordi...) qui n'ont pas d'URL de preview. */
+const fallbackVisual = (name) => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  const hue = FALLBACK_HUES[h % FALLBACK_HUES.length];
+  const mono = (name.replace(/[^a-zA-Z0-9]/g, "").slice(0, 2) || "??").toUpperCase();
+  return { hue, mono };
+};
 
 /** Ecran d'accueil : prompt central + projets du workspace. */
 export const ProjectHub = ({ onStart, onOpenProject }) => {
@@ -33,6 +51,7 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(""); // nom du projet en cours d'export
   const [importing, setImporting] = useState(false);
+  const [openMenu, setOpenMenu] = useState(null); // nom du projet dont le menu "..." est ouvert
   const fileInputRef = React.useRef(null);
 
   const PHASES = {
@@ -182,18 +201,23 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
 
   return (
     <div
-      className="flex-1 overflow-y-auto px-6 py-10 sm:px-10 lg:px-16"
+      className="hub-canvas relative flex-1 overflow-y-auto"
       data-testid="project-hub"
     >
-      <div className="max-w-3xl">
-        <div className="text-[10px] font-mono uppercase tracking-[0.35em] text-gray-600">
-          // hub
+      {/* Halo decoratif haut (equivalent visuel du radial-gradient d'Emergent) */}
+      <div className="hub-halo" aria-hidden="true" />
+
+      <div className="relative mx-auto w-full max-w-3xl px-6 sm:px-10 lg:px-16">
+        <div className="hub-hero">
+          <div className="text-[10px] font-mono uppercase tracking-[0.35em] text-gray-600">
+            // hub
+          </div>
+          <h1 className="mt-2 font-heading text-4xl sm:text-5xl font-black uppercase tracking-tighter leading-[0.95]">
+            Qu'est-ce qu'on
+            <br />
+            <span className="text-[#ff2a6d]">construit</span> aujourd'hui ?
+          </h1>
         </div>
-        <h1 className="mt-2 font-heading text-4xl sm:text-5xl font-black uppercase tracking-tighter leading-[0.95]">
-          Qu'est-ce qu'on
-          <br />
-          <span className="text-[#ff2a6d]">construit</span> aujourd'hui ?
-        </h1>
 
         {/* Prompt central */}
         <form onSubmit={start} className="mt-8 space-y-3">
@@ -305,116 +329,175 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
               créé dans le workspace.
             </p>
           ) : (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {projects.map((p) => (
-                <div
-                  key={p.name}
-                  className="group border-2 border-white/15 bg-black/40 p-4 hover:border-[#05d9e8] transition-colors"
-                  data-testid={`hub-project-${p.name}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
+            <div className="mt-4 hub-plist">
+              {projects.map((p) => {
+                const phase = PHASES[p.preview_phase] || PHASES.stopped;
+                const run = p.preview_phase === "running";
+                const vis = fallbackVisual(p.name);
+                const thumbSrc = p.preview_url
+                  ? `https://image.thum.io/get/width/400/crop/260/${p.preview_url}`
+                  : null;
+                return (
+                  <div
+                    key={p.name}
+                    className="hub-prow"
+                    data-testid={`hub-project-${p.name}`}
+                  >
+                    {/* Vignette : capture live de la preview, sinon fallback visuel */}
+                    <div className="hub-pthumb" title={p.preview_url || p.name}>
+                      {thumbSrc ? (
+                        <img
+                          src={thumbSrc}
+                          alt={`Aperçu de ${p.name}`}
+                          loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                            const fb = e.currentTarget.nextSibling;
+                            if (fb) fb.style.display = "flex";
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className="hub-pthumb-fallback"
+                        style={{
+                          display: thumbSrc ? "none" : "flex",
+                          background: `linear-gradient(135deg, ${vis.hue}33, ${vis.hue}0d)`,
+                        }}
+                      >
+                        {vis.mono}
+                      </div>
+                      <span
+                        className="hub-pthumb-phase"
+                        style={{ backgroundColor: phase.color }}
+                      />
+                    </div>
+
+                    {/* Nom + meta */}
                     <button
                       type="button"
                       onClick={() => onOpenProject(p)}
-                      className="text-left font-heading font-black uppercase tracking-tight text-sm hover:text-[#05d9e8]"
+                      className="hub-pmain"
                       data-testid={`hub-open-${p.name}`}
                     >
-                      {p.name}
-                    </button>
-                    <div className="flex items-center gap-1">
-                      {p.preview_url && (
-                        <>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            p.preview_phase === "running"
-                              ? window.open(p.preview_url, "_blank", "noreferrer")
-                              : previewAction(p, "start")
-                          }
-                          disabled={acting.startsWith(`${p.name}:`)}
-                          title={
-                            p.preview_phase === "running"
-                              ? `Ouvrir ${p.preview_url}`
-                              : `Démarrer la preview de ${p.name}`
-                          }
-                          className="text-gray-600 hover:text-[#ffd700] disabled:opacity-40"
-                          data-testid={`hub-preview-${p.name}`}
-                        >
-                          {acting.startsWith(`${p.name}:`) ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : p.preview_phase === "running" ? (
-                            <ExternalLink className="w-4 h-4" />
-                          ) : (
-                            <Play className="w-4 h-4" />
-                          )}
-                        </button>
-                        {p.preview_phase === "running" && (
-                          <button
-                            type="button"
-                            onClick={() => previewAction(p, "stop")}
-                            title="Arrêter la preview"
-                            className="text-gray-600 hover:text-[#ff2a6d]"
-                            data-testid={`hub-preview-stop-${p.name}`}
-                          >
-                            <Square className="w-3.5 h-3.5" />
-                          </button>
+                      <span className="hub-pname">{p.name}</span>
+                      <span className="hub-pmeta">
+                        <span style={{ color: phase.color }}>{phase.label}</span>
+                        <span className="flex items-center gap-1">
+                          <MessageSquare className="w-3 h-3" />
+                          {p.conversations ?? 0}
+                        </span>
+                        {p.is_git_repo && <span className="text-[#ffd700]">git</span>}
+                        {p.preview_port && <span>:{p.preview_port}</span>}
+                        {p.preview_url && (
+                          <span className="truncate text-[#05d9e8]">
+                            {p.preview_url.replace(/^https?:\/\//, "")}
+                          </span>
                         )}
+                      </span>
+                    </button>
+
+                    {/* Menu d'actions "..." */}
+                    <div className="hub-pactions">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOpenMenu((cur) => (cur === p.name ? null : p.name))
+                        }
+                        className={`hub-pmenu-btn${openMenu === p.name ? " open" : ""}`}
+                        title="Actions du projet"
+                        data-testid={`hub-menu-${p.name}`}
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+
+                      {openMenu === p.name && (
+                        <>
+                          {/* voile pour fermer au clic exterieur */}
+                          <div
+                            className="fixed inset-0 z-30"
+                            onClick={() => setOpenMenu(null)}
+                          />
+                          <div className="hub-pmenu" data-testid={`hub-menu-panel-${p.name}`}>
+                            {p.preview_url && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenu(null);
+                                  run
+                                    ? window.open(p.preview_url, "_blank", "noreferrer")
+                                    : previewAction(p, "start");
+                                }}
+                                disabled={acting.startsWith(`${p.name}:`)}
+                              >
+                                {acting.startsWith(`${p.name}:`) ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : run ? (
+                                  <ExternalLink className="w-4 h-4" />
+                                ) : (
+                                  <Play className="w-4 h-4" />
+                                )}
+                                {run ? "Ouvrir la preview" : "Démarrer la preview"}
+                              </button>
+                            )}
+                            {p.preview_url && run && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenu(null);
+                                  previewAction(p, "stop");
+                                }}
+                              >
+                                <Square className="w-4 h-4" />
+                                Arrêter la preview
+                              </button>
+                            )}
+                            {p.preview_url && run && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenu(null);
+                                  previewAction(p, "restart");
+                                }}
+                              >
+                                <RefreshCw className="w-4 h-4" />
+                                Redémarrer
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                exportProject(p);
+                              }}
+                              disabled={exporting === p.name}
+                            >
+                              {exporting === p.name ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Download className="w-4 h-4" />
+                              )}
+                              Exporter en .zip
+                            </button>
+                            <div className="hub-pmenu-sep" />
+                            <button
+                              type="button"
+                              className="danger"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                setConfirmDelete(p);
+                              }}
+                              data-testid={`hub-delete-${p.name}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Supprimer
+                            </button>
+                          </div>
                         </>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => exportProject(p)}
-                        disabled={exporting === p.name}
-                        title={`Télécharger ${p.name} en .zip (backup)`}
-                        className="text-gray-600 hover:text-[#05d9e8] transition-colors disabled:opacity-40"
-                        data-testid={`hub-export-${p.name}`}
-                      >
-                        {exporting === p.name ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Download className="w-4 h-4" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDelete(p)}
-                        title={`Supprimer ${p.name}`}
-                        className="text-gray-600 hover:text-[#ff2a6d] transition-colors"
-                        data-testid={`hub-delete-${p.name}`}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
                     </div>
                   </div>
-                  <div className="mt-2 flex items-center gap-3 text-[10px] font-mono text-gray-500">
-                    <span
-                      className="flex items-center gap-1"
-                      style={{ color: (PHASES[p.preview_phase] || PHASES.stopped).color }}
-                      data-testid={`hub-preview-phase-${p.name}`}
-                    >
-                      <span
-                        className="w-1.5 h-1.5 rounded-full"
-                        style={{
-                          backgroundColor: (PHASES[p.preview_phase] || PHASES.stopped)
-                            .color,
-                        }}
-                      />
-                      {(PHASES[p.preview_phase] || PHASES.stopped).label}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <MessageSquare className="w-3 h-3" />
-                      {p.conversations ?? 0}
-                    </span>
-                    {p.is_git_repo && <span className="text-[#ffd700]">git</span>}
-                    {p.preview_port && <span>:{p.preview_port}</span>}
-                    {p.preview_url && (
-                      <span className="truncate text-[#05d9e8]">
-                        {p.preview_url.replace(/^https?:\/\//, "")}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
