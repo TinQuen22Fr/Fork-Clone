@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-04T16:03:35.394886+00:00
+# Dernière mise à jour : 2026-10-04T19:59:18.430981+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit e8243ae Modification boutons UI.
+- Git : branche claude-ai, dernier commit 4919a7f refactor(chat): extraction modulaire de Chat.jsx (Etape 3)  - Phase A: ThemeToggle, UsageBadge, EmptyState, EmptyChat - Phase B: Sidebar (17 props) - Phase C: ChatHeader (13 props) - Chat.jsx: 1998 -> 1662 lignes (-17%) - .gitignore: exclusion des sauvegardes *.bak-*.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/

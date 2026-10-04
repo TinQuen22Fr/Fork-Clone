@@ -22,6 +22,7 @@ export default function ChatHeader({
   activeModel,
   modelOverride,
 }) {
+  return (
         <header className="border-b-2 border-white/10 px-3 sm:px-4 lg:px-8 py-3 sm:py-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
@@ -103,4 +104,5 @@ export default function ChatHeader({
             </div>
           </div>
         </header>
+  );
 }
