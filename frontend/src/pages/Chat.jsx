@@ -459,17 +459,21 @@ export default function Chat() {
     return merged;
   }, []);
 
+  // 1ere page volontairement courte : c'est le rendu Markdown de chaque message
+  // (et non le reseau) qui coute le plus a l'ouverture. Les pages suivantes
+  // (bouton "anciens messages") restent a 150.
+  const MESSAGES_FIRST_PAGE = 60;
   const MESSAGES_PAGE = 150;
 
   const loadMessages = async (cid) => {
     setLoadingMsgs(true);
     try {
       const { data } = await api.get(`/conversations/${cid}/messages`, {
-        params: { limit: MESSAGES_PAGE },
+        params: { limit: MESSAGES_FIRST_PAGE },
       });
       const list = Array.isArray(data) ? data : data?.messages || [];
       if (olderLoadedRef.current !== cid) {
-        setHasMore(list.length >= MESSAGES_PAGE);
+        setHasMore(list.length >= MESSAGES_FIRST_PAGE);
       }
       setMessages((prev) => {
         // On conserve les anciens messages deja remontes par l'utilisateur :

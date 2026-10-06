@@ -4691,23 +4691,25 @@ async def get_messages(
     permet de remonter page par page dans l'historique.
     """
     database = get_db()
-    conv = await database.conversations.find_one(
-        {"id": conv_id, "user_id": current_user["id"]}, {"_id": 1}
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
     flt: dict = {"conversation_id": conv_id}
     if before:
         flt["created_at"] = {"$lt": before}
-    docs = (
-        await database.messages.find(
+    # Verification d'appartenance et lecture des messages en parallele (au lieu
+    # de deux aller-retours Mongo successifs). Rien n'est renvoye si la
+    # conversation n'est pas a l'utilisateur.
+    conv, docs = await asyncio.gather(
+        database.conversations.find_one(
+            {"id": conv_id, "user_id": current_user["id"]}, {"_id": 1}
+        ),
+        database.messages.find(
             flt,
             {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
         )
         .sort("created_at", -1)
-        .to_list(limit)
+        .to_list(limit),
     )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     docs.reverse()
     return docs
 
@@ -7535,6 +7537,33 @@ app.include_router(api_router)
 # navigateurs rejettent toute reponse credentialed portant une origine joker.
 # On liste donc les origines explicitement. Si FRONTEND_URL est absent, on
 # n'autorise rien plutot que de servir une configuration silencieusement cassee.
+from starlette.middleware.gzip import GZipMiddleware as _StarletteGZip
+
+
+class _SafeGZip:
+    """GZip pour les reponses JSON/texte, JAMAIS pour les flux SSE.
+
+    Le GZipMiddleware de Starlette met les chunks en tampon : appliqué au
+    streaming du chat, il retarderait les evenements. On le contourne donc
+    pour les routes de flux et on utilise un niveau 5 (le 9 par defaut coute
+    cher en CPU pour un gain negligeable).
+    """
+
+    _SKIP_SUFFIXES = ("/chat/stream", "/preview/logs")
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = _StarletteGZip(app, minimum_size=1024, compresslevel=5)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").endswith(self._SKIP_SUFFIXES):
+            await self.app(scope, receive, send)
+            return
+        await self.gzip(scope, receive, send)
+
+
+app.add_middleware(_SafeGZip)
+
 if settings.frontend_urls:
     # Origines explicites (FRONTEND_URL) + regex restreinte aux hôtes de
     # développement local (localhost/127.0.0.1, port quelconque). Aucun

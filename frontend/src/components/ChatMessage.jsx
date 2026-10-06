@@ -69,6 +69,11 @@ function ChatMessage({
   const [copiedStepGroup, setCopiedStepGroup] = useState(null);
   const [rollbackBusy, setRollbackBusy] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  // Rendu paresseux : le contenu des blocs repliés (étapes, outils) n'est
+  // construit dans le DOM qu'à l'ouverture, ce qui allège l'affichage d'une
+  // conversation riche en sorties d'outils.
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [openSteps, setOpenSteps] = useState({});
 
   const copyUser = async () => {
     try {
@@ -271,6 +276,11 @@ function ChatMessage({
                   key={st.index ?? i}
                   className="group border-2 border-[#05d9e8]/50 bg-[#05d9e8]/5"
                   data-testid={`step-${message.id}-${st.index ?? i}`}
+                  onToggle={(e) => {
+                    const k = st.index ?? i;
+                    const o = e.currentTarget.open;
+                    setOpenSteps((prev) => (!!prev[k] === o ? prev : { ...prev, [k]: o }));
+                  }}
                 >
                   <summary className="px-3 py-1.5 flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
                     <span className="font-mono text-[11px] uppercase tracking-wider text-[#05d9e8] transition-transform group-open:rotate-90">
@@ -338,12 +348,12 @@ function ChatMessage({
                       </span>
                     )}
                   </summary>
-                  {st.intention && (
+                  {openSteps[st.index ?? i] && st.intention && (
                     <div className="px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap border-t border-[#05d9e8]/30 border-b border-[#05d9e8]/20">
                       {st.intention}
                     </div>
                   )}
-                  {Array.isArray(st.tools) && st.tools.length > 0 && (
+                  {openSteps[st.index ?? i] && Array.isArray(st.tools) && st.tools.length > 0 && (
                     <div className="px-3 py-2 space-y-2 border-t border-[#05d9e8]/20">
                       {st.tools.map((s, j) => (
                         <div key={j} className="border-l-2 border-[#ffd700]/50 pl-3">
@@ -367,6 +377,7 @@ function ChatMessage({
           <details
             className="mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
             data-testid={`tool-steps-${message.id}`}
+            onToggle={(e) => setToolsOpen(e.currentTarget.open)}
           >
             <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 text-[#ffd700] font-mono text-xs uppercase tracking-wider">
               <Terminal className="w-4 h-4" />
@@ -396,6 +407,7 @@ function ChatMessage({
                 {copiedTools ? "Copié" : "Copier"}
               </span>
             </summary>
+            {toolsOpen && (
             <div className="px-3 pb-3 space-y-3">
               {message.tool_steps.map((s, i) => (
                 <div key={i} className="border-l-2 border-[#05d9e8]/50 pl-3">
@@ -423,6 +435,7 @@ function ChatMessage({
                 </div>
               ))}
             </div>
+            )}
           </details>
         )}
 

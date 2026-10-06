@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-06T20:56:15.612271+00:00
+# Dernière mise à jour : 2026-10-06T21:24:58.946873+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 13b4cb4 Fix UI..
+- Git : branche claude-ai, dernier commit eaf6690 Correction chargement des projets + correction graphique affichage/desaffichage Sidebard gauche..
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -39,8 +39,10 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-20261004-014341
   backend/server.py.bak-20261004-014704
   backend/server.py.bak-20261004-015527
+  backend/server.py.bak-loadlimit-20261006-225647
   backend/server.py.bak-pagination-20261006-225431
   backend/server.py.bak-perf-20261004-234622
+  backend/server.py.bak-speed2-20261006-230949
   backend/server.py.bak_item10
   backend/test_rollback.txt
   deploy/
@@ -64,8 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/logo-64.png
   frontend/public/manifest.webmanifest
   frontend/public/maskable-192.png
-  frontend/public/maskable-512.png
-  frontend/public/sw.js
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Première chose il faut impérativement que les graphiques sois Implémentif (pour affichage correct sur mobile tablette tactile...) après par contre peu on approfondir la vitesse de chargement qui est encore lent je trouve sur ordi en wifi ?
