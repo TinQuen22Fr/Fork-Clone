@@ -388,6 +388,7 @@ export default function Chat() {
   // re-rendu. Le backend renvoie des documents neufs a chaque poll (8s), donc
   // sans ceci chaque poll re-rendait toute la conversation (jusqu'a 2000 msg).
   const reconcileMessages = useCallback((prev, next) => {
+    if (!Array.isArray(next)) return prev;
     if (!prev.length) return next;
     const prevById = new Map();
     for (const m of prev) prevById.set(m.id, m);
@@ -422,7 +423,8 @@ export default function Chat() {
     setLoadingMsgs(true);
     try {
       const { data } = await api.get(`/conversations/${cid}/messages`);
-      setMessages((prev) => reconcileMessages(prev, data));
+      const list = Array.isArray(data) ? data : data?.messages || [];
+      setMessages((prev) => reconcileMessages(prev, list));
     } catch (e) {
       setError(formatApiError(e));
     } finally {
@@ -779,7 +781,11 @@ export default function Chat() {
             // Etape validee et deja persistee cote serveur : on fige le cadre.
             finishStreamStep(data.step);
           } else if (event === "error") {
-            setError(data.detail);
+            setError(
+              typeof data.detail === "string" && data.detail.trim()
+                ? data.detail
+                : "Erreur du serveur pendant la génération."
+            );
           } else if (event === "done") {
             setMessages((prev) => [...prev, data]);
             resetStream();
@@ -790,6 +796,8 @@ export default function Chat() {
       refreshUsage();
     } catch (err) {
       const aborted = err?.name === "AbortError";
+      const interrupted =
+        err?.isStreamInterrupted || err?.message === "STREAM_INTERRUPTED";
       if (aborted) {
         // Mode autonome : la génération continue côté serveur. On informe
         // l'utilisateur sans crier à l'erreur, puis on resynchronisera.
@@ -798,13 +806,54 @@ export default function Chat() {
         );
         fetchStatusTurns();
         await new Promise((r) => setTimeout(r, 700));
+      } else if (interrupted) {
+        // Le flux SSE a été coupé (proxy, mise en veille, réseau). Ce n'est
+        // PAS un échec : le backend a déjà persisté ce qu'il a produit.
+        // On NE supprime PAS le message de l'utilisateur (bug historique qui
+        // faisait disparaitre toute la conversation jusqu'au rechargement).
+        // On laisse un court instant au serveur, on resynchronise, et si rien
+        // n'est encore arrivé on informe calmement.
+        setNotice(
+          "Connexion au flux interrompue — resynchronisation avec le serveur…"
+        );
+        await new Promise((r) => setTimeout(r, 1200));
+        try {
+          const { data } = await api.get(`/conversations/${convId}/messages`);
+          const list = Array.isArray(data) ? data : data?.messages || [];
+          // Si le serveur a bien enregistré le message utilisateur, on
+          // remplace l'optimiste par la version serveur ; sinon on le garde
+          // quand même à l'écran (jamais de disparition).
+          const hasUser = list.some((m) => m.role === "user");
+          setMessages((prev) => {
+            const cleaned = prev.filter(
+              (m) => !(m.id === optimisticUser.id && hasUser)
+            );
+            return reconcileMessages(cleaned, list.length ? list : cleaned);
+          });
+          if (!list.length) {
+            setNotice("");
+            setError(
+              "La connexion a été coupée avant tout enregistrement. Réessaie ton message."
+            );
+          }
+        } catch (_) {
+          // Resynchro impossible (réseau toujours coupé) : on garde le message
+          // visible et on prévient.
+          setNotice("");
+          setError(
+            "Réseau instable — impossible de resynchroniser. Recharge la page pour revoir la conversation."
+          );
+        }
       } else {
-        setError(err?.message || "Erreur inconnue");
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+        // Vraie erreur métier : message lisible, et on GARDE le message
+        // utilisateur à l'écran (il a bien été envoyé).
+        setError(formatApiError(err) || "Erreur inconnue");
       }
       // Le serveur conserve ce qui a déjà été généré : on resynchronise.
-      loadMessages(convId);
-      fetchConversations();
+      if (!interrupted) {
+        loadMessages(convId);
+        fetchConversations();
+      }
     } finally {
       abortRef.current = null;
       resetStream();
@@ -987,7 +1036,7 @@ export default function Chat() {
   const lastMsg = messages[messages.length - 1];
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
   const activeModel = models.find((m) => m.id === provider);
-  const catalog = activeModel?.models || [];
+  const catalog = Array.isArray(activeModel?.models) ? activeModel.models : [];
   return (
     <div className="h-full w-full flex bg-[var(--bg-main)] text-white overflow-hidden">
       {(runningTurns.length > 0 || statusTurns.length > 0) && (
@@ -1055,6 +1104,7 @@ export default function Chat() {
 
       {/* Sidebar (extrait -> components/chat/Sidebar.jsx) */}
       <Sidebar
+        sidebarOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -1167,7 +1217,7 @@ export default function Chat() {
             {/* Détail dépliable : les faits mémorisés, classés par priorité */}
             {contextOpen && (projectContext.facts || []).length > 0 && (
               <div className="max-w-3xl mx-auto mt-1.5 mb-1 border border-white/5 rounded-sm divide-y divide-white/5 max-h-[40vh] overflow-y-auto">
-                {projectContext.facts.map((f, i) => (
+                {(Array.isArray(projectContext.facts) ? projectContext.facts : []).map((f, i) => (
                   <div
                     key={i}
                     className="flex items-start gap-2 px-2 py-2 sm:py-1 text-[10px] font-mono"

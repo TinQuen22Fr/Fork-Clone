@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-04T22:40:01.447411+00:00
+# Dernière mise à jour : 2026-10-06T00:36:30.798440+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit be09aef correction ChatHeader.jsx.
+- Git : branche claude-ai, dernier commit d1ade78 fix(chat): touche Entrée = retour à la ligne (envoi via Ctrl/Cmd+Enter ou bouton), correctif compteur de contexte, ouverture de projet instantanée, refonte responsive ProjectHub + CSS, extraction MessagesSkeleton, doc ANALYSE_INTEGRATIONS_EXTERNES.md.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -67,11 +67,13 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/sw.js
   frontend/src/
 - Faits memorises (les plus importants d'abord) :
+  [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Première chose il faut impérativement que les graphiques sois Implémentif (pour affichage correct sur mobile tablette tactile...) après par contre peu on approfondir la vitesse de chargement qui est encore lent je trouve sur ordi en wifi ?
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
-  [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] sur mobile et net ordi, le chargement prends toujours un peu de temps mais bon je vois pas ce que tu peux faire de plus.
+  [regle] Par contre chargement projet mets toujours un peu de temps à charger.
   [regle] écarté et **pourquoi**, pour ne pas réouvrir dix fois le même débat.
   [regle] // Cle localStorage pour ne JAMAIS reafficher en boucle un tour deja notifie
   [regle] (en faite quand je clique sur un projet j'ai la fenetre de chat qui s'ouvre mais seul l'espace où l'on tape le message se lance il faut attendre un peut pour que le chat s'affiche voilà ce que je veux dire par lent).
@@ -97,13 +99,11 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] @standard-schema
   [architecture] Item 1 (web_search) : implémente l'outil de recherche DuckDuckGo autonome dans backend/tools/web_search.py et branche-le sur notre registre actuel.
   [architecture] On retient uniquement 3 éléments à forte valeur ajoutée : 1.
+  [architecture] frontend/src/components/ErrorBoundary.jsx:32: console.error("[ErrorBoundary]", error, info?.componentStack);
+  [architecture] 253: # Utilise la cle Groq deja configuree ; endpoint compatible OpenAI.
+  [architecture] backend/.venv/lib/python3.14/site-packages/pydantic/_internal/_generate_schema.py
+  [architecture] backend/.venv/lib/python3.14/site-packages/pydantic/_internal/_schema_gather.py
+  [architecture] backend/.venv/lib/python3.14/site-packages/pydantic/json_schema.py
+  [architecture] backend/.venv/lib/python3.14/site-packages/pydantic/v1/schema.py
   [architecture] Claude Code, Cursor, Codex, and Gemini CLI all accept custom API endpoints via environment variables like
   [architecture] 1181:def _detect_stack(root: Path) -> list[str]:
-  [architecture] "@tanstack/react-query": "5.56.2",
-  [architecture] --cf-stack-behind-bg: #2c3133;
-  [architecture] --cf-stack-behind-bg: #ebf0f2;
-  [architecture] --cf-stack-behind-opacity: .5;
-  [architecture] --cf-stack-behind-opacity: 1;
-  [architecture] --cf-stack-card-bg: #2e3133;
-  [architecture] --cf-stack-card-bg: #ffffff;
-  [architecture] --cf-stack-card-body-icon: #45494d;

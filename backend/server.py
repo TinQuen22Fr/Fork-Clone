@@ -55,8 +55,10 @@ def set_current_provider(pid: str):
     _current_provider.set(pid or "claude")
 
 # --- Selecteur de modele Claude -------------------------------------------
-# Le jeton OAuth d'abonnement donne acces a plusieurs modeles. On expose une
-# liste statique (l'API Anthropic n'a pas d'endpoint /models utilisable ici).
+# Le jeton OAuth d'abonnement donne acces a plusieurs modeles. Cette liste sert
+# de REPLI : le catalogue reel est decouvert dynamiquement via l'endpoint
+# Anthropic GET /v1/models (qui accepte le Bearer OAuth d'abonnement), avec
+# cache et retour automatique a cette liste statique en cas d'echec.
 # `model_override` choisi cote UI est propage via ce ContextVar, sans toucher
 # au defaut configure dans CLAUDE_MODEL.
 CLAUDE_MODELS: tuple[str, ...] = (
@@ -5161,8 +5163,12 @@ async def chat_stream(
             )
         )
         try:
-            async for ev in channel.stream():
-                if ev["type"] == "delta":
+            async for ev in channel.stream(ping_interval=15.0):
+                if ev["type"] == "__ping__":
+                    # Commentaire SSE : maintient la connexion ouverte sans
+                    # etre interprete comme un evenement par le client.
+                    yield ": ping\n\n"
+                elif ev["type"] == "delta":
                     yield _sse("delta", {"text": ev["text"]})
                 elif ev["type"] == "start":
                     yield _sse("start", ev)
@@ -5287,10 +5293,27 @@ class _SSEQueue:
         self._closed = True
         self._q.put_nowait({"type": "__end__"})
 
-    async def stream(self):
-        """Genere les evenements jusqu'a la fermeture. Utilisable par le SSE."""
+    async def stream(self, ping_interval: float = 0.0):
+        """Genere les evenements jusqu'a la fermeture. Utilisable par le SSE.
+
+        Si `ping_interval` > 0, un evenement {"type": "__ping__"} est emis
+        apres chaque periode d'inactivite. C'est un HEARTBEAT : il empeche les
+        intermediaires (Nginx, Cloudflare, tunnels, mise en veille d'onglet)
+        de fermer un flux SSE reste silencieux trop longtemps — cause classique
+        du message navigateur brut "Error in input stream" qui coupait la
+        reponse en plein vol.
+        """
         while True:
-            ev = await self._q.get()
+            if ping_interval > 0:
+                try:
+                    ev = await asyncio.wait_for(
+                        self._q.get(), timeout=ping_interval
+                    )
+                except asyncio.TimeoutError:
+                    yield {"type": "__ping__"}
+                    continue
+            else:
+                ev = await self._q.get()
             if ev.get("type") == "__end__":
                 return
             yield ev
@@ -5798,11 +5821,50 @@ async def _fetch_catalog(pid: str) -> list[str]:
     if cached and (time.time() - cached[0]) < _CATALOG_TTL:
         return cached[1]
 
-    # Claude : catalogue statique (pas d'endpoint /models exploitable).
+    # Claude : catalogue decouvert DYNAMIQUEMENT via l'API Anthropic
+    # (GET /v1/models). Cet endpoint accepte le Bearer OAuth d'abonnement
+    # (verifie en direct : le message d'erreur est "OAuth access token is
+    # invalid", pas "x-api-key header is required"). En cas d'echec (reseau,
+    # jeton expire), on retombe sur la liste statique CLAUDE_MODELS : aucune
+    # regression possible.
     if pid == "claude":
         ids = list(CLAUDE_MODELS)
+        if settings.claude_token:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(15.0, connect=5.0)
+                ) as http:
+                    resp = await http.get(
+                        "https://api.anthropic.com/v1/models",
+                        headers={
+                            "authorization": f"Bearer {settings.claude_token}",
+                            "anthropic-version": "2023-06-01",
+                            "anthropic-beta": (
+                                "oauth-2025-04-20,claude-code-20250219"
+                            ),
+                            "user-agent": "claude-cli/1.0.0 (external, cli)",
+                            "x-app": "cli",
+                        },
+                        params={"limit": 100},
+                    )
+                    resp.raise_for_status()
+                    discovered = [
+                        m["id"]
+                        for m in resp.json().get("data", [])
+                        if m.get("id")
+                    ]
+                if discovered:
+                    ids = discovered
+                    logger.info(
+                        "Catalogue Claude decouvert : %d modele(s)", len(ids)
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Catalogue Claude indisponible, repli statique: %s",
+                    str(e)[:150],
+                )
         # Le modele configure (CLAUDE_MODEL) doit toujours etre proposable,
-        # meme s'il sort de la liste statique (ex: variantes plus recentes).
+        # meme s'il sort de la liste decouverte (ex: variante recente).
         configured = (settings.claude_model or "").strip()
         if configured and configured not in ids:
             ids.insert(0, configured)
