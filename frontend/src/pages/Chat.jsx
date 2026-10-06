@@ -11,6 +11,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -93,9 +94,32 @@ export default function Chat() {
   const [attachments, setAttachments] = useState([]); // [{file, preview}]
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  // Pagination : le serveur ne renvoie que les MESSAGES_PAGE derniers messages ;
+  // les plus anciens restent en base et se chargent a la demande.
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderLoadedRef = useRef(null); // id de la conv dont on a remonte l'historique
+  const prevScrollHeightRef = useRef(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Repli de la barre laterale (desktop) - memorise entre les sessions
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("forge_sidebar_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("forge_sidebar_collapsed", sidebarCollapsed ? "1" : "0");
+    } catch {
+      /* stockage indisponible */
+    }
+  }, [sidebarCollapsed]);
+  // Largeur max du contenu : pleine largeur quand la barre est repliee
+  const wrapW = sidebarCollapsed ? "max-w-none" : "max-w-3xl";
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [regenerating, setRegenerating] = useState(false);
@@ -273,6 +297,8 @@ export default function Chat() {
 
   // Load messages when active conv changes
   useEffect(() => {
+    olderLoadedRef.current = null;
+    setHasMore(false);
     if (activeId) loadMessages(activeId);
     else setMessages([]);
   }, [activeId]);
@@ -323,8 +349,21 @@ export default function Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningTurns.length, activeId]);
 
+  // Auto-scroll "intelligent" : on ne ramene en bas QUE si l'utilisateur y est
+  // deja (ou vient d'envoyer un message) et qu'il n'est pas en train de
+  // selectionner du texte. Sinon la vue lui echappe pendant qu'il copie.
+  const nearBottomRef = useRef(true);
+  const prevSendingRef = useRef(false);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const justSent = sending && !prevSendingRef.current;
+    prevSendingRef.current = sending;
+    const sel = typeof window !== "undefined" ? window.getSelection?.() : null;
+    const container = messagesContainerRef.current;
+    const selecting =
+      sel && !sel.isCollapsed && container && sel.anchorNode && container.contains(sel.anchorNode);
+    if (selecting && !justSent) return;
+    if (!justSent && !nearBottomRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: sending ? "auto" : "smooth" });
   }, [messages, sending]);
 
   const scrollToBottom = () => {
@@ -336,6 +375,7 @@ export default function Chat() {
     const el = messagesContainerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    nearBottomRef.current = distanceFromBottom <= 120;
     setShowScrollBottom(distanceFromBottom > 120);
   };
 
@@ -419,18 +459,75 @@ export default function Chat() {
     return merged;
   }, []);
 
+  const MESSAGES_PAGE = 150;
+
   const loadMessages = async (cid) => {
     setLoadingMsgs(true);
     try {
-      const { data } = await api.get(`/conversations/${cid}/messages`);
+      const { data } = await api.get(`/conversations/${cid}/messages`, {
+        params: { limit: MESSAGES_PAGE },
+      });
       const list = Array.isArray(data) ? data : data?.messages || [];
-      setMessages((prev) => reconcileMessages(prev, list));
+      if (olderLoadedRef.current !== cid) {
+        setHasMore(list.length >= MESSAGES_PAGE);
+      }
+      setMessages((prev) => {
+        // On conserve les anciens messages deja remontes par l'utilisateur :
+        // le poll ne ramene que la derniere page et ne doit pas les effacer.
+        const firstTs = list[0]?.created_at;
+        const older =
+          firstTs && olderLoadedRef.current === cid
+            ? prev.filter(
+                (m) =>
+                  m.conversation_id === cid &&
+                  !String(m.id).startsWith("tmp-") &&
+                  m.created_at < firstTs
+              )
+            : [];
+        return reconcileMessages(prev, older.length ? [...older, ...list] : list);
+      });
     } catch (e) {
       setError(formatApiError(e));
     } finally {
       setLoadingMsgs(false);
     }
   };
+
+  const loadOlderMessages = async () => {
+    if (!activeId || loadingOlder) return;
+    const first = messages.find((m) => !String(m.id).startsWith("tmp-"));
+    if (!first?.created_at) return;
+    setLoadingOlder(true);
+    try {
+      const { data } = await api.get(`/conversations/${activeId}/messages`, {
+        params: { limit: MESSAGES_PAGE, before: first.created_at },
+      });
+      const list = Array.isArray(data) ? data : data?.messages || [];
+      setHasMore(list.length >= MESSAGES_PAGE);
+      if (!list.length) return;
+      olderLoadedRef.current = activeId;
+      const el = messagesContainerRef.current;
+      prevScrollHeightRef.current = el ? el.scrollHeight : null;
+      setMessages((prev) => {
+        const ids = new Set(prev.map((m) => m.id));
+        return [...list.filter((m) => !ids.has(m.id)), ...prev];
+      });
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  // Apres l'ajout d'anciens messages en haut, on garde la vue ou elle etait
+  // (sinon le contenu "saute" vers le haut de la liste).
+  useLayoutEffect(() => {
+    const prevH = prevScrollHeightRef.current;
+    if (prevH == null) return;
+    prevScrollHeightRef.current = null;
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop += el.scrollHeight - prevH;
+  }, [messages]);
 
   const newConversation = async () => {
     try {
@@ -1105,6 +1202,8 @@ export default function Chat() {
       {/* Sidebar (extrait -> components/chat/Sidebar.jsx) */}
       <Sidebar
         sidebarOpen={sidebarOpen}
+        collapsed={sidebarCollapsed}
+        onCollapse={() => setSidebarCollapsed(true)}
         onClose={() => setSidebarOpen(false)}
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -1164,7 +1263,11 @@ export default function Chat() {
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <ChatHeader
-          onOpenSidebar={() => setSidebarOpen(true)}
+          sidebarCollapsed={sidebarCollapsed}
+          onOpenSidebar={() => {
+            if (window.innerWidth >= 1024) setSidebarCollapsed(false);
+            else setSidebarOpen(true);
+          }}
           activeId={activeId}
           onCloseSession={() => setActiveId(null)}
           onAbortRequest={abortRequest}
@@ -1184,7 +1287,7 @@ export default function Chat() {
         {/* Bandeau discret : mémoire de contexte (Fetcher) du projet actif */}
         {activeConv?.project && projectContext?.exists && (
           <div className="border-b border-white/5 bg-white/[0.02] px-3 sm:px-4 lg:px-8 py-1.5">
-            <div className="max-w-3xl mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-gray-500">
+            <div className={`${wrapW} mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-gray-500`}>
               <button
                 type="button"
                 onClick={() => setContextOpen((o) => !o)}
@@ -1216,7 +1319,7 @@ export default function Chat() {
             </div>
             {/* Détail dépliable : les faits mémorisés, classés par priorité */}
             {contextOpen && (projectContext.facts || []).length > 0 && (
-              <div className="max-w-3xl mx-auto mt-1.5 mb-1 border border-white/5 rounded-sm divide-y divide-white/5 max-h-[40vh] overflow-y-auto">
+              <div className={`${wrapW} mx-auto mt-1.5 mb-1 border border-white/5 rounded-sm divide-y divide-white/5 max-h-[40vh] overflow-y-auto`}>
                 {(Array.isArray(projectContext.facts) ? projectContext.facts : []).map((f, i) => (
                   <div
                     key={i}
@@ -1253,12 +1356,25 @@ export default function Chat() {
         {/* Messages */}
         {activeId && (
         <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 lg:px-8 py-4 sm:py-6">
-          <div className="max-w-3xl mx-auto" data-testid="messages-container">
+          <div className={`${wrapW} mx-auto`} data-testid="messages-container">
             {activeId && messages.length === 0 && loadingMsgs && (
               <MessagesSkeleton />
             )}
             {activeId && messages.length === 0 && !loadingMsgs && (
               <EmptyChat />
+            )}
+            {hasMore && messages.length > 0 && (
+              <div className="flex justify-center pb-4">
+                <button
+                  type="button"
+                  onClick={loadOlderMessages}
+                  disabled={loadingOlder}
+                  className="text-[11px] font-mono uppercase tracking-wider text-gray-400 hover:text-white border border-white/20 hover:border-white/50 px-3 py-1.5 transition-colors disabled:opacity-50"
+                  data-testid="load-older-btn"
+                >
+                  {loadingOlder ? "chargement…" : "↑ messages plus anciens"}
+                </button>
+              </div>
             )}
             {messages.map((m) => (
               <ChatMessage
@@ -1343,7 +1459,7 @@ export default function Chat() {
         {notice && (
           <div className="px-3 sm:px-4 lg:px-8 pb-2 flex-shrink-0">
             <div
-              className="max-w-3xl mx-auto border-2 border-sky-400 bg-sky-400/10 text-sky-200 p-3 text-sm font-mono flex items-center justify-between"
+              className={`${wrapW} mx-auto border-2 border-sky-400 bg-sky-400/10 text-sky-200 p-3 text-sm font-mono flex items-center justify-between`}
               data-testid="chat-notice"
             >
               <span>{notice}</span>
@@ -1358,7 +1474,7 @@ export default function Chat() {
         {error && (
           <div className="px-3 sm:px-4 lg:px-8 pb-2 flex-shrink-0">
             <div
-              className="max-w-3xl mx-auto border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 text-[#ff2a6d] p-3 text-sm font-mono flex items-center justify-between"
+              className={`${wrapW} mx-auto border-2 border-[#ff2a6d] bg-[#ff2a6d]/10 text-[#ff2a6d] p-3 text-sm font-mono flex items-center justify-between`}
               data-testid="chat-error"
             >
               <span>{error}</span>
@@ -1371,7 +1487,7 @@ export default function Chat() {
 
         {/* Input dock */}
         <div className="px-3 sm:px-4 lg:px-8 pt-2 safe-bottom flex-shrink-0">
-          <div className="max-w-3xl mx-auto relative">
+          <div className={`${wrapW} mx-auto relative`}>
             {favorites.length > 0 && (
               <div
                 className="mb-2 flex gap-1.5 overflow-x-auto pb-1"

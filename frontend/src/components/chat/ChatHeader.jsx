@@ -9,6 +9,7 @@ import PreviewButton from "@/components/PreviewButton";
  */
 export default function ChatHeader({
   onOpenSidebar,
+  sidebarCollapsed = false,
   activeId,
   onCloseSession,
   onAbortRequest,
@@ -26,8 +27,9 @@ export default function ChatHeader({
         <header className="border-b-2 border-white/10 px-3 sm:px-4 lg:px-8 py-3 sm:py-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
-              className="lg:hidden btn-ghost flex-shrink-0"
+              className={`${sidebarCollapsed ? "" : "lg:hidden"} btn-ghost flex-shrink-0`}
               onClick={() => onOpenSidebar(true)}
+              title="Ouvrir la barre latérale"
               data-testid="open-sidebar-btn"
             >
               <Menu className="w-5 h-5" />

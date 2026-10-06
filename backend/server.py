@@ -127,6 +127,7 @@ from fastapi import (
     Request,
     Response,
     Depends,
+    Query,
     UploadFile,
     File,
     Form,
@@ -299,6 +300,9 @@ class Settings:
         # Nombre de messages recents toujours transmis mot pour mot.
         self.summary_keep_recent: int = int(_env("HISTORY_SUMMARY_KEEP_RECENT", "6"))
         self.summary_max_chars: int = int(_env("HISTORY_SUMMARY_MAX_CHARS", "3000"))
+        # Nombre max de messages relus en base a chaque generation (les plus
+        # recents non encore resumes). Les anciens restent en base, intacts.
+        self.history_load_limit: int = int(_env("HISTORY_LOAD_LIMIT", "150"))
 
         # --- Claude (abonnement Pro/Max via jeton OAuth Claude Code) ---
         # AUCUNE API payante au token : on utilise le jeton d'abonnement généré
@@ -2617,6 +2621,36 @@ async def _summarize_messages(older: list[dict], previous: str = "") -> str:
     return answer[: settings.summary_max_chars]
 
 
+async def load_history_docs(
+    database, conversation_id: str, exclude_id: Optional[str] = None
+) -> list[dict]:
+    """
+    Charge l'historique utile a la generation : au plus `history_load_limit`
+    derniers messages NON encore resumes, en ordre chronologique. Les messages
+    plus anciens ne sont ni supprimes ni relus : ils sont deja couverts par le
+    resume persiste de la conversation.
+    """
+    conv = await database.conversations.find_one(
+        {"id": conversation_id}, {"_id": 0, "summarized_ids": 1}
+    )
+    skip_ids = list((conv or {}).get("summarized_ids") or [])
+    if exclude_id:
+        skip_ids.append(exclude_id)
+    flt: dict = {"conversation_id": conversation_id}
+    if skip_ids:
+        flt["id"] = {"$nin": skip_ids}
+    docs = (
+        await database.messages.find(
+            flt,
+            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
+        )
+        .sort("created_at", -1)
+        .to_list(max(1, settings.history_load_limit))
+    )
+    docs.reverse()
+    return docs
+
+
 async def prepare_history(
     database, conversation_id: str, history: list[dict]
 ) -> list[dict]:
@@ -4589,7 +4623,10 @@ async def list_conversations(current_user: dict = Depends(get_current_user)):
     database = get_db()
     return (
         await database.conversations.find(
-            {"user_id": current_user["id"]}, {"_id": 0}
+            {"user_id": current_user["id"]},
+            # summary / summarized_ids ne servent qu'a la generation : les
+            # renvoyer alourdissait la liste a chaque resume.
+            {"_id": 0, "summary": 0, "summarized_ids": 0},
         )
         .sort("updated_at", -1)
         .to_list(500)
@@ -4637,23 +4674,42 @@ async def create_conversation(
     return doc
 
 
+MESSAGES_PAGE_DEFAULT = 150
+MESSAGES_PAGE_MAX = 500
+
+
 @api_router.get("/conversations/{conv_id}/messages")
-async def get_messages(conv_id: str, current_user: dict = Depends(get_current_user)):
+async def get_messages(
+    conv_id: str,
+    limit: int = Query(MESSAGES_PAGE_DEFAULT, ge=1, le=MESSAGES_PAGE_MAX),
+    before: Optional[str] = Query(None, max_length=64),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Renvoie les `limit` derniers messages (ordre chronologique). Rien n'est
+    supprime : `before` (created_at du plus ancien message deja affiche)
+    permet de remonter page par page dans l'historique.
+    """
     database = get_db()
     conv = await database.conversations.find_one(
-        {"id": conv_id, "user_id": current_user["id"]}
+        {"id": conv_id, "user_id": current_user["id"]}, {"_id": 1}
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    return (
+    flt: dict = {"conversation_id": conv_id}
+    if before:
+        flt["created_at"] = {"$lt": before}
+    docs = (
         await database.messages.find(
-            {"conversation_id": conv_id},
+            flt,
             {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
         )
-        .sort("created_at", 1)
-        .to_list(2000)
+        .sort("created_at", -1)
+        .to_list(limit)
     )
+    docs.reverse()
+    return docs
 
 
 @api_router.patch("/conversations/{conv_id}")
@@ -4769,14 +4825,7 @@ async def chat_send(
     await database.messages.insert_one(user_msg_doc)
 
     # --- Historique (hors message courant) ---
-    history = (
-        await database.messages.find(
-            {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
-            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
-        )
-        .sort("created_at", 1)
-        .to_list(2000)
-    )
+    history = await load_history_docs(database, conversation_id, user_msg_id)
     history = await prepare_history(database, conversation_id, history)
 
     # --- Fetcher de contexte : memoire persistante du projet -------------
@@ -5117,14 +5166,7 @@ async def chat_stream(
         except Exception:  # noqa: BLE001
             logger.warning("Fetcher: capture utilisateur impossible (stream)")
 
-    history = (
-        await database.messages.find(
-            {"conversation_id": conversation_id, "id": {"$ne": user_msg_id}},
-            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
-        )
-        .sort("created_at", 1)
-        .to_list(2000)
-    )
+    history = await load_history_docs(database, conversation_id, user_msg_id)
     history = await prepare_history(database, conversation_id, history)
 
     public_user_msg = {
@@ -5706,11 +5748,14 @@ async def chat_regenerate(
     set_current_reasoning_effort(payload.reasoning_effort)
     _current_claude_model.set(payload.model or "")
 
+    # Seuls les derniers messages sont utiles (les plus anciens sont deja
+    # couverts par le resume persiste) : inutile de relire 2000 documents.
     msgs = (
         await database.messages.find({"conversation_id": payload.conversation_id})
-        .sort("created_at", 1)
-        .to_list(2000)
+        .sort("created_at", -1)
+        .to_list(max(2, settings.history_load_limit))
     )
+    msgs.reverse()
     if not msgs or msgs[-1].get("role") != "assistant":
         raise HTTPException(
             status_code=400, detail="Aucune réponse assistant à régénérer."

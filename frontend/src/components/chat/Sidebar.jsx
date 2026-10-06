@@ -11,6 +11,7 @@ import {
   Pencil,
   Check,
   Trash2,
+  PanelLeftClose,
 } from "lucide-react";
 import ThemeToggle from "@/components/chat/ThemeToggle";
 
@@ -18,6 +19,8 @@ import ThemeToggle from "@/components/chat/ThemeToggle";
 // supprimer) et pied de page. Composant pilote par Chat.jsx (props only).
 export default function Sidebar({
   sidebarOpen,
+  collapsed = false,
+  onCollapse,
   onClose,
   theme,
   onToggleTheme,
@@ -39,7 +42,9 @@ export default function Sidebar({
     <aside
       className={`${
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
-      } lg:translate-x-0 fixed lg:relative z-30 lg:z-auto top-0 left-0 h-full w-72 max-w-[85vw] flex-shrink-0 bg-[var(--bg-sidebar)] border-r-2 border-white/20 flex flex-col transition-transform`}
+      } ${
+        collapsed ? "lg:hidden" : "lg:translate-x-0"
+      } fixed lg:relative z-30 lg:z-auto top-0 left-0 h-full w-72 max-w-[85vw] flex-shrink-0 bg-[var(--bg-sidebar)] border-r-2 border-white/20 flex flex-col transition-transform`}
       data-testid="chat-sidebar"
     >
       <div className="p-5 border-b-2 border-white/10 flex items-center justify-between">
@@ -56,6 +61,15 @@ export default function Sidebar({
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          <button
+            className="hidden lg:inline-flex btn-ghost"
+            onClick={onCollapse}
+            title="Replier la barre latérale"
+            aria-label="Replier la barre latérale"
+            data-testid="collapse-sidebar-btn"
+          >
+            <PanelLeftClose className="w-5 h-5" />
+          </button>
           <button
             className="lg:hidden btn-ghost"
             onClick={onClose}
