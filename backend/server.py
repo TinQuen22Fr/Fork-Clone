@@ -7355,21 +7355,37 @@ async def _synth_kokoro(text: str, voice: str) -> bytes:
     return audio
 
 
-_EDGE_RATE_PITCH_RE = re.compile(r"^[+-]?\d+%$")
+_EDGE_RATE_RE = re.compile(r"^[+-]\d+%$")
+_EDGE_PITCH_RE = re.compile(r"^[+-]\d+Hz$")
 
 
-def _sanitize_edge_param(value: str) -> str:
-    """Valide un parametre rate/pitch edge-tts (ex: "+10%", "-5%"). Retombe sur "+0%" si invalide."""
-    if isinstance(value, str) and _EDGE_RATE_PITCH_RE.match(value.strip()):
-        return value.strip()
+def _sanitize_edge_rate(value) -> str:
+    """Debit edge-tts : pourcentage signe obligatoire (ex: "+10%", "-5%"). Repli "+0%"."""
+    if isinstance(value, str):
+        v = value.strip()
+        if re.fullmatch(r"\d+%", v):
+            v = "+" + v
+        if _EDGE_RATE_RE.match(v):
+            return v
     return "+0%"
+
+
+def _sanitize_edge_pitch(value) -> str:
+    """Hauteur edge-tts : Hertz signe obligatoire (ex: "+5Hz", "-10Hz"). Repli "+0Hz".
+    Un ancien format en pourcentage ("+0%") est converti en Hertz (valeur conservee)."""
+    if isinstance(value, str):
+        v = value.strip()
+        m = re.fullmatch(r"([+-]?)(\d+)(%|Hz)?", v)
+        if m:
+            return f"{m.group(1) or '+'}{m.group(2)}Hz"
+    return "+0Hz"
 
 
 async def _synth_edge(text: str, voice: str, rate: str, pitch: str) -> bytes:
     import edge_tts
 
-    rate = _sanitize_edge_param(rate)
-    pitch = _sanitize_edge_param(pitch)
+    rate = _sanitize_edge_rate(rate)
+    pitch = _sanitize_edge_pitch(pitch)
 
     async def _stream(v: str) -> bytes:
         buf = bytearray()
