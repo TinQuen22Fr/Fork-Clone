@@ -217,8 +217,12 @@ function ChatMessage({
     } catch (e) {
       setSpeaking(false);
       if (e.name !== "CanceledError" && e.code !== "ERR_CANCELED") {
-        setTtsError("Synthèse vocale indisponible");
-        setTimeout(() => setTtsError(""), 4000);
+        setTtsError(
+          e.ttsDetail
+            ? `Synthèse vocale : ${e.ttsDetail}`.slice(0, 160)
+            : "Lecture impossible : " + (e.message || "erreur inconnue").slice(0, 120)
+        );
+        setTimeout(() => setTtsError(""), 8000);
       }
     }
   };

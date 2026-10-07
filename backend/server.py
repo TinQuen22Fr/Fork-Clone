@@ -7549,7 +7549,7 @@ class _SafeGZip:
     cher en CPU pour un gain negligeable).
     """
 
-    _SKIP_SUFFIXES = ("/chat/stream", "/preview/logs")
+    _SKIP_SUFFIXES = ("/chat/stream", "/preview/logs", "/tts")
 
     def __init__(self, app):
         self.app = app

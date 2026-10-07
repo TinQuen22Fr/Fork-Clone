@@ -59,8 +59,12 @@ export const VoicePicker = () => {
         voice: voice || undefined,
         onEnd: () => setTesting(false),
       });
-    } catch (_) {
+    } catch (e) {
       setTesting(false);
+      if (e?.name !== "CanceledError" && e?.code !== "ERR_CANCELED") {
+        // eslint-disable-next-line no-alert
+        window.alert(`Test de voix impossible : ${e?.ttsDetail || e?.message || "erreur inconnue"}`);
+      }
     }
   };
 
