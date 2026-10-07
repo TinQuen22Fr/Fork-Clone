@@ -32,6 +32,31 @@ function stripMarkdown(md) {
     .trim();
 }
 
+// Decoupe un message en paragraphes lisibles (blocs de code ignores).
+// Un paragraphe trop long est redecoupe par phrases pour demarrer vite.
+function splitForSpeech(md, maxLen = 350) {
+  const noCode = (md || "").replace(/```[\s\S]*?(```|$)/g, "\n\n");
+  const out = [];
+  for (const para of noCode.split(/\n\s*\n/)) {
+    const clean = stripMarkdown(para);
+    if (!clean) continue;
+    if (clean.length <= maxLen) {
+      out.push(clean);
+      continue;
+    }
+    let cur = "";
+    for (const sent of clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean]) {
+      if (cur && (cur + sent).length > maxLen) {
+        out.push(cur.trim());
+        cur = "";
+      }
+      cur += sent;
+    }
+    if (cur.trim()) out.push(cur.trim());
+  }
+  return out;
+}
+
 function ActionButton({ onClick, title, active, testId, children }) {
   return (
     <button
@@ -205,16 +230,11 @@ function ChatMessage({
       setSpeaking(false);
       return;
     }
-    const text = stripMarkdown(message.content);
-    if (!text) return;
+    const chunks = splitForSpeech(message.content);
+    if (!chunks.length) return;
     setSpeaking(true);
     setTtsError("");
-    try {
-      await speak(text, {
-        id: message.id,
-        onEnd: () => setSpeaking(false),
-      });
-    } catch (e) {
+    const showError = (e) => {
       setSpeaking(false);
       if (e.name !== "CanceledError" && e.code !== "ERR_CANCELED") {
         setTtsError(
@@ -224,6 +244,15 @@ function ChatMessage({
         );
         setTimeout(() => setTtsError(""), 8000);
       }
+    };
+    try {
+      await speak(chunks, {
+        id: message.id,
+        onEnd: () => setSpeaking(false),
+        onError: showError,
+      });
+    } catch (e) {
+      showError(e);
     }
   };
 

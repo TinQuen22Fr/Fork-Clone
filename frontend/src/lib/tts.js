@@ -84,34 +84,74 @@ const explainTtsError = async (err) => {
   return e;
 };
 
-/** Lit un texte via /api/tts. Renvoie une erreur si la synthese echoue. */
-export const speak = async (text, { id = "adhoc", voice, onEnd } = {}) => {
+/**
+ * Lecture progressive : `input` est un texte ou une liste de morceaux
+ * (paragraphes). Le 1er morceau est synthetise et joue tout de suite ;
+ * les 2 suivants sont precharges en tache de fond pendant la lecture.
+ * speak() se termine des que le 1er morceau demarre. Les erreurs des
+ * morceaux suivants sont remontees via onError (la lecture s'arrete).
+ */
+export const speak = async (input, { id = "adhoc", voice, onEnd, onError } = {}) => {
   stopSpeech();
-  if (!text) return;
+  const chunks = (Array.isArray(input) ? input : [input]).filter(
+    (c) => typeof c === "string" && c.trim()
+  );
+  if (!chunks.length) return;
 
   currentId = id;
   onStopCb = onEnd || null;
   controller = new AbortController();
+  const signal = controller.signal;
+  const v = voice || getVoice();
 
-  let res;
-  try {
-    res = await api.post(
-      "/tts",
-      { text, voice: voice || getVoice() },
-      { responseType: "blob", signal: controller.signal }
-    );
-  } catch (err) {
-    controller = null;
-    throw await explainTtsError(err);
-  }
-  controller = null;
+  const pending = new Map();
+  const prefetch = (i) => {
+    if (i >= chunks.length || pending.has(i)) return;
+    const p = api
+      .post("/tts", { text: chunks[i], voice: v }, { responseType: "blob", signal })
+      .then((r) => r.data);
+    p.catch(() => {}); // evite les rejets non geres si on arrete avant usage
+    pending.set(i, p);
+  };
 
-  if (currentId !== id) return; // arret demande pendant la synthese
-
-  objectUrl = URL.createObjectURL(res.data);
   if (!audio) audio = new Audio();
-  audio.src = objectUrl;
-  audio.onended = () => stopSpeech();
-  audio.onerror = () => stopSpeech();
-  await audio.play();
+  const a = audio;
+
+  const playChunk = async (i, first) => {
+    prefetch(i);
+    let blob;
+    try {
+      blob = await pending.get(i);
+    } catch (err) {
+      const e = await explainTtsError(err);
+      if (currentId !== id) return; // arret volontaire
+      if (first) {
+        controller = null;
+        throw e;
+      }
+      stopSpeech();
+      if (onError) onError(e);
+      return;
+    }
+    pending.delete(i);
+    if (currentId !== id) return; // arret demande pendant la synthese
+
+    cleanupUrl();
+    objectUrl = URL.createObjectURL(blob);
+    a.src = objectUrl;
+    a.onended = () => {
+      if (currentId !== id) return;
+      if (i + 1 < chunks.length) playChunk(i + 1, false);
+      else stopSpeech();
+    };
+    a.onerror = () => {
+      if (currentId !== id) return;
+      stopSpeech();
+    };
+    prefetch(i + 1);
+    prefetch(i + 2);
+    await a.play();
+  };
+
+  await playChunk(0, true);
 };
