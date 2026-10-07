@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-07T12:37:29.189901+00:00
+# Dernière mise à jour : 2026-10-07T13:13:31.531842+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 91a195e Amelioration chargement Projets.
+- Git : branche claude-ai, dernier commit 8b8746c Fix divers (upgrade.sh, activation automatique playwright, edge-tts, etc...).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -72,6 +72,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] tu n'as rien corriger concernant le tts quand j'active pour la lecture ca indique toujours indisponible !
   [regle] le problème vient que le réseau est complètement instable actuellement pour moi et visiblement le correctif qui a été fait pour éviter et que l'agent travaille en mode autonome ne fonctionne pas entièrement à 100 % visiblement car ça me met réseau instable machin mais il y a rien d'autre
   [regle] Le mode tte ne fonctionne pas/plus ça me dit service indisponible.
   [regle] 723:# tronque ses sorties brutes pour ne pas saturer la fenetre de contexte
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] adapte a l'architecture actuelle de The Forge (backend Python, httpx, sortie
   [architecture] @standard-schema
   [architecture] Item 1 (web_search) : implémente l'outil de recherche DuckDuckGo autonome dans backend/tools/web_search.py et branche-le sur notre registre actuel.
-  [architecture] On retient uniquement 3 éléments à forte valeur ajoutée : 1.
