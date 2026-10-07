@@ -119,12 +119,34 @@ if [ "$DO_BACKEND" -eq 1 ]; then
   # (venv desynchronise, install pip interrompue, paquet ajoute apres coup...).
   # On verifie l'importabilite reelle des paquets critiques : si l'un manque,
   # on force l'installation meme si requirements.txt est inchange.
-  for mod in ddgs httpx fastapi uvicorn; do
-    if ! "$VENV_DIR/bin/python" -c "import $mod" >/dev/null 2>&1; then
-      c_warn "module manquant dans le venv : $mod -> installation forcee"
-      NEEDS_INSTALL=1
-    fi
-  done
+  # On derive la liste des paquets a verifier directement de requirements.txt
+  # (plutot qu'une liste figee a la main, qu'on oublie de completer -> c'est
+  # exactement ce qui a provoque la disparition silencieuse d'edge-tts).
+  CHECK_RESULT="$("$VENV_DIR/bin/python" - backend/requirements.txt <<'PYEOF'
+import re, sys
+import importlib.metadata as m
+
+missing = []
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        name = re.split(r"[<>=!~\[; ]", line, maxsplit=1)[0].strip()
+        if not name:
+            continue
+        try:
+            m.version(name)
+        except m.PackageNotFoundError:
+            missing.append(name)
+
+print(",".join(missing))
+PYEOF
+)"
+  if [ -n "$CHECK_RESULT" ]; then
+    c_warn "modules manquants dans le venv : $CHECK_RESULT -> installation forcee"
+    NEEDS_INSTALL=1
+  fi
   if [ "$NEEDS_INSTALL" -eq 0 ]; then
     c_ok "requirements.txt inchange et dependances critiques presentes, installation sautee"
   else
@@ -139,6 +161,41 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     c_ok "moteur TTS local Kokoro present"
   else
     c_ok "Kokoro absent — TTS assure par edge-tts (sudo bash deploy/install-kokoro.sh pour l'ajouter)"
+  fi
+
+  # -------------------------------------------------------------------------
+  # Chromium (Playwright) : le paquet pip ne suffit pas, le navigateur et ses
+  # libs systeme s'installent a part. Si le binaire manque, on lance
+  # deploy/install-playwright.sh (idempotent, ne recree pas le venv).
+  # Jamais bloquant pour la mise a jour.
+  # -------------------------------------------------------------------------
+  c_step "Navigateur Chromium (Playwright)"
+  export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$APP_DIR/.playwright}"
+  if ! "$VENV_DIR/bin/python" -c "import playwright" >/dev/null 2>&1; then
+    c_warn "module playwright absent du venv — il devrait venir de requirements.txt"
+  else
+    CHROMIUM_OK="$("$VENV_DIR/bin/python" - <<'PYCHROME' 2>/dev/null || echo 0
+import os
+from playwright.sync_api import sync_playwright
+with sync_playwright() as pw:
+    print(1 if os.path.exists(pw.chromium.executable_path) else 0)
+PYCHROME
+)"
+    if [ "$CHROMIUM_OK" = "1" ]; then
+      c_ok "Chromium present ($PLAYWRIGHT_BROWSERS_PATH)"
+    elif [ ! -f deploy/install-playwright.sh ]; then
+      c_warn "Chromium absent et deploy/install-playwright.sh introuvable"
+    else
+      c_warn "Chromium absent -> installation automatique (~150 Mo, quelques minutes)"
+      if APP_DIR="$APP_DIR" VENV_DIR="$VENV_DIR" SERVICE_USER="$SERVICE_USER" \
+         PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
+         bash deploy/install-playwright.sh; then
+        c_ok "Chromium installe et verifie"
+      else
+        c_warn "installation de Chromium echouee — la mise a jour continue."
+        echo "      Relance a la main : sudo bash deploy/install-playwright.sh"
+      fi
+    fi
   fi
 
   "$VENV_DIR/bin/python" -c "import ast,sys;ast.parse(open('backend/server.py').read())" \
