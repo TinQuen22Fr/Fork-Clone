@@ -308,23 +308,33 @@ export default function Chat() {
   // moins ABSENCE_MIN_MS), jamais sur un simple clic/changement de focus
   // interne a la page. Un cooldown reseau strict (fetchStatusTurns) protege
   // en plus contre tout spam de requetes.
-  const hiddenAtRef = useRef(null);
-  const ABSENCE_MIN_MS = 20000; // il faut au moins 20s d'onglet cache pour compter comme une "absence"
+  // Delai de grace : l'absence n'est "declenchee" qu'apres ABSENCE_GRACE_MS
+  // d'onglet cache sans interruption. Si l'utilisateur revient avant, le
+  // compte a rebours est annule et rien n'est declenche.
+  const absenceTimerRef = useRef(null);
+  const absenceFiredRef = useRef(false);
+  const ABSENCE_GRACE_MS = 2 * 60 * 1000; // 2 minutes
 
   useEffect(() => {
+    const clearAbsenceTimer = () => {
+      if (absenceTimerRef.current) {
+        clearTimeout(absenceTimerRef.current);
+        absenceTimerRef.current = null;
+      }
+    };
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        hiddenAtRef.current = Date.now();
+        if (absenceTimerRef.current || absenceFiredRef.current) return;
+        absenceTimerRef.current = setTimeout(() => {
+          absenceTimerRef.current = null;
+          absenceFiredRef.current = true;
+        }, ABSENCE_GRACE_MS);
         return;
       }
-      // Retour a "visible" : on ne resynchronise que si on etait reellement
-      // parti assez longtemps (evite tout resync sur un simple changement
-      // de focus de fenetre ou un clic furtif hors onglet).
-      const hiddenAt = hiddenAtRef.current;
-      hiddenAtRef.current = null;
-      if (!hiddenAt) return;
-      const absenceDuration = Date.now() - hiddenAt;
-      if (absenceDuration < ABSENCE_MIN_MS) return;
+      // Retour a "visible" : on annule le compte a rebours en cours.
+      clearAbsenceTimer();
+      if (!absenceFiredRef.current) return; // revenu dans le delai : rien a faire
+      absenceFiredRef.current = false;
       if (activeId) loadMessages(activeId);
       fetchStatusTurns();
       fetchConversations();
@@ -332,6 +342,7 @@ export default function Chat() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      clearAbsenceTimer();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
