@@ -141,8 +141,13 @@ export const speak = async (input, { id = "adhoc", voice, onEnd, onError } = {})
     a.src = objectUrl;
     a.onended = () => {
       if (currentId !== id) return;
-      if (i + 1 < chunks.length) playChunk(i + 1, false);
-      else stopSpeech();
+      if (i + 1 < chunks.length) {
+        playChunk(i + 1, false).catch((err) => {
+          if (currentId !== id) return;
+          stopSpeech();
+          if (onError) onError(err);
+        });
+      } else stopSpeech();
     };
     a.onerror = () => {
       if (currentId !== id) return;
