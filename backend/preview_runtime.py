@@ -92,6 +92,21 @@ class PreviewManager:
         self.state_dir = self.workspace_root / ".forge-preview"
         self._procs: dict[str, dict[str, PreviewProcess]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._last_seen: dict[str, float] = {}
+
+    # -- inactivite -------------------------------------------------------
+    def touch(self, project: str) -> None:
+        """Marque une activite (clic, status, logs) sur la preview d'un projet."""
+        self._last_seen[project] = time.time()
+
+    def idle_projects(self, max_idle: float) -> list[str]:
+        """Projets dont un process tourne et sans activite depuis max_idle s."""
+        now, out = time.time(), []
+        for project, targets in self._procs.items():
+            alive = any(t.proc and t.proc.poll() is None for t in targets.values())
+            if alive and now - self._last_seen.get(project, 0.0) > max_idle:
+                out.append(project)
+        return out
 
     # -- utilitaires ------------------------------------------------------
     def _lock(self, project: str) -> asyncio.Lock:
@@ -350,6 +365,7 @@ class PreviewManager:
 
     # -- cycle de vie -----------------------------------------------------
     async def start(self, project: str, port: int, restart: bool = False) -> dict:
+        self.touch(project)
         async with self._lock(project):
             plan = self.plan(project, port)
             if not plan["targets"]:
@@ -478,7 +494,8 @@ class PreviewManager:
             fh.write(f"\n$ {' '.join(cmd)}\n")
             fh.flush()
             proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=cwd, env=env, stdout=fh, stderr=subprocess.STDOUT
+                *cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                stdout=fh, stderr=subprocess.STDOUT,
             )
         try:
             return await asyncio.wait_for(proc.wait(), timeout=timeout)

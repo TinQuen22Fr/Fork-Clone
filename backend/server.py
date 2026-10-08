@@ -436,9 +436,12 @@ class Settings:
         self.preview_map_refresh_timeout: int = int(
             _env("PREVIEW_MAP_REFRESH_TIMEOUT", "120")
         )
-        # Relance des previews actives au demarrage du backend.
+        # Arret automatique d'une preview sans activite (secondes, 0 = jamais).
+        self.preview_idle_timeout: int = int(_env("PREVIEW_IDLE_TIMEOUT", "900"))
+        # Relance des previews actives au demarrage du backend (OFF par defaut :
+        # une preview ne demarre que sur clic explicite de l'utilisateur).
         self.preview_autostart: bool = _env(
-            "PREVIEW_AUTOSTART", "1"
+            "PREVIEW_AUTOSTART", "0"
         ).strip().lower() not in ("0", "false", "no", "off", "")
         self.git_author_email: str = _env(
             "GIT_AUTHOR_EMAIL", "forge@localhost"
@@ -536,6 +539,7 @@ async def lifespan(app: FastAPI):
         )
         await _seed_admin()
         asyncio.create_task(_autostart_previews())
+        asyncio.create_task(_reap_idle_previews())
 
     logger.info("Origines CORS autorisées : %s", settings.frontend_urls or "(aucune)")
     logger.info(
@@ -1229,12 +1233,14 @@ def _git_head_info(root: Path) -> dict:
         branch = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL,
         ).stdout.strip()
         if branch:
             info["branch"] = branch
         last = subprocess.run(
             ["git", "-C", str(root), "log", "-1", "--pretty=%h %s"],
             capture_output=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL,
         ).stdout.strip()
         if last:
             info["last_commit"] = last
@@ -1714,6 +1720,7 @@ def _tool_bash(command: str) -> str:
             shell=True,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=_timeout,
             cwd=str(cwd) if cwd else None,
         )
@@ -6106,6 +6113,7 @@ def _git(args: list[str], cwd: str, timeout: int = 300) -> subprocess.CompletedP
         cwd=cwd,
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
         timeout=timeout,
     )
 
@@ -6735,6 +6743,7 @@ async def preview_status(name: str, current_user: dict = Depends(get_current_use
     """Etat de la preview : stopped / installing / starting / running / error.
     `targets` detaille le frontend (port de preview) et le backend (port + 100)."""
     pname, meta = await _project_port(current_user["id"], name)
+    preview_mgr().touch(pname)
     status = preview_mgr().status(pname, meta["preview_port"])
     return _preview_payload(meta, status)
 
@@ -6745,11 +6754,37 @@ async def preview_logs(
 ):
     """Journal du process de preview (derniers Ko). target = web | api | app."""
     pname, _ = await _project_port(current_user["id"], name)
+    preview_mgr().touch(pname)
     return {
         "project": pname,
         "target": target,
         "logs": preview_mgr().logs(pname, target),
     }
+
+
+async def _reap_idle_previews() -> None:
+    """Arrete les previews sans activite (aucun start/status/logs recu) depuis
+    PREVIEW_IDLE_TIMEOUT secondes. 0 = desactive."""
+    limit = settings.preview_idle_timeout
+    if limit <= 0:
+        return
+    while True:
+        await asyncio.sleep(60)
+        try:
+            mgr = preview_mgr()
+            for name in mgr.idle_projects(limit):
+                doc = await db.projects.find_one({"name": name}, {"preview_port": 1})
+                port = (doc or {}).get("preview_port")
+                if not port:
+                    continue
+                await mgr.stop(name, port)
+                await db.projects.update_many(
+                    {"name": name},
+                    {"$set": {"preview_running": False, "updated_at": now_iso()}},
+                )
+                logger.info("Preview %s arretee (inactive > %ss)", name, limit)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Reaper previews : %s", exc)
 
 
 async def _autostart_previews() -> None:
