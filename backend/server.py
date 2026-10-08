@@ -1702,6 +1702,20 @@ _BASH_SENSITIVE_FILE_RE = re.compile(
 )
 
 
+def _truncate_lines(text: str, head: int = 50, tail: int = 50) -> str:
+    """Au-dela de head+tail lignes : garde les `head` premieres et les `tail`
+    dernieres, avec un message d'omission au milieu."""
+    lines = text.splitlines()
+    if len(lines) <= head + tail:
+        return text
+    omitted = len(lines) - head - tail
+    return "\n".join(
+        lines[:head]
+        + [f"[... {omitted} lignes omises ...]"]
+        + lines[-tail:]
+    )
+
+
 def _tool_bash(command: str) -> str:
     if not command:
         return "Erreur: commande vide."
@@ -1724,8 +1738,8 @@ def _tool_bash(command: str) -> str:
             timeout=_timeout,
             cwd=str(cwd) if cwd else None,
         )
-        out = (result.stdout or "")[:8000]
-        err = (result.stderr or "")[:4000]
+        out = _truncate_lines(result.stdout or "")[:8000]
+        err = _truncate_lines(result.stderr or "")[:4000]
         return (
             f"cwd: {cwd or '(aucun projet actif)'}\n"
             f"exit_code: {result.returncode}\n"
