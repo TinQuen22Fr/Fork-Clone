@@ -1704,13 +1704,17 @@ def _tool_bash(command: str) -> str:
     # cwd force sur la racine du projet actif : le modele ne travaille jamais
     # a la racine de la Forge ni dans un autre projet du workspace.
     cwd = project_root()
+    # Les builds front (vite/npm) depassent largement 30s : timeout etendu a 180s
+    # uniquement pour ces commandes, 30s pour tout le reste.
+    _low = command.lower()
+    _timeout = 180 if any(k in _low for k in ("build", "vite", "npm")) else 30
     try:
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=_timeout,
             cwd=str(cwd) if cwd else None,
         )
         out = (result.stdout or "")[:8000]
@@ -2130,6 +2134,8 @@ async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[di
                     "content": msg.get("content") or "",
                     "tool_calls": tool_calls,
                 })
+                # 1 seul outil par tour (evite le batching d'outils)
+                tool_calls = (tool_calls or [])[:1]
                 for tc in tool_calls:
                     fn = tc.get("function") or {}
                     name = fn.get("name", "")
@@ -2436,6 +2442,8 @@ async def _generate_openai_compat(
                     "content": msg.get("content") or "",
                     "tool_calls": tool_calls,
                 })
+                # 1 seul outil par tour (evite le batching d'outils)
+                tool_calls = (tool_calls or [])[:1]
                 for tc in tool_calls:
                     fn = tc.get("function") or {}
                     name = fn.get("name", "")
@@ -2985,6 +2993,8 @@ async def _gemini_tool_loop(client, model_name: str, contents: list, config) -> 
         if calls:
             contents.append(resp.candidates[0].content)
             response_parts = []
+            # 1 seul outil par tour (evite le batching d'outils)
+            calls = (calls or [])[:1]
             for fc in calls:
                 args = dict(fc.args or {})
                 output = _run_tool(fc.name, args)
@@ -3400,6 +3410,8 @@ async def _generate_ollama_cloud(
                         "content": msg.get("content") or "",
                         "tool_calls": tool_calls,
                     })
+                    # 1 seul outil par tour (evite le batching d'outils)
+                    tool_calls = (tool_calls or [])[:1]
                     for tc in tool_calls:
                         fn = tc.get("function") or {}
                         name = fn.get("name", "")
@@ -4042,6 +4054,8 @@ async def _stream_gemini(
             return
         contents.append(last_chunk.candidates[0].content)
         parts = []
+        # 1 seul outil par tour (evite le batching d'outils)
+        calls = (calls or [])[:1]
         for fc in calls:
             args = dict(fc.args or {})
             output = await asyncio.to_thread(_run_tool, fc.name, args)
@@ -4125,6 +4139,8 @@ async def _stream_ollama(
         if not calls:
             return
         messages.append({"role": "assistant", "tool_calls": calls})
+        # 1 seul outil par tour (evite le batching d'outils)
+        calls = (calls or [])[:1]
         for tc in calls:
             fn = tc.get("function") or {}
             name = fn.get("name", "")
@@ -4191,6 +4207,8 @@ async def _stream_ollama_cloud(
                 if not calls:
                     return
                 messages.append({"role": "assistant", "tool_calls": calls})
+                # 1 seul outil par tour (evite le batching d'outils)
+                calls = (calls or [])[:1]
                 for tc in calls:
                     fn = tc.get("function") or {}
                     name = fn.get("name", "")
