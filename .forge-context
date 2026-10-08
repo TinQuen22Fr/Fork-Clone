@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-07T14:33:01.145888+00:00
+# Dernière mise à jour : 2026-10-08T12:37:34.684841+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit fad96a1 Fix agent-TTS pitch.
+- Git : branche claude-ai, dernier commit b8670de Timeout bash 180s pour build/vite/npm, 30s sinon.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -41,6 +41,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-20261004-015527
   backend/server.py.bak-loadlimit-20261006-225647
   backend/server.py.bak-notrunc-20261006-232508
+  backend/server.py.bak-onetool-20261008-142213
   backend/server.py.bak-pagination-20261006-225431
   backend/server.py.bak-perf-20261004-234622
   backend/server.py.bak-pitchhz-20261007-155212
@@ -65,13 +66,14 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/apple-touch-icon.png
   frontend/public/favicon-32.png
   frontend/public/icon-192.png
-  frontend/public/icon-512.png
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Première chose il faut impérativement que les graphiques sois Implémentif (pour affichage correct sur mobile tablette tactile...) après par contre peu on approfondir la vitesse de chargement qui est encore lent je trouve sur ordi en wifi ?
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Consigne directe : 1.
+  [regle] bon stop on va corriger ça parce que ton fonctionnement là me gonfle à couper, et ne pas aller au bout.
   [regle] arette de dire je fais ci et ça pour au final ne pas aller jusqu'au bout !
   [regle] Pour régler le délai d'une minute et demie, il faut passer sur une lecture progressive : Au clic sur le bouton de lecture : 1.
   [regle] Le cycle de déploiement réel est donc toujours le suivant : 1.
@@ -105,5 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [architecture] -rw-rw-r-- 1 quentin quentin 15452 Sep 26 01:23 DEPLOIEMENT.md
   [architecture] e2d1d63 checkpoint before testing_agent_full_stack
   [architecture] # sudo bash upgrade.sh --branch main # met a jour depuis une autre branche
-  [architecture] vite v6.4.3 building for production...
-  [architecture] --cf-stack-plus-sign: #bdbdbd;
