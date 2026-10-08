@@ -1151,69 +1151,6 @@ export default function Chat() {
   const catalog = Array.isArray(activeModel?.models) ? activeModel.models : [];
   return (
     <div className="h-full w-full flex bg-[var(--bg-main)] text-white overflow-hidden">
-      {(runningTurns.length > 0 || statusTurns.length > 0) && (
-        <div
-          className="fixed top-3 right-3 z-50 max-w-md w-[calc(100vw-1.5rem)] sm:w-auto bg-[var(--bg-sidebar)] border-2 border-amber-400/60 text-white rounded-lg shadow-xl p-4 space-y-2"
-          data-testid="resume-banner"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="font-heading font-bold text-sm tracking-tight">
-              {runningTurns.length > 0
-                ? "Mode autonome — génération en cours côté serveur"
-                : "Reprise — travail pendant ton absence"}
-            </div>
-            <button
-              type="button"
-              onClick={dismissStatusBanner}
-              className="text-gray-400 hover:text-white text-lg leading-none"
-              aria-label="Fermer le résumé"
-            >
-              ×
-            </button>
-          </div>
-
-          {runningTurns.length > 0 && (
-            <ul className="space-y-1 text-[12px] text-gray-200">
-              {runningTurns.slice(0, 5).map((r) => (
-                <li
-                  key={`run-${r.conversation_id}`}
-                  className="flex items-start gap-2"
-                >
-                  <span className="inline-block w-2 h-2 mt-1 flex-shrink-0 rounded-full bg-sky-400 animate-pulse" />
-                  <span>
-                    <span className="text-white font-medium">En cours</span>
-                    {" — "}
-                    {r.tool_count > 0
-                      ? `${r.tool_count} outil(s) exécuté(s)…`
-                      : "réflexion…"}
-                    {" (déconnecté, ça continue toute seule)"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {runningTurns.length === 0 && (
-            <ul className="space-y-1 text-[12px] text-gray-300">
-              {statusTurns.slice(0, 5).map((t) => (
-                <li key={t.conversation_id} className="flex items-start gap-2">
-                  <span
-                    className={`inline-block w-2 h-2 mt-1 flex-shrink-0 rounded-full ${
-                      t.stopped ? "bg-amber-400" : "bg-emerald-400"
-                    }`}
-                  />
-                  <span>
-                    <span className="text-white font-medium">{t.title}</span>
-                    {" — "}
-                    {t.summary}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
       {/* Sidebar (extrait -> components/chat/Sidebar.jsx) */}
       <Sidebar
         sidebarOpen={sidebarOpen}
@@ -1297,6 +1234,9 @@ export default function Chat() {
           models={models}
           activeModel={activeModel}
           modelOverride={modelOverride}
+          runningTurns={runningTurns}
+          statusTurns={statusTurns}
+          onDismissAbsence={dismissStatusBanner}
         />
 
         {/* Bandeau discret : mémoire de contexte (Fetcher) du projet actif */}

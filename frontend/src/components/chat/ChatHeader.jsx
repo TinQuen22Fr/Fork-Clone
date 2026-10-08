@@ -1,6 +1,7 @@
 import { Menu, X } from "lucide-react";
 import UsageBadge from "./UsageBadge";
 import PreviewButton from "@/components/PreviewButton";
+import AbsenceMenu from "./AbsenceMenu";
 
 /**
  * ChatHeader - barre superieure de la conversation (titre session, badge usage,
@@ -22,6 +23,9 @@ export default function ChatHeader({
   models,
   activeModel,
   modelOverride,
+  runningTurns = [],
+  statusTurns = [],
+  onDismissAbsence,
 }) {
   return (
         <header className="border-b-2 border-white/10 px-3 sm:px-4 lg:px-8 py-3 sm:py-4 flex items-center justify-between gap-2">
@@ -68,6 +72,11 @@ export default function ChatHeader({
                 }
               />
             )}
+            <AbsenceMenu
+              runningTurns={runningTurns}
+              statusTurns={statusTurns}
+              onDismiss={onDismissAbsence}
+            />
             {usage && <UsageBadge usage={usage} />}
             <div
               className="text-[10px] sm:text-xs font-mono text-gray-500 hidden sm:block truncate max-w-[220px] lg:max-w-[420px] text-right"
