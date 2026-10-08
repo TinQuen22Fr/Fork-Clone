@@ -1970,7 +1970,23 @@ def _tool_screenshot_url(url: str, full_page: bool = False) -> str:
                 device_scale_factor=1,
             )
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(1500)
+            # Les SPA (React/Vite) rendent apres le chargement du DOM : on
+            # attend le reseau au repos, puis qu'un conteneur racine soit
+            # rempli, pour eviter les captures noires/vides.
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                page.wait_for_function(
+                    "() => { const r = document.querySelector('#root, #app, #__next, main');"
+                    " if (r) return r.children.length > 0;"
+                    " return document.body && document.body.innerText.trim().length > 0; }",
+                    timeout=10000,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            page.wait_for_timeout(1000)
             title = page.title()
             page.screenshot(path=str(path), full_page=bool(full_page))
             browser.close()
