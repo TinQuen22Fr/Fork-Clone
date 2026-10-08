@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-08T23:40:36.106961+00:00
+# Dernière mise à jour : 2026-10-08T23:44:28.856386+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 7b28297 Fix UI bouton + et tts.
+- Git : branche claude-ai, dernier commit aec6b6a fix capture_ui screenshoot projets.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -39,6 +39,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-20261004-014341
   backend/server.py.bak-20261004-014704
   backend/server.py.bak-20261004-015527
+  backend/server.py.bak-capwait-20261009-014049
   backend/server.py.bak-loadlimit-20261006-225647
   backend/server.py.bak-notrunc-20261006-232508
   backend/server.py.bak-onetool-20261008-142213
@@ -65,7 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/setup-preview.sh
   deploy/upgrade-preview.sh
   frontend/
-  frontend/public/
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Consigne directe : 1.
