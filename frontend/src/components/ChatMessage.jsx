@@ -390,8 +390,23 @@ function ChatMessage({
                     <div className="px-3 py-2 space-y-2 border-t border-[#05d9e8]/20">
                       {st.tools.map((s, j) => (
                         <div key={j} className="border-l-2 border-[#ffd700]/50 pl-3">
-                          <div className="text-[#ffd700] font-mono text-xs mb-1 break-all">
-                            {"\u2192"} {s.tool}({s.input && (s.input.command || s.input.path || JSON.stringify(s.input))})
+                          <div className="text-[#ffd700] font-mono text-xs mb-1 flex items-start gap-2">
+                            <span className="flex-1 break-all">
+                              {"\u2192"} {s.tool}({s.input && (s.input.command || s.input.path || JSON.stringify(s.input))})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => copyToolStep(s, `g${st.index ?? i}-${j}`)}
+                              className="flex-shrink-0 text-gray-500 hover:text-[#ffd700] transition-colors"
+                              title="Copier ce bloc"
+                              data-testid={`copy-step-group-${message.id}-${st.index ?? i}-${j}`}
+                            >
+                              {copiedStep === `g${st.index ?? i}-${j}` ? (
+                                <Check className="w-3.5 h-3.5 text-[#ffd700]" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
                           </div>
                           <pre className="bg-black/50 p-2 text-[11px] text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
                             {s.output}
