@@ -78,6 +78,9 @@ export default api;
 // metier (le backend a deja persiste ce qu'il a produit).
 export const STREAM_INTERRUPTED = "STREAM_INTERRUPTED";
 
+// Delai max sans aucun paquet (evenement ou ping) avant de couper le flux.
+const SSE_WATCHDOG_MS = 10000;
+
 /**
  * Consomme un flux SSE renvoye par un POST (EventSource ne gere pas POST).
  * Appelle onEvent({event, data}) pour chaque evenement recu.
@@ -132,10 +135,26 @@ export async function postSSE(path, formData, { signal, onEvent }) {
     }
   };
 
+  // Watchdog : le backend emet un ping SSE toutes les 4 s. Si plus aucun octet
+  // (evenement OU ping) n'arrive pendant SSE_WATCHDOG_MS, la connexion est
+  // consideree comme coupee : on annule la lecture et on leve STREAM_INTERRUPTED.
+  let timedOut = false;
+  let watchdog = null;
+  const armWatchdog = () => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      timedOut = true;
+      reader.cancel().catch(() => {});
+    }, SSE_WATCHDOG_MS);
+  };
+
   try {
+    armWatchdog();
     while (true) {
       const { value, done } = await reader.read();
+      if (timedOut) throw new Error("SSE watchdog: aucun paquet depuis 10 s");
       if (done) break;
+      armWatchdog();
       buffer += decoder.decode(value, { stream: true });
       let sep;
       while ((sep = buffer.indexOf("\n\n")) !== -1) {
@@ -147,13 +166,17 @@ export async function postSSE(path, formData, { signal, onEvent }) {
     // Dernier bloc eventuel non termine par un double saut de ligne.
     if (buffer.trim()) flushBlock(buffer);
   } catch (streamErr) {
+    clearTimeout(watchdog);
     // Flux coupe en plein vol : on remonte une erreur identifiable pour que
     // l'appelant affiche un message lisible et resynchronise, au lieu de
     // laisser remonter le "Error in input stream" brut du navigateur.
     const e = new Error(STREAM_INTERRUPTED);
     e.cause = streamErr;
     e.isStreamInterrupted = true;
+    e.watchdog = timedOut;
     throw e;
+  } finally {
+    clearTimeout(watchdog);
   }
 }
 

@@ -5246,7 +5246,7 @@ async def chat_stream(
             )
         )
         try:
-            async for ev in channel.stream(ping_interval=15.0):
+            async for ev in channel.stream(ping_interval=4.0):
                 if ev["type"] == "__ping__":
                     # Commentaire SSE : maintient la connexion ouverte sans
                     # etre interprete comme un evenement par le client.
