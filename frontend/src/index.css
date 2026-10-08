@@ -144,7 +144,9 @@ body {
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
     box-shadow: 5px 5px 0 0 #ff2a6d;
-    overflow: hidden;
+    /* visible : les menus (+, voix) s'ouvrent vers le haut, hors de la carte.
+       Les coins arrondis sont repris par la barre de statut et la toolbar. */
+    overflow: visible;
 }
 
 /* Bandeau de statut discret en haut de la carte (ex: "Agent attend..."). */
@@ -158,6 +160,7 @@ body {
     color: #9ca3af;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.02);
+    border-radius: 12px 12px 0 0;
 }
 .chat-status-dot {
     width: 7px;
@@ -183,6 +186,7 @@ body {
     padding: 0.45rem 0.75rem;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.015);
+    border-radius: 0 0 12px 12px;
 }
 
 /* Textarea centrale : sans bordure ni fond propre, integree a la carte,
