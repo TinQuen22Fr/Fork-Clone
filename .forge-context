@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-08T23:31:42.062645+00:00
+# Dernière mise à jour : 2026-10-08T23:40:36.106961+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 7c89c13 feat(stream): résilience complète avec watchdog 10s, pings backend 4s et polling auto sur coupure.
+- Git : branche claude-ai, dernier commit 7b28297 Fix UI bouton + et tts.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -73,6 +73,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] revoir les captures des projets qui ne fonctionne pas à 100%.
   [regle] // Les appelants peuvent la reconnaitre pour ne PAS traiter ca comme un echec
   [regle] Chaque action doit être visible au moment où elle s'exécute.
   [regle] Si aucun paquet ni ping n'arrive au bout de 10 secondes pendant une génération en cours, la connexion doit être considérée comme coupée, déclencher immédiatement STREAM_INTERRUPTED et basculer sur le rattrapage automatique, sans laisser l'interface figée sur un curseur qui clignote.
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
   [regle] Termine obligatoirement par la vérification py_compile de server.py et un résumé textuel clair de tes modifications.
   [regle] ok mais avant je souhaite que tu "améliore" et trouve une solution pour éviter ces trop nombreux bloc réponse vide quand je suis en mode auto ou claude
-  [regle] Émets des événements de fin d'étape pour éviter les coupures de flux et tronque les logs bruts des étapes validées pour ne pas saturer le contexte avec Claude.
