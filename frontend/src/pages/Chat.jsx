@@ -928,33 +928,55 @@ export default function Chat() {
         setNotice(
           "Connexion au flux interrompue — resynchronisation avec le serveur…"
         );
-        await new Promise((r) => setTimeout(r, 1200));
-        try {
-          const { data } = await api.get(`/conversations/${convId}/messages`);
-          const list = Array.isArray(data) ? data : data?.messages || [];
-          // Si le serveur a bien enregistré le message utilisateur, on
-          // remplace l'optimiste par la version serveur ; sinon on le garde
-          // quand même à l'écran (jamais de disparition).
-          const hasUser = list.some((m) => m.role === "user");
-          setMessages((prev) => {
-            const cleaned = prev.filter(
-              (m) => !(m.id === optimisticUser.id && hasUser)
+        // Polling regulier (2,5 s, plafonne a 10 min) : on interroge le statut
+        // PUIS les messages, jusqu'a ce que le tour ne soit plus "en cours"
+        // cote serveur. Une erreur reseau pendant le polling n'arrete rien :
+        // on retente au prochain cycle.
+        const POLL_MS = 2500;
+        const POLL_MAX_MS = 10 * 60 * 1000;
+        const pollStart = Date.now();
+        let finished = false;
+        let synced = false;
+        let lastList = [];
+        while (!finished && Date.now() - pollStart < POLL_MAX_MS) {
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          try {
+            const st = await api.get("/chat/status");
+            const stillRunning = (st.data?.running || []).some(
+              (t) => String(t.conversation_id) === String(convId)
             );
-            return reconcileMessages(cleaned, list.length ? list : cleaned);
-          });
-          if (!list.length) {
-            setNotice("");
-            setError(
-              "La connexion a été coupée avant tout enregistrement. Réessaie ton message."
-            );
+            const { data } = await api.get(`/conversations/${convId}/messages`);
+            const list = Array.isArray(data) ? data : data?.messages || [];
+            lastList = list;
+            synced = true;
+            const hasUser = list.some((m) => m.role === "user");
+            setMessages((prev) => {
+              const cleaned = prev.filter(
+                (m) => !(m.id === optimisticUser.id && hasUser)
+              );
+              return reconcileMessages(cleaned, list.length ? list : cleaned);
+            });
+            finished = !stillRunning;
+          } catch (_) {
+            // Reseau encore coupe : on retente au prochain cycle.
           }
-        } catch (_) {
-          // Resynchro impossible (réseau toujours coupé) : on garde le message
-          // visible et on prévient.
+        }
+        if (!synced) {
           setNotice("");
           setError(
             "Réseau instable — impossible de resynchroniser. Recharge la page pour revoir la conversation."
           );
+        } else if (!lastList.length) {
+          setNotice("");
+          setError(
+            "La connexion a été coupée avant tout enregistrement. Réessaie ton message."
+          );
+        } else if (!finished) {
+          setNotice(
+            "La génération est toujours en cours côté serveur — la réponse apparaîtra à sa fin."
+          );
+        } else {
+          setNotice("");
         }
       } else {
         // Vraie erreur métier : message lisible, et on GARDE le message
