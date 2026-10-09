@@ -1359,6 +1359,7 @@ export default function Chat() {
                 message={m}
                 isLast={m.id === lastAssistantId}
                 onRegenerate={regenerate}
+                onReplay={(msg) => sendMessage(null, { text: msg.content })}
                 onFeedback={submitFeedback}
                 onDelete={deleteMessage}
                 regenerating={regenerating}

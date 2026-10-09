@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/fr";
-import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, Terminal, Paperclip, Trash2 } from "lucide-react";
+import { Copy, Check, Volume2, Square, ThumbsUp, ThumbsDown, RotateCcw, RotateCw, Terminal, Paperclip, Trash2 } from "lucide-react";
 
 dayjs.extend(relativeTime);
 dayjs.locale("fr");
@@ -125,6 +125,7 @@ function ChatMessage({
   message,
   isLast = false,
   onRegenerate,
+  onReplay,
   onFeedback,
   onDelete,
   regenerating = false,
@@ -195,6 +196,18 @@ function ChatMessage({
             >
               {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
+            {onReplay && (
+              <button
+                type="button"
+                onClick={() => onReplay(message)}
+                title="Rejouer ce prompt"
+                aria-label="Rejouer ce prompt"
+                data-testid={`replay-msg-${message.id}`}
+                className="p-1 text-gray-600 hover:text-[#ffd700]"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+            )}
             {onDelete && (
               <button
                 type="button"
@@ -620,7 +633,7 @@ function ChatMessage({
           {isLast && (
             <ActionButton
               onClick={() => onRegenerate && onRegenerate(message)}
-              title="Régénérer la réponse"
+              title="Réessayer la réponse"
               testId={`regenerate-${message.id}`}
             >
               <RotateCcw className={`w-4 h-4 ${regenerating ? "animate-spin" : ""}`} />
