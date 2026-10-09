@@ -54,6 +54,11 @@ _current_provider: ContextVar[str] = ContextVar("current_provider", default="cla
 def set_current_provider(pid: str):
     _current_provider.set(pid or "claude")
 
+# Version de Claude Code annoncee a Anthropic (user-agent). Les modeles recents
+# refusent les versions trop anciennes ("version X or newer is required").
+CLAUDE_CLI_VERSION = os.environ.get("CLAUDE_CLI_VERSION", "2.1.251")
+CLAUDE_CLI_UA = f"claude-cli/{CLAUDE_CLI_VERSION} (external, cli)"
+
 # --- Selecteur de modele Claude -------------------------------------------
 # Le jeton OAuth d'abonnement donne acces a plusieurs modeles. Cette liste sert
 # de REPLI : le catalogue reel est decouvert dynamiquement via l'endpoint
@@ -3855,7 +3860,7 @@ async def _call_anthropic(messages: list[dict], use_tools: bool = True) -> dict:
         "anthropic-version": "2023-06-01",
         "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
         "content-type": "application/json",
-        "user-agent": "claude-cli/1.0.0 (external, cli)",
+        "user-agent": CLAUDE_CLI_UA,
         "x-app": "cli",
     }
 
@@ -3893,7 +3898,7 @@ ANTHROPIC_STREAM_HEADERS = {
     "anthropic-version": "2023-06-01",
     "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
     "content-type": "application/json",
-    "user-agent": "claude-cli/1.0.0 (external, cli)",
+    "user-agent": CLAUDE_CLI_UA,
     "x-app": "cli",
 }
 
@@ -5944,7 +5949,7 @@ async def _fetch_catalog(pid: str) -> list[str]:
                             "anthropic-beta": (
                                 "oauth-2025-04-20,claude-code-20250219"
                             ),
-                            "user-agent": "claude-cli/1.0.0 (external, cli)",
+                            "user-agent": CLAUDE_CLI_UA,
                             "x-app": "cli",
                         },
                         params={"limit": 100},
