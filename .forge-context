@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-09T00:05:16.715964+00:00
+# Dernière mise à jour : 2026-10-09T00:58:41.696817+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit c19390a Fix2 bouton copier dans fenetre bash.
+- Git : branche claude-ai, dernier commit d888172 Fix liste Claude.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -40,6 +40,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-20261004-014704
   backend/server.py.bak-20261004-015527
   backend/server.py.bak-capwait-20261009-014049
+  backend/server.py.bak-clivers-20261009-020534
   backend/server.py.bak-loadlimit-20261006-225647
   backend/server.py.bak-notrunc-20261006-232508
   backend/server.py.bak-onetool-20261008-142213
@@ -65,14 +66,15 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/setup-preview-domain.sh
   deploy/setup-preview.sh
   deploy/upgrade-preview.sh
-  frontend/
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
+  [regle] Dès que tu dois inspecter, lire un fichier ou exécuter une commande bash : 1.
   [regle] Consigne directe : 1.
   [regle] Première chose il faut impérativement que les graphiques sois Implémentif (pour affichage correct sur mobile tablette tactile...) après par contre peu on approfondir la vitesse de chargement qui est encore lent je trouve sur ordi en wifi ?
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Ce n'est pas ton comportement de réponse que tu dois changer, c'est le composant d'affichage dans le frontend : 1.
   [regle] revoir les captures des projets qui ne fonctionne pas à 100%.
   [regle] // Les appelants peuvent la reconnaitre pour ne PAS traiter ca comme un echec
   [regle] Chaque action doit être visible au moment où elle s'exécute.
@@ -105,5 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Corrige cette fausse détection d'absence immédiatement : stocke les tâches déjà notifiées pour ne JAMAIS réafficher la modale en boucle, ne déclenche pas de refresh au moindre changement de focus/visibilité, et temporise strictement le polling du statut.
   [regle] Regarde directement la condition qui affiche le bouton dans ChatMessage.jsx et vérifie pourquoi la prop ne passe pas depuis Chat.jsx.
   [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
-  [regle] Termine obligatoirement par la vérification py_compile de server.py et un résumé textuel clair de tes modifications.
-  [regle] ok mais avant je souhaite que tu "améliore" et trouve une solution pour éviter ces trop nombreux bloc réponse vide quand je suis en mode auto ou claude

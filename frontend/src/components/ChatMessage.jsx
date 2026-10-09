@@ -142,7 +142,7 @@ function ChatMessage({
   // Rendu paresseux : le contenu des blocs repliés (étapes, outils) n'est
   // construit dans le DOM qu'à l'ouverture, ce qui allège l'affichage d'une
   // conversation riche en sorties d'outils.
-  const [toolsOpen, setToolsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(true);
   const [openSteps, setOpenSteps] = useState({});
 
   const copyUser = async () => {
@@ -468,6 +468,7 @@ function ChatMessage({
 
         {Array.isArray(message.tool_steps) && message.tool_steps.length > 0 && (
           <details
+            open
             className="mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
             data-testid={`tool-steps-${message.id}`}
             onToggle={(e) => setToolsOpen(e.currentTarget.open)}
