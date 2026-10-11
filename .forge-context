@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-11T17:18:53.586262+00:00
+# Dernière mise à jour : 2026-10-11T17:46:08.605808+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit b7251c6 feat(agents): add vibe-planner and vibe-reviewer specialized profiles.
+- Git : branche claude-ai, dernier commit cea548c Fix Vide-planner et Vibe-reviewer du commit b7251c6.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -74,6 +74,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] backend/server.py:277: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
   [regle] Constat : Les profils `agents/vibe-planner.md` et `agents/vibe-reviewer.md` existent, mais le frontend `frontend/src/pages/Chat.jsx` utilise toujours une liste codée en dur ["", "vibe-coder"].
   [regle] https://github.com/funny-vibes/agent-vibes Consignes d'exécution : 1.
   [regle] Anti-rationalisation stricte : Interdiction formelle d'argumenter sur la nécessité d'une demande, de dire "ce n'est pas nécessaire" ou "le projet a déjà ce qu'il faut".
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Tu dis ne pas être deepseek pourtant c'est bien ça que j'ai sélectionné
   [regle] 269: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
   [regle] Bon ok étape 1 de toute façon il y à le roolback et surtout j'ai un commit pour revenir si il faut en arrière et un .env de restauration.
-  [regle] Nontoujours pareil !
