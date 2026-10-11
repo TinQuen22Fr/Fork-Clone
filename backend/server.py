@@ -631,6 +631,7 @@ class RegenerateRequest(BaseModel):
     provider: str = "claude"
     model: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    agent: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -899,6 +900,26 @@ FORGE_RULES_FILE = ".forge-rules"
 FORGE_RULES_MAX_CHARS = int(_env("FORGE_RULES_MAX_CHARS", "8000"))
 
 
+_current_agent: ContextVar[str] = ContextVar("forge_current_agent", default="")
+FORGE_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
+
+
+def set_current_agent(name: Optional[str]) -> None:
+    """Fixe le profil d'agent actif pour la requete en cours."""
+    _current_agent.set((name or "").strip())
+
+
+def agent_profile_text(name: str) -> str:
+    """Contenu du fichier agents/<name>.md, vide si absent ou nom invalide."""
+    name = (name or "").strip()
+    if not name or not re.fullmatch(r"[a-zA-Z0-9_-]+", name):
+        return ""
+    path = FORGE_AGENTS_DIR / f"{name}.md"
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")[:FORGE_RULES_MAX_CHARS]
+
+
 def set_current_project(name: Optional[str]) -> None:
     """Fixe le projet actif pour la requete en cours (contextvar)."""
     _current_project.set((name or "").strip())
@@ -1017,6 +1038,9 @@ def forge_system_prompt() -> str:
     pid = _current_provider.get()
     if pid != "claude":
         blocks = []
+        agent_text = agent_profile_text(_current_agent.get())
+        if agent_text:
+            blocks.append(agent_text)
         blocks.append(
             f"Tu es l'assistant de code de The Forge, propulsé par le modèle '{pid}'. "
             f"Tu n'es PAS Claude et tu n'as PAS été créé par Anthropic. "
@@ -1028,6 +1052,9 @@ def forge_system_prompt() -> str:
 
     """System prompt effectif : base + cadrage Forge + regles du projet."""
     blocks = []
+    agent_text = agent_profile_text(_current_agent.get())
+    if agent_text:
+        blocks.append(agent_text)
     if settings.claude_system_prompt:
         blocks.append(settings.claude_system_prompt)
     blocks.append(_forge_environment_block())
@@ -4839,6 +4866,7 @@ async def chat_send(
     provider: str = Form("claude"),
     model: Optional[str] = Form(None),
     reasoning_effort: Optional[str] = Form(None),
+    agent: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     database = get_db()
@@ -4850,6 +4878,7 @@ async def chat_send(
         raise HTTPException(status_code=404, detail="Conversation not found")
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
+    set_current_agent(agent)
     set_current_provider(provider)
     set_current_reasoning_effort(reasoning_effort)
 
@@ -5172,6 +5201,7 @@ async def chat_stream(
     provider: str = Form("claude"),
     model: Optional[str] = Form(None),
     reasoning_effort: Optional[str] = Form(None),
+    agent: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -5190,6 +5220,7 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail="Conversation not found")
     # Cadrage systeme : le LLM est cloisonne au projet de cette conversation.
     set_current_project(conv.get("project"))
+    set_current_agent(agent)
     set_current_provider(provider)
     set_current_reasoning_effort(reasoning_effort)
     if provider not in PROVIDER_IDS and provider != "auto":
@@ -5808,6 +5839,7 @@ async def chat_regenerate(
     set_current_project(conv.get("project"))
     set_current_provider(payload.provider)
     set_current_reasoning_effort(payload.reasoning_effort)
+    set_current_agent(payload.agent)
     _current_claude_model.set(payload.model or "")
 
     # Seuls les derniers messages sont utiles (les plus anciens sont deja

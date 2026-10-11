@@ -134,6 +134,13 @@ export default function Chat() {
   const [reasoningEffort, setReasoningEffort] = useState(
     () => localStorage.getItem("forge_reasoning_effort") || "auto"
   );
+  const AGENT_OPTIONS = [
+    { v: "", label: "Aucun" },
+    { v: "vibe-coder", label: "Vibe-coder" },
+  ];
+  const [agent, setAgent] = useState(
+    () => localStorage.getItem("forge_agent") || ""
+  );
   // Abonnement minimal : ne change qu'a la transition vide -> non vide.
   const streamingHasContent = useSyncExternalStore(
     subscribeStream,
@@ -715,6 +722,7 @@ export default function Chat() {
         model: modelOverride || null,
         reasoning_effort:
           reasoningEffort && reasoningEffort !== "auto" ? reasoningEffort : null,
+        agent: agent || null,
       });
       setMessages((prev) => {
         const copy = [...prev];
@@ -869,6 +877,7 @@ export default function Chat() {
       if (modelOverride) form.append("model", modelOverride);
       if (reasoningEffort && reasoningEffort !== "auto")
         form.append("reasoning_effort", reasoningEffort);
+      if (agent) form.append("agent", agent);
 
       let acc = "";
       await postSSE("/chat/stream", form, {
@@ -1130,6 +1139,11 @@ export default function Chat() {
   const handleReasoningChange = (value) => {
     setReasoningEffort(value);
     localStorage.setItem("forge_reasoning_effort", value);
+  };
+
+  const handleAgentChange = (value) => {
+    setAgent(value);
+    localStorage.setItem("forge_agent", value);
   };
 
   // Saisie multi-lignes : Entree insere un retour a la ligne (PAS d'envoi).
@@ -1769,6 +1783,19 @@ export default function Chat() {
                     className="flex items-center gap-px border-2 border-white/20 bg-black/40 px-1 py-1 flex-shrink-0 sm:ml-2"
                     title="Effort de raisonnement (modeles compatibles uniquement)"
                   >
+                    <select
+                      value={agent}
+                      onChange={(e) => handleAgentChange(e.target.value)}
+                      title="Profil d'agent (règles injectées au system prompt)"
+                      className="bg-black text-[#05d9e8] text-[10px] font-mono uppercase border border-white/20 px-1 py-0.5 mr-1"
+                      data-testid="agent-select"
+                    >
+                      {AGENT_OPTIONS.map((o) => (
+                        <option key={o.v} value={o.v}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
                     <Brain className="w-4 h-4 text-gray-500 flex-shrink-0 mr-0.5" />
                     {[
                       { v: "auto", label: "A", full: "auto" },
