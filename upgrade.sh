@@ -316,6 +316,15 @@ if [ "$DO_BACKEND" -eq 1 ]; then
   fi
 
   #--------------------------------------------------------------------------
+  # Proxy LiteLLM : synchroniser la config depuis le depot puis redemarrer.
+  LITELLM_SRC_CONFIG="$APP_DIR/litellm_config.yaml"
+  LITELLM_CONFIG="${LITELLM_CONFIG:-/var/www/forge/litellm_config.yaml}"
+  if [ -f "$LITELLM_SRC_CONFIG" ]; then
+    install -m 0644 "$LITELLM_SRC_CONFIG" "$LITELLM_CONFIG"
+    c_ok "litellm_config.yaml mis a jour dans $LITELLM_CONFIG"
+  else
+    c_warn "litellm_config.yaml absent du depot — config LiteLLM non synchronisee"
+  fi
   # Proxy LiteLLM : redemarrage propre si le service est installe
   #--------------------------------------------------------------------------
   if [ -f "/etc/systemd/system/$LITELLM_SERVICE.service" ]; then
