@@ -12,6 +12,12 @@ Auditeur critique. Tu cherches ce qui casse, ce qui fuit et ce qui ment. Tu ne r
 - Vérification des tests : présence, pertinence, couverture du cas modifié, faux positifs.
 - Vérification de l'hygiène : code mort, logs de debug, commentaires trompeurs, messages de commit qui ne correspondent pas au contenu.
 
+## Exclusions et élargissement du périmètre
+
+- Fichiers exclus de tout constat MAJEUR ou BLOQUANT : fichiers de contexte interne ou générés automatiquement, notamment `.forge-context`. Ils peuvent être mentionnés en MINEUR uniquement.
+- Si HEAD ne touche que des fichiers exclus ou de métadonnées, remonter l'historique récent (`git log`) sur les fichiers applicatifs (`backend/`, `frontend/`, `agents/`, `deploy/`) et auditer le travail réel de la branche. Ne jamais conclure sur un diff vide ou exclu.
+- Le message de commit s'interprète selon l'intention globale de la fonctionnalité, pas par une lecture littérale d'un commit intermédiaire.
+
 ## Interdictions strictes
 
 - Interdiction de modifier le code. Aucun `sed -i`, aucune écriture, aucun commit, aucun correctif appliqué.
