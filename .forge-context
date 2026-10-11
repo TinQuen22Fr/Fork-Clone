@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-09T01:32:31.942982+00:00
+# Dernière mise à jour : 2026-10-11T12:47:18.788935+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 11d5ccc feat(chat): ajout du bouton Rejouer sur les messages utilisateur et renommage en Réessayer.
+- Git : branche claude-ai, dernier commit 6a94a25 feat(agents): profils d'agents (vibe-coder) injectés dans le system prompt, select Agent et support regenerate.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -17,6 +17,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   .emergent/markers/.restore-complete
   .emergent/emergent.yml
   .emergent/system_deps.txt
+  agents/
+  agents/vibe-coder.md
   backend/
   backend/tests/
   backend/tests/backend_test.py
@@ -39,6 +41,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-20261004-014341
   backend/server.py.bak-20261004-014704
   backend/server.py.bak-20261004-015527
+  backend/server.py.bak-agents
   backend/server.py.bak-capwait-20261009-014049
   backend/server.py.bak-clivers-20261009-020534
   backend/server.py.bak-loadlimit-20261006-225647
@@ -63,9 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/install-playwright.sh
   deploy/nginx-forge-preview.conf
   deploy/nginx-forge.conf
-  deploy/setup-preview-domain.sh
-  deploy/setup-preview.sh
-  deploy/upgrade-preview.sh
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Dès que tu dois inspecter, lire un fichier ou exécuter une commande bash : 1.
@@ -74,6 +74,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Anti-rationalisation stricte : Interdiction formelle d'argumenter sur la nécessité d'une demande, de dire "ce n'est pas nécessaire" ou "le projet a déjà ce qu'il faut".
+  [regle] Crée un dossier /agents à la racine avec un premier fichier vibe-coder.md contenant des règles de dev strictes (pas de bavardage, édition chirurgicale, respect des consignes).
   [regle] Ce n'est pas ton comportement de réponse que tu dois changer, c'est le composant d'affichage dans le frontend : 1.
   [regle] revoir les captures des projets qui ne fonctionne pas à 100%.
   [regle] // Les appelants peuvent la reconnaitre pour ne PAS traiter ca comme un echec
@@ -105,5 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Nontoujours pareil !
   [regle] le menu ne fonctionne pas, on ne le vois pas
   [regle] Corrige cette fausse détection d'absence immédiatement : stocke les tâches déjà notifiées pour ne JAMAIS réafficher la modale en boucle, ne déclenche pas de refresh au moindre changement de focus/visibilité, et temporise strictement le polling du statut.
-  [regle] Regarde directement la condition qui affiche le bouton dans ChatMessage.jsx et vérifie pourquoi la prop ne passe pas depuis Chat.jsx.
-  [regle] Ne lis pas backend/server.py en entier pour ne pas saturer le buffer.
