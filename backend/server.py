@@ -4702,6 +4702,18 @@ async def me(current_user: dict = Depends(get_current_user)):
     }
 
 
+@api_router.get("/agents")
+async def list_agents(current_user: dict = Depends(get_current_user)):
+    """Noms des profils d'agents (fichiers agents/*.md, sans extension)."""
+    if not FORGE_AGENTS_DIR.is_dir():
+        return {"agents": []}
+    names = sorted(
+        p.stem for p in FORGE_AGENTS_DIR.glob("*.md")
+        if p.is_file() and re.fullmatch(r"[a-zA-Z0-9_-]+", p.stem)
+    )
+    return {"agents": names}
+
+
 # =========================================================================
 # Conversations
 # =========================================================================

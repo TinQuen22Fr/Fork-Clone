@@ -134,9 +134,10 @@ export default function Chat() {
   const [reasoningEffort, setReasoningEffort] = useState(
     () => localStorage.getItem("forge_reasoning_effort") || "auto"
   );
+  const [agentNames, setAgentNames] = useState([]);
   const AGENT_OPTIONS = [
     { v: "", label: "Aucun" },
-    { v: "vibe-coder", label: "Vibe-coder" },
+    ...agentNames.map((n) => ({ v: n, label: n })),
   ];
   const [agent, setAgent] = useState(
     () => localStorage.getItem("forge_agent") || ""
@@ -1140,6 +1141,19 @@ export default function Chat() {
     setReasoningEffort(value);
     localStorage.setItem("forge_reasoning_effort", value);
   };
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get("/agents")
+      .then(({ data }) => {
+        if (alive && Array.isArray(data?.agents)) setAgentNames(data.agents);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const handleAgentChange = (value) => {
     setAgent(value);
