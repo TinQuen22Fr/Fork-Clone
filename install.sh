@@ -147,7 +147,7 @@ User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=/var/www/forge
 Environment="PATH=$LITELLM_VENV/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$LITELLM_VENV/bin/litellm --host 127.0.0.1 --port 4000
+ExecStart=$LITELLM_VENV/bin/litellm --host 127.0.0.1 --port 4000 --config $APP_DIR/litellm_config.yaml
 
 Restart=always
 RestartSec=3
