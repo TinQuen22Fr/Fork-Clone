@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-11T20:25:50.173005+00:00
+# Dernière mise à jour : 2026-10-11T22:04:06.161111+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 3f122f7 feat(deploy): automatisation du cycle de vie du proxy LiteLLM (venv et service systemd).
+- Git : branche claude-ai, dernier commit 9e21456 fix: configurer litellm avec routage anthropic et openai pour opencode go.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/

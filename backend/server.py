@@ -2598,6 +2598,7 @@ async def _stream_openai_compat(
     conf = settings.free_providers[pid]
     model_name = await _resolve_free_model(pid, model_override)
     state["model"] = model_name
+    had_tools = False
     messages = _openai_messages(history, text, images)
     headers = _free_provider_headers(pid)
     url = f"{conf['base_url']}/chat/completions"
