@@ -19,6 +19,8 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 VENV_DIR="${VENV_DIR:-$APP_DIR/backend/venv}"
 SERVICE="${SERVICE:-forge-backend}"
+LITELLM_VENV="${LITELLM_VENV:-/var/www/forge/litellm-venv}"
+LITELLM_SERVICE="${LITELLM_SERVICE:-litellm}"
 SERVICE_USER="${SERVICE_USER:-quentin}"
 BRANCH="${BRANCH:-}"
 DO_PULL=1
@@ -201,6 +203,19 @@ PYCHROME
   "$VENV_DIR/bin/python" -c "import ast,sys;ast.parse(open('backend/server.py').read())" \
     || die "backend/server.py ne compile pas — mise a jour interrompue"
   c_ok "server.py compile"
+
+  # -------------------------------------------------------------------------
+  # Proxy LiteLLM (opt-in) : mise a jour du venv dedie.
+  # Si le venv n'existe pas encore (machine pas (re)installee avec install.sh),
+  # on signale sans bloquer la mise a jour.
+  # -------------------------------------------------------------------------
+  c_step "Proxy LiteLLM"
+  if [ -x "$LITELLM_VENV/bin/pip" ]; then
+    "$LITELLM_VENV/bin/pip" install --upgrade 'litellm[proxy]'
+    c_ok "litellm[proxy] a jour dans $LITELLM_VENV"
+  else
+    c_warn "venv LiteLLM introuvable ($LITELLM_VENV) — lance install.sh pour l'installer"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -298,6 +313,21 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     c_ok "API /api/health repond 200"
   else
     c_warn "API /api/health repond $CODE — inspecte : journalctl -u $SERVICE -n 50"
+  fi
+
+  #--------------------------------------------------------------------------
+  # Proxy LiteLLM : redemarrage propre si le service est installe
+  #--------------------------------------------------------------------------
+  if [ -f "/etc/systemd/system/$LITELLM_SERVICE.service" ]; then
+    c_step "Redemarrage de $LITELLM_SERVICE"
+    systemctl restart "$LITELLM_SERVICE"
+    systemctl is-active --quiet "$LITELLM_SERVICE" || {
+      journalctl -u "$LITELLM_SERVICE" -n 40 --no-pager
+      die "$LITELLM_SERVICE ne demarre pas (journal ci-dessus)"
+    }
+    c_ok "service LiteLLM actif"
+  else
+    c_warn "service $LITELLM_SERVICE absent — rien a redemarrer"
   fi
 fi
 

@@ -18,6 +18,11 @@ FRONTEND_DIR="$APP_DIR/frontend"
 SERVICE_NAME="forge-backend"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
+SERVICE_USER="${SERVICE_USER:-quentin}"
+LITELLM_VENV="${LITELLM_VENV:-/var/www/forge/litellm-venv}"
+LITELLM_SERVICE="${LITELLM_SERVICE:-litellm}"
+LITELLM_SERVICE_FILE="/etc/systemd/system/${LITELLM_SERVICE}.service"
+
 c_info()  { printf '\033[36m[i]\033[0m %s\n' "$1"; }
 c_ok()    { printf '\033[32m[OK]\033[0m %s\n' "$1"; }
 c_warn()  { printf '\033[33m[!]\033[0m %s\n' "$1"; }
@@ -115,7 +120,50 @@ if [ -f "$SERVICE_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Redémarrage du backend
+# 5. Proxy LiteLLM — venv dédié + service systemd (opt-in)
+# ---------------------------------------------------------------------------
+c_info "LiteLLM : environnement virtuel dédié..."
+if [ ! -d "$LITELLM_VENV" ]; then
+    python3 -m venv "$LITELLM_VENV"
+    c_ok "venv LiteLLM créé ($LITELLM_VENV)."
+else
+    c_ok "venv LiteLLM déjà présent."
+fi
+
+"$LITELLM_VENV/bin/pip" install --upgrade pip --quiet
+"$LITELLM_VENV/bin/pip" install 'litellm[proxy]' --quiet
+c_ok "litellm[proxy] installé dans $LITELLM_VENV."
+
+if [ ! -f "$LITELLM_SERVICE_FILE" ]; then
+    c_warn "Aucun service litellm — création du gabarit."
+    sudo tee "$LITELLM_SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=LiteLLM proxy (passerelle providers pour la Forge)
+After=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=/var/www/forge
+Environment="PATH=$LITELLM_VENV/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$LITELLM_VENV/bin/litellm --host 127.0.0.1 --port 4000
+
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$LITELLM_SERVICE" >/dev/null 2>&1 || true
+    c_ok "Service litellm créé, rechargé et activé."
+else
+    c_ok "Service litellm existant conservé intact."
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Redémarrage du backend
 # ---------------------------------------------------------------------------
 read -r -p "Redémarrer ${SERVICE_NAME} maintenant ? [Y/n] " reply
 if [[ ! "$reply" =~ ^[Nn]$ ]]; then
@@ -151,7 +199,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Rappel Nginx (jamais automatisé ici)
+# 7. Rappel Nginx (jamais automatisé ici)
 # ---------------------------------------------------------------------------
 echo ""
 c_info "Nginx n'est PAS touché par ce script."
