@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-11T12:47:18.788935+00:00
+# Dernière mise à jour : 2026-10-11T12:58:45.044474+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 6a94a25 feat(agents): profils d'agents (vibe-coder) injectés dans le system prompt, select Agent et support regenerate.
+- Git : branche claude-ai, dernier commit 0edffa8 feat(agents): add vibe-coder profile with anti-rationalization rules and UI selector.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
