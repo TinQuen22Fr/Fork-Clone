@@ -1,39 +1,42 @@
-# Configuration du proxy LiteLLM pour la Forge (opencode.zen).
-# Les clés sont lues depuis l'environnement (EnvironmentFile du service litellm),
-# jamais écrites en clair dans ce fichier.
 model_list:
   - model_name: haiku-5.5
     litellm_params:
-      model: openai/haiku-5.5
+      model: openai/claude-3-5-haiku-20241022
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
   - model_name: sonnet-4.6
     litellm_params:
-      model: openai/sonnet-4.6
+      model: openai/claude-3-7-sonnet-20250219
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
   - model_name: opus-4.6
     litellm_params:
-      model: openai/opus-4.6
+      model: openai/claude-3-opus-20240229
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
   - model_name: gpt-5
     litellm_params:
-      model: openai/gpt-5
+      model: openai/gpt-4o
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
   - model_name: gpt-5-mini
     litellm_params:
-      model: openai/gpt-5-mini
+      model: openai/gpt-4o-mini
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
   - model_name: deepseek-v4-chat
     litellm_params:
-      model: openai/deepseek-v4-chat
+      model: openai/deepseek-chat
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
   - model_name: deepseek-v4-reasoner
     litellm_params:
-      model: openai/deepseek-v4-reasoner
+      model: openai/deepseek-reasoner
       api_base: https://opencode.zen/v1
       api_key: os.environ/OPENCODE_API_KEY
+
+general_settings:
+  dangerously_permit_weak_or_unset_master_key: true
+
+litellm_settings:
+  drop_params: true
