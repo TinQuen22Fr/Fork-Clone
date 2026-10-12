@@ -183,8 +183,27 @@ with sync_playwright() as pw:
     print(1 if os.path.exists(pw.chromium.executable_path) else 0)
 PYCHROME
 )"
+    CHROMIUM_FOUND=""
     if [ "$CHROMIUM_OK" = "1" ]; then
-      c_ok "Chromium present ($PLAYWRIGHT_BROWSERS_PATH)"
+      CHROMIUM_FOUND="$PLAYWRIGHT_BROWSERS_PATH"
+    else
+      for _cdir in "$APP_DIR/.playwright" "$HOME/.cache/ms-playwright" "/root/.cache/ms-playwright"; do
+        if [ -d "$_cdir" ] && find "$_cdir" -maxdepth 3 -type f \( -name chrome -o -name headless_shell -o -name chromium \) 2>/dev/null | grep -q .; then
+          CHROMIUM_FOUND="$_cdir"
+          export PLAYWRIGHT_BROWSERS_PATH="$_cdir"
+          break
+        fi
+      done
+      if [ -z "$CHROMIUM_FOUND" ]; then
+        if command -v chromium >/dev/null 2>&1; then
+          CHROMIUM_FOUND="$(command -v chromium)"
+        elif command -v google-chrome >/dev/null 2>&1; then
+          CHROMIUM_FOUND="$(command -v google-chrome)"
+        fi
+      fi
+    fi
+    if [ -n "$CHROMIUM_FOUND" ]; then
+      c_ok "Chromium present ($CHROMIUM_FOUND) — installation ignoree"
     elif [ ! -f deploy/install-playwright.sh ]; then
       c_warn "Chromium absent et deploy/install-playwright.sh introuvable"
     else
