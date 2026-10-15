@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-15T01:38:40.359256+00:00
+# Dernière mise à jour : 2026-10-15T04:08:24.209645+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 57fe197 feat(auth): add TOTP 2FA with 30-day trust cookie.
+- Git : branche claude-ai, dernier commit 32d5ba1 revert(auth): remove TOTP 2FA implementation.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -31,8 +31,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/test_tts_bugs.py
   backend/tools/
   backend/tools/web_search.py
-  backend/.env
-  backend/auth_2fa.py
   backend/capture_ui.py
   backend/env.example
   backend/patch_backend.py
@@ -62,10 +60,12 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py.bak-watchdog-20261009-010550
   backend/server.py.bak_item10
   backend/test_rollback.txt
-  backend/totp.py
   deploy/
   deploy/KNOWN_ISSUE_preview_map_readonly.md
   deploy/ensure-rwpaths.sh
+  deploy/fix-previews.sh
+  deploy/forge-backend.service
+  deploy/install-kokoro.sh
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Dès que tu dois inspecter, lire un fichier ou exécuter une commande bash : 1.
@@ -74,6 +74,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Pour l'instant le script upgrade.sh contient une sécurité permettant de restaurer un ancien commit si jamais le dernier ne fonctionne pas ce que j'ai fait pour récupérer les choses.
+  [regle] input-otp: PREEXISTANT (ne pas toucher)
   [regle] de plus c'est pas pour rien qu'il y a une icone supprimer si j'estime qu'il y a quelque chose qu'il faut pas et qui ne dois pas rester !
   [regle] - "\n\nREGLES DE SECURITE NON NEGOCIABLES :\n"
   [regle] tu ne fonctionne pas chez toi mais chez moi crétin !
@@ -105,5 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] tu n'as rien corriger concernant le tts quand j'active pour la lecture ca indique toujours indisponible !
   [regle] le problème vient que le réseau est complètement instable actuellement pour moi et visiblement le correctif qui a été fait pour éviter et que l'agent travaille en mode autonome ne fonctionne pas entièrement à 100 % visiblement car ça me met réseau instable machin mais il y a rien d'autre
   [regle] Le mode tte ne fonctionne pas/plus ça me dit service indisponible.
-  [regle] 723:# tronque ses sorties brutes pour ne pas saturer la fenetre de contexte
-  [regle] mais par contre le chargement des projets et conversations de ceux ci sont toujours long, on dirait qu'il a du mal à lire la BDD ou autre.
