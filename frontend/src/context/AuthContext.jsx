@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // null = loading, false = unauthenticated, object = user
   const [error, setError] = useState("");
+  const [requires2fa, setRequires2fa] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -22,8 +23,26 @@ export function AuthProvider({ children }) {
     setError("");
     try {
       const { data } = await api.post("/auth/login", { email, password });
+      if (data.requires_2fa) {
+        setRequires2fa(true);
+        return "2fa";
+      }
       if (data.token) localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       setUser({ id: data.id, email: data.email, name: data.name, role: data.role });
+      return true;
+    } catch (e) {
+      setError(formatApiError(e));
+      return false;
+    }
+  };
+
+  const verify2fa = async (code) => {
+    setError("");
+    try {
+      const { data } = await api.post("/auth/verify-2fa", { code });
+      if (data.token) localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      setUser({ id: data.id, email: data.email, name: data.name, role: data.role });
+      setRequires2fa(false);
       return true;
     } catch (e) {
       setError(formatApiError(e));
@@ -52,10 +71,13 @@ export function AuthProvider({ children }) {
     }
     localStorage.removeItem(AUTH_TOKEN_KEY);
     setUser(false);
+    setRequires2fa(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, error, setError, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, error, setError, requires2fa, setRequires2fa, login, verify2fa, register, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
