@@ -17,14 +17,12 @@ const LOGIN_BG =
   "https://static.prod-images.emergentagent.com/jobs/ed4e7d81-8953-45de-a23c-d48e941ecd1d/images/2f6ca7a6762694d8e1ea0a0988b4619f404b2c526a4d4d50bdadd00248948ac6.png";
 
 export default function Login() {
-  const { user, error, setError, login, register, requires2fa, verify2fa } =
-    useAuth();
+  const { user, error, setError, login, register } = useAuth();
   const navigate = useNavigate();
   const [mode, setMode] = useState("login"); // "login" | "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [otpCode, setOtpCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (user && user !== false && user !== null) {
@@ -35,17 +33,12 @@ export default function Login() {
     e.preventDefault();
     setError("");
     setLoading(true);
-    let ok;
-    if (requires2fa) {
-      ok = await verify2fa(otpCode);
-    } else {
-      ok =
-        mode === "login"
-          ? await login(email, password)
-          : await register(email, password, name);
-    }
+    const ok =
+      mode === "login"
+        ? await login(email, password)
+        : await register(email, password, name);
     setLoading(false);
-    if (ok === true) navigate("/chat");
+    if (ok) navigate("/chat");
   };
 
   return (
@@ -95,27 +88,21 @@ export default function Login() {
         <div className="w-full max-w-md">
           <div className="mb-10">
             <div className="text-xs uppercase tracking-[0.3em] text-[#ffd700] font-bold mb-3">
-              {requires2fa
-                ? "// verify the forge"
-                : mode === "login"
-                  ? "// access the forge"
-                  : "// join the forge"}
+              {mode === "login" ? "// access the forge" : "// join the forge"}
             </div>
             <h2 className="font-heading text-4xl font-black tracking-tighter">
-              {requires2fa ? "VERIFY" : mode === "login" ? "ENTER" : "CREATE"}
+              {mode === "login" ? "ENTER" : "CREATE"}
               <span className="text-[#ff2a6d]">.</span>
             </h2>
             <p className="text-gray-400 mt-3">
-              {requires2fa
-                ? "Enter the 6-digit code from your authenticator app."
-                : mode === "login"
-                  ? "Sign in to unleash Claude."
-                  : "Mint a new account, no friction."}
+              {mode === "login"
+                ? "Sign in to unleash Claude."
+                : "Mint a new account, no friction."}
             </p>
           </div>
 
           <form onSubmit={onSubmit} className="space-y-5">
-            {!requires2fa && mode === "register" && (
+            {mode === "register" && (
               <div>
                 <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
                   Handle
@@ -130,61 +117,35 @@ export default function Login() {
                 />
               </div>
             )}
-            {!requires2fa && (
-              <div>
-                <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="input-brutal"
-                  placeholder="you@theforge.dev"
-                  required
-                  data-testid="auth-email-input"
-                />
-              </div>
-            )}
-            {!requires2fa && (
-              <div>
-                <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="input-brutal"
-                  placeholder="••••••••"
-                  required
-                  minLength={6}
-                  data-testid="auth-password-input"
-                />
-              </div>
-            )}
-            {requires2fa && (
-              <div>
-                <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
-                  Authenticator Code
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  value={otpCode}
-                  onChange={(e) =>
-                    setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
-                  className="input-brutal"
-                  placeholder="123456"
-                  required
-                  autoFocus
-                  data-testid="auth-2fa-input"
-                />
-              </div>
-            )}
+            <div>
+              <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
+                Email
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="input-brutal"
+                placeholder="you@theforge.dev"
+                required
+                data-testid="auth-email-input"
+              />
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="input-brutal"
+                placeholder="••••••••"
+                required
+                minLength={6}
+                data-testid="auth-password-input"
+              />
+            </div>
 
             {error && (
               <div
@@ -203,11 +164,9 @@ export default function Login() {
             >
               {loading
                 ? "Forging..."
-                : requires2fa
-                  ? "Valider →"
-                  : mode === "login"
-                    ? "Sign In →"
-                    : "Create Account →"}
+                : mode === "login"
+                  ? "Sign In →"
+                  : "Create Account →"}
             </button>
           </form>
 

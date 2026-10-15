@@ -124,13 +124,6 @@ def _resolve_reasoning_effort(model: str) -> str:
 
 import bcrypt
 import jwt
-
-from auth_2fa import (
-    get_secret,
-    _trust_is_valid,
-    issue_pending_cookie,
-    register_2fa_routes,
-)
 import httpx
 from fastapi import (
     FastAPI,
@@ -4657,11 +4650,6 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     # Mot de passe valide : on reinitialise le compteur d'echecs de cette IP.
     _login_rate_limit_reset(client_ip)
 
-    # 2FA active et navigateur non approuve : on differe l'emission du JWT.
-    if get_secret() and not _trust_is_valid(settings, request):
-        issue_pending_cookie(response, settings, user)
-        return {"requires_2fa": True}
-
     token = create_access_token(user["id"], email)
     set_auth_cookie(response, token)
     return {
@@ -4671,16 +4659,6 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         "role": user.get("role", "user"),
         "token": token,
     }
-
-
-register_2fa_routes(
-    api_router,
-    settings=settings,
-    get_db=get_db,
-    get_current_user=get_current_user,
-    create_access_token=create_access_token,
-    set_auth_cookie=set_auth_cookie,
-)
 
 
 @api_router.post("/auth/logout")
