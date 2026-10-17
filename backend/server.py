@@ -716,7 +716,7 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 # --- Tool Calling (capacités agentiques) ---------------------------------
-MAX_TOOL_ITERS = 25  # garde-fou contre les boucles d'outils infinies
+MAX_TOOL_ITERS = int(os.environ.get("MAX_TOOL_ITERS", "60"))  # garde-fou contre les boucles d'outils infinies
 
 # Etapes autonomes : une fois une etape validee (outils executes), on
 # tronque ses sorties brutes pour ne pas saturer la fenetre de contexte
@@ -2189,7 +2189,7 @@ async def _generate_ollama(history: list[dict], text: str) -> tuple[str, list[di
                         except json.JSONDecodeError:
                             args = {}
                     args = args or {}
-                    output = _run_tool(name, args)
+                    output = await asyncio.to_thread(_run_tool, name, args)
                     tool_steps.append({"tool": name, "input": args, "output": output[:4000]})
                     messages.append({
                         "role": "tool", "content": output or "(vide)", "tool_name": name,
@@ -2246,7 +2246,7 @@ async def _generate_claude(
                 name = block.get("name", "")
                 tinput = block.get("input", {}) or {}
                 tool_id = block.get("id", "")
-                output = _run_tool(name, tinput)
+                output = await asyncio.to_thread(_run_tool, name, tinput)
                 tool_steps.append({
                     "tool": name,
                     "input": tinput,
@@ -2494,7 +2494,7 @@ async def _generate_openai_compat(
                         tinput = json.loads(fn.get("arguments") or "{}")
                     except json.JSONDecodeError:
                         tinput = {}
-                    output = _run_tool(name, tinput)
+                    output = await asyncio.to_thread(_run_tool, name, tinput)
                     tool_steps.append({"tool": name, "input": tinput, "output": output[:4000]})
                     messages.append({
                         "role": "tool",
@@ -3041,7 +3041,7 @@ async def _gemini_tool_loop(client, model_name: str, contents: list, config) -> 
             calls = (calls or [])[:1]
             for fc in calls:
                 args = dict(fc.args or {})
-                output = _run_tool(fc.name, args)
+                output = await asyncio.to_thread(_run_tool, fc.name, args)
                 tool_steps.append({"tool": fc.name, "input": args, "output": output[:4000]})
                 response_parts.append(
                     gtypes.Part.from_function_response(
@@ -3466,7 +3466,7 @@ async def _generate_ollama_cloud(
                             except json.JSONDecodeError:
                                 args = {}
                         args = args or {}
-                        output = _run_tool(name, args)
+                        output = await asyncio.to_thread(_run_tool, name, args)
                         tool_steps.append({"tool": name, "input": args, "output": output[:4000]})
                         messages.append({
                             "role": "tool", "content": output or "(vide)", "tool_name": name,
@@ -3788,7 +3788,7 @@ async def _generate_opencode(
                     if turn["tool_calls"] and settings.enable_tools:
                         outputs = []
                         for tc in turn["tool_calls"]:
-                            output = _run_tool(tc["name"], tc["arguments"])
+                            output = await asyncio.to_thread(_run_tool, tc["name"], tc["arguments"])
                             tool_steps.append({
                                 "tool": tc["name"], "input": tc["arguments"], "output": output[:4000],
                             })
@@ -4412,7 +4412,7 @@ async def _stream_opencode(
                 })
 
 
-async def _stream_provider(
+async def _stream_provider_raw(
     pid: str,
     history: list[dict],
     text: str,
@@ -4449,6 +4449,38 @@ async def _stream_provider(
             yield i
     else:
         raise HTTPException(status_code=400, detail=f"provider inconnu: {pid}")
+
+
+async def _stream_provider(
+    pid: str,
+    history: list[dict],
+    text: str,
+    images: Optional[list[dict]],
+    session_id: Optional[str],
+    model_override: Optional[str],
+    state: dict,
+) -> AsyncIterator[dict]:
+    """Enveloppe `_stream_provider_raw` : si des outils ont tourne sans qu'aucun
+    texte ne soit emis (limite d'iterations atteinte, modele muet apres un
+    outil), emet un message explicite au lieu d'une reponse vide."""
+    tools_ran = False
+    text_sent = False
+    async for item in _stream_provider_raw(
+        pid, history, text, images, session_id, model_override, state
+    ):
+        if item.get("tool"):
+            tools_ran = True
+        if item.get("delta"):
+            text_sent = True
+        yield item
+    if tools_ran and not text_sent:
+        yield {
+            "delta": (
+                "\n\n⚠️ Reponse non finalisee (modele muet ou limite de "
+                f"{MAX_TOOL_ITERS} etapes d'outils atteinte). "
+                "Ecris « continue » pour reprendre."
+            )
+        }
 
 
 async def stream_ai_response(
