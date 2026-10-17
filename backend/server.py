@@ -1570,7 +1570,7 @@ async def fetch_and_store_project(
     Consolide le snapshot structurel en memoire : la stack, l'etat git et les
     regles locales deviennent des faits persistants. Idempotent (deduplication).
     """
-    snap = fetch_project_snapshot(project)
+    snap = await asyncio.to_thread(fetch_project_snapshot, project)
     if not snap.get("exists"):
         return {"ok": False, "project": project, "reason": "projet introuvable"}
 
@@ -1674,7 +1674,7 @@ async def get_project_context(user_id: str, project: str) -> str:
     """
     if not project:
         return ""
-    snap = fetch_project_snapshot(project)
+    snap = await asyncio.to_thread(fetch_project_snapshot, project)
     facts = await recall_context_facts(user_id, project)
     block = _render_context_block(snap, facts)
     # Miroir disque en tache de fond (pas de blocage du tour).
@@ -5149,7 +5149,7 @@ async def get_context(
     veut voir ce que la Forge retient de son projet.
     """
     name = _valid_project_name(project)
-    snap = fetch_project_snapshot(name)
+    snap = await asyncio.to_thread(fetch_project_snapshot, name)
     facts = await recall_context_facts_ui(current_user["id"], name)
     total = await count_context_facts(current_user["id"], name)
     return {
