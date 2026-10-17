@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-15T04:08:24.209645+00:00
+# Dernière mise à jour : 2026-10-17T20:08:14.058054+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 32d5ba1 revert(auth): remove TOTP 2FA implementation.
+- Git : branche claude-ai, dernier commit 1d3a380 Fix suppression 2FA.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -74,6 +74,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] ok pour etape 2 mais avec cette consigne et recherche avec grep et edite avec sed pour ne pas lire tout les fichiers et tout les contenues.
+  [regle] backend/env.example:140:# toujours sur /zen/go/v1 (seule la console a demenage sur console.opencode.ai).
   [regle] Pour l'instant le script upgrade.sh contient une sécurité permettant de restaurer un ancien commit si jamais le dernier ne fonctionne pas ce que j'ai fait pour récupérer les choses.
   [regle] input-otp: PREEXISTANT (ne pas toucher)
   [regle] de plus c'est pas pour rien qu'il y a une icone supprimer si j'estime qu'il y a quelque chose qu'il faut pas et qui ne dois pas rester !
@@ -105,5 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Pour régler le délai d'une minute et demie, il faut passer sur une lecture progressive : Au clic sur le bouton de lecture : 1.
   [regle] Le cycle de déploiement réel est donc toujours le suivant : 1.
   [regle] tu n'as rien corriger concernant le tts quand j'active pour la lecture ca indique toujours indisponible !
-  [regle] le problème vient que le réseau est complètement instable actuellement pour moi et visiblement le correctif qui a été fait pour éviter et que l'agent travaille en mode autonome ne fonctionne pas entièrement à 100 % visiblement car ça me met réseau instable machin mais il y a rien d'autre
-  [regle] Le mode tte ne fonctionne pas/plus ça me dit service indisponible.
