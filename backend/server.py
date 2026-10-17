@@ -2075,13 +2075,45 @@ def _run_tool_raw(name: str, tool_input: dict) -> str:
     return f"Erreur: outil inconnu '{name}'."
 
 
+EMPTY_TURN_RETRIES = int(os.environ.get("EMPTY_TURN_RETRIES", "2"))
+EMPTY_TURN_NUDGE = (
+    "Continue la tache en cours, sans refaire ce qui est deja fait. "
+    "Si tout est termine, resume le resultat."
+)
+HISTORY_DIGEST_MAX_STEPS = 40
+HISTORY_DIGEST_IN = 160
+HISTORY_DIGEST_OUT = 300
+
+
+def _tools_digest(h: dict) -> str:
+    """Resume compact des outils executes lors d'un tour assistant, reinjecte
+    dans l'historique pour que le modele sache ce qui a deja ete fait."""
+    steps = h.get("tool_steps") or []
+    if h.get("role") == "user" or not steps:
+        return ""
+    lines: list[str] = []
+    for t in steps[-HISTORY_DIGEST_MAX_STEPS:]:
+        try:
+            inp = json.dumps(t.get("input") or {}, ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            inp = str(t.get("input"))
+        out = " ".join(str(t.get("output") or "").split())
+        lines.append(
+            f"- {t.get('tool')}({inp[:HISTORY_DIGEST_IN]}) -> {out[:HISTORY_DIGEST_OUT]}"
+        )
+    return (
+        "\n\n[Outils deja executes lors de ce tour (ne pas les refaire) :\n"
+        + "\n".join(lines) + "\n]"
+    )
+
+
 def _build_messages(history: list[dict], text: str,
                     images: Optional[list[dict]]) -> list[dict]:
     """Construit le tableau `messages` au format Anthropic à partir de l'historique."""
     messages: list[dict] = []
     for h in history:
         role = "user" if h.get("role") == "user" else "assistant"
-        content = (h.get("content") or "").strip()
+        content = ((h.get("content") or "").strip() + _tools_digest(h)).strip()
         if not content:
             continue
         messages.append({"role": role, "content": [{"type": "text", "text": content}]})
@@ -3338,7 +3370,7 @@ def _plain_messages(history: list[dict], text: str) -> list[dict]:
     msgs: list[dict] = []
     for h in history:
         role = "user" if h.get("role") == "user" else "assistant"
-        content = (h.get("content") or "").strip()
+        content = ((h.get("content") or "").strip() + _tools_digest(h)).strip()
         if content:
             msgs.append({"role": role, "content": content})
     msgs.append({"role": "user", "content": text or "(vide)"})
@@ -4342,6 +4374,8 @@ async def _stream_opencode(
         timeout=httpx.Timeout(settings.opencode_timeout, connect=10.0)
     ) as http:
         if transport == "messages":
+            used_tools = False
+            retries = 0
             for _ in range(MAX_TOOL_ITERS):
                 path, payload = _opencode_payload(
                     transport, model_name, messages, system_prompt, settings.enable_tools
@@ -4356,7 +4390,23 @@ async def _stream_opencode(
                     else:
                         final = item["final"]
                 if not final or final["stop_reason"] != "tool_use":
+                    said = "".join(
+                        b.get("text") or "" for b in (final or {}).get("blocks") or []
+                        if b.get("type") == "text"
+                    ).strip()
+                    if (
+                        final and not said and used_tools
+                        and retries < EMPTY_TURN_RETRIES
+                        and messages and messages[-1].get("role") == "user"
+                        and isinstance(messages[-1].get("content"), list)
+                    ):
+                        retries += 1
+                        messages[-1]["content"].append(
+                            {"type": "text", "text": EMPTY_TURN_NUDGE}
+                        )
+                        continue
                     return
+                used_tools = True
                 messages.append({"role": "assistant", "content": final["blocks"]})
                 results = []
                 for b in final["blocks"]:
@@ -4373,6 +4423,8 @@ async def _stream_opencode(
             return
 
         # transport == "chat"
+        used_tools = False
+        retries = 0
         for _ in range(MAX_TOOL_ITERS):
             path, payload = _opencode_payload(
                 transport, model_name, messages, system_prompt, settings.enable_tools
@@ -4387,7 +4439,15 @@ async def _stream_opencode(
                 else:
                     final = item["final"]
             if not final or not final["tool_calls"]:
+                if (
+                    final and not (final.get("content") or "").strip() and used_tools
+                    and retries < EMPTY_TURN_RETRIES
+                ):
+                    retries += 1
+                    messages.append({"role": "user", "content": EMPTY_TURN_NUDGE})
+                    continue
                 return
+            used_tools = True
             messages.append({
                 "role": "assistant",
                 "content": final["content"] or "",
