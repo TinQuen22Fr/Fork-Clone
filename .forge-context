@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-17T21:46:21.138136+00:00
+# Dernière mise à jour : 2026-10-17T22:00:44.279820+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit ade1107 fix(backend): fetch_project_snapshot via to_thread (evite gel boucle asyncio / coupures SSE).
+- Git : branche claude-ai, dernier commit 8240ca3 fix(backend): coupures SSE, réponses vides après nombreux outils, relance auto sur tour vide pour tous les providers.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
