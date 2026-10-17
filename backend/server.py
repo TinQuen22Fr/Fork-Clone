@@ -2605,6 +2605,8 @@ async def _stream_openai_compat(
     model_name = await _resolve_free_model(pid, model_override)
     state["model"] = model_name
     had_tools = False
+    has_streamed_text = False
+    retries = 0
     messages = _openai_messages(history, text, images)
     headers = _free_provider_headers(pid)
     url = f"{conf['base_url']}/chat/completions"
@@ -2633,6 +2635,14 @@ async def _stream_openai_compat(
                 else:
                     final = item["final"]
             if not final or not final["tool_calls"]:
+                if (
+                    final and had_tools
+                    and not (final.get("content") or "").strip()
+                    and retries < EMPTY_TURN_RETRIES
+                ):
+                    retries += 1
+                    messages.append({"role": "user", "content": EMPTY_TURN_NUDGE})
+                    continue
                 if had_tools and not has_streamed_text:
                     yield {"delta": "\n\n*Actions terminées.*"}
                 return
@@ -4039,6 +4049,8 @@ async def _stream_claude(
     }
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as http:
+        used_tools = False
+        retries = 0
         for _ in range(MAX_TOOL_ITERS):
             payload = {
                 "model": _resolve_claude_model(),
@@ -4067,9 +4079,25 @@ async def _stream_claude(
                     final = item["final"]
 
             if not final or final["stop_reason"] != "tool_use":
+                said = "".join(
+                    b.get("text") or "" for b in (final or {}).get("blocks") or []
+                    if b.get("type") == "text"
+                ).strip()
+                if (
+                    final and not said and used_tools
+                    and retries < EMPTY_TURN_RETRIES
+                    and messages and messages[-1].get("role") == "user"
+                    and isinstance(messages[-1].get("content"), list)
+                ):
+                    retries += 1
+                    messages[-1]["content"].append(
+                        {"type": "text", "text": EMPTY_TURN_NUDGE}
+                    )
+                    continue
                 return
 
             # Un ou plusieurs outils a executer : on les joue puis on relance.
+            used_tools = True
             messages.append({"role": "assistant", "content": final["blocks"]})
             results = []
             for b in final["blocks"]:
@@ -4114,20 +4142,34 @@ async def _stream_gemini(
     )
     state["model"] = settings.gemini_model
 
+    used_tools = False
+    retries = 0
     for _ in range(MAX_TOOL_ITERS):
         stream = await client.aio.models.generate_content_stream(
             model=settings.gemini_model, contents=contents, config=config
         )
         calls = []
         last_chunk = None
+        said_text = False
         async for chunk in stream:
             last_chunk = chunk
             piece = getattr(chunk, "text", None)
             if piece:
+                said_text = True
                 yield {"delta": piece}
             calls.extend(_gemini_function_calls(chunk))
         if not calls or not last_chunk:
+            if (
+                not calls and not said_text and used_tools
+                and retries < EMPTY_TURN_RETRIES
+                and contents and getattr(contents[-1], "role", None) == "user"
+                and isinstance(getattr(contents[-1], "parts", None), list)
+            ):
+                retries += 1
+                contents[-1].parts.append(gtypes.Part.from_text(text=EMPTY_TURN_NUDGE))
+                continue
             return
+        used_tools = True
         contents.append(last_chunk.candidates[0].content)
         parts = []
         # 1 seul outil par tour (evite le batching d'outils)
@@ -4190,7 +4232,10 @@ async def _stream_ollama(
     if forge_system_prompt():
         messages = [{"role": "system", "content": forge_system_prompt()}] + messages
 
+    used_tools = False
+    retries = 0
     for _ in range(MAX_TOOL_ITERS):
+        said_text = False
         payload = {
             "model": settings.ollama_model,
             "messages": messages,
@@ -4209,11 +4254,17 @@ async def _stream_ollama(
             f"{settings.ollama_url}/api/chat", {}, payload, settings.ollama_timeout
         ):
             if "delta" in item:
+                said_text = True
                 yield item
             elif "tool_calls" in item:
                 calls = item["tool_calls"]
         if not calls:
+            if used_tools and not said_text and retries < EMPTY_TURN_RETRIES:
+                retries += 1
+                messages.append({"role": "user", "content": EMPTY_TURN_NUDGE})
+                continue
             return
+        used_tools = True
         messages.append({"role": "assistant", "tool_calls": calls})
         # 1 seul outil par tour (evite le batching d'outils)
         calls = (calls or [])[:1]
@@ -4263,8 +4314,11 @@ async def _stream_ollama_cloud(
         state["model"] = model_name
         messages = list(base_messages)
         produced = False
+        used_tools = False
+        retries = 0
         try:
             for _ in range(MAX_TOOL_ITERS):
+                said_text = False
                 payload = {"model": model_name, "messages": messages, "stream": True}
                 if settings.enable_tools:
                     payload["tools"] = OPENAI_TOOLS
@@ -4277,11 +4331,17 @@ async def _stream_ollama_cloud(
                 ):
                     if "delta" in item:
                         produced = True
+                        said_text = True
                         yield item
                     elif "tool_calls" in item:
                         calls = item["tool_calls"]
                 if not calls:
+                    if used_tools and not said_text and retries < EMPTY_TURN_RETRIES:
+                        retries += 1
+                        messages.append({"role": "user", "content": EMPTY_TURN_NUDGE})
+                        continue
                     return
+                used_tools = True
                 messages.append({"role": "assistant", "tool_calls": calls})
                 # 1 seul outil par tour (evite le batching d'outils)
                 calls = (calls or [])[:1]
