@@ -5458,6 +5458,10 @@ async def chat_stream(
                     yield _sse("error", {"detail": ev["detail"]})
                 elif ev["type"] == "done":
                     yield _sse("done", ev["doc"])
+                elif ev["type"] == "finished":
+                    # Evenement terminal UNIQUE (Brique B) : le client sait que
+                    # le tour est clos, sans deviner ni resynchroniser.
+                    yield _sse("finished", {"status": ev.get("status", "done")})
         except asyncio.CancelledError:
             # Client deconnecte : le runner de fond continue sa route. On ne
             # marque SURTOUT pas la generation comme arretee.
@@ -5557,15 +5561,38 @@ class _SSEQueue:
         await self._q.put(ev)
 
     def publish(self, ev: dict) -> None:
-        """Version synchrone : ne bloque jamais le runner."""
+        """Version synchrone : ne bloque jamais le runner.
+
+        Apres fermeture de la file, tout evenement tardif est ignore : plus
+        rien ne doit suivre l'evenement terminal (Brique B).
+        """
+        if self._closed:
+            return
         try:
             self._q.put_nowait(ev)
         except asyncio.QueueFull:  # pragma: no cover - file non bornee ici
             pass
 
     def close(self) -> None:
+        """Ferme la file. Idempotent : un seul sentinelle `__end__` au total."""
+        if self._closed:
+            return
         self._closed = True
         self._q.put_nowait({"type": "__end__"})
+
+    def finish(self, status: str = "done", **extra) -> None:
+        """Emet l'evenement terminal UNIQUE du tour, puis ferme la file.
+
+        Idempotent : un second appel (ex. `finally` apres un chemin d'erreur)
+        n'emet rien et ne referme pas. C'est ce qui garantit une fin de flux
+        explicite et unique cote client, au lieu d'une fin implicite (Brique B).
+        """
+        if self._closed:
+            return
+        ev = {"type": "finished", "status": status}
+        ev.update(extra)
+        self._q.put_nowait(ev)
+        self.close()
 
     async def stream(self, ping_interval: float = 0.0):
         """Genere les evenements jusqu'a la fermeture. Utilisable par le SSE.
@@ -5796,8 +5823,9 @@ async def _run_generation(
         await _finalize_step("done")
 
         if error_detail and not chunks and not tool_steps:
-            # Rien a conserver : on laisse le client afficher l'erreur.
-            channel.close()
+            # Rien a conserver : on laisse le client afficher l'erreur, mais on
+            # emet quand meme l'evenement terminal (fin de flux explicite).
+            channel.finish("error", detail=error_detail)
             return
 
         if assist_doc is None:
@@ -5830,6 +5858,7 @@ async def _run_generation(
             except Exception:  # noqa: BLE001
                 logger.warning("Fetcher: capture systeme impossible")
         channel.publish({"type": "done", "doc": ai_doc})
+        channel.finish("error" if stopped else "done", doc=ai_doc)
     except asyncio.CancelledError:  # pragma: no cover
         if current is not None:
             try:
@@ -5868,7 +5897,9 @@ async def _run_generation(
                 logger.exception("Sauvegarde de secours impossible")
     finally:
         _ACTIVE_RUNS.pop(conversation_id, None)
-        channel.close()
+        # Filet de securite : meme sur annulation ou exception, le tour se
+        # termine par UN evenement terminal (idempotent si deja emis).
+        channel.finish("error" if stopped else "done")
 
 
 async def _finalize_assistant(

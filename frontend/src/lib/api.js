@@ -120,6 +120,11 @@ export async function postSSE(path, formData, { signal, onEvent }) {
   const decoder = new TextDecoder();
   let buffer = "";
 
+  // Le serveur emet un evenement terminal unique `finished` (ou `done` pour
+  // compat) : des qu'il est vu, le tour est clos et la fermeture du corps
+  // n'est plus une coupure.
+  let terminalSeen = false;
+
   const flushBlock = (block) => {
     let event = "message";
     const dataLines = [];
@@ -133,6 +138,7 @@ export async function postSSE(path, formData, { signal, onEvent }) {
     } catch (_) {
       // fragment illisible : on l'ignore plutot que de casser le flux
     }
+    if (event === "finished" || event === "done") terminalSeen = true;
   };
 
   // Watchdog : le backend emet un ping SSE toutes les 4 s. Si plus aucun octet
@@ -154,6 +160,12 @@ export async function postSSE(path, formData, { signal, onEvent }) {
       const { value, done } = await reader.read();
       if (timedOut) throw new Error("SSE watchdog: aucun paquet depuis 10 s");
       if (done) break;
+      if (terminalSeen) {
+        // Fin de flux explicite : on ferme proprement sans attendre que le
+        // serveur coupe la connexion (evite le watchdog et la resynchro).
+        reader.cancel().catch(() => {});
+        break;
+      }
       armWatchdog();
       buffer += decoder.decode(value, { stream: true });
       let sep;
@@ -167,6 +179,10 @@ export async function postSSE(path, formData, { signal, onEvent }) {
     if (buffer.trim()) flushBlock(buffer);
   } catch (streamErr) {
     clearTimeout(watchdog);
+    if (terminalSeen) {
+      // Le terminal a deja ete recu : la fermeture du corps est nominale.
+      return;
+    }
     // Flux coupe en plein vol : on remonte une erreur identifiable pour que
     // l'appelant affiche un message lisible et resynchronise, au lieu de
     // laisser remonter le "Error in input stream" brut du navigateur.

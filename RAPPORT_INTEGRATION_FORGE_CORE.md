@@ -168,3 +168,28 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - **Vérification** : `backend/.venv/bin/python -m pytest backend/tests --collect-only -q` — 47 tests collectés, 0 erreur (contre « 34 collected, 1 error » avant correction).
 - **Tests de l'étape 3** : `backend/.venv/bin/python -m pytest backend/tests/test_tool_loop.py -q` — 7 passed.
 - **Statut** : étape 3 conforme au plan ; le test de vérification `pytest backend/tests` n'est plus bloqué par la collecte. Les échecs restants de la suite préexistante relèvent de tests d'intégration HTTP nécessitant un backend en écoute, sans rapport avec l'étape 3. Étape 4 et suivantes en attente du feu vert.
+
+### Étape 4 — Brique B : fin de flux explicite — FAIT le 2026-10-19 00:39:06 CEST
+
+- **Objectif** : émettre un **événement terminal unique** (`finished`) et fermer proprement le flux côté client, pour supprimer la fin de tour implicite (source des toasts de resynchronisation et des coupures perçues).
+- **Backend — `backend/server.py`** :
+  - `_SSEQueue.finish(status, **extra)` : émet `{"type": "finished", "status": ...}` puis ferme la file. **Idempotent** (un second appel n'émet rien).
+  - `_SSEQueue.close()` : rendu idempotent (une seule sentinelle `__end__`).
+  - `_SSEQueue.publish()` : ignore tout événement publié **après** fermeture (plus rien après le terminal).
+  - Pont SSE : mappe `finished` → `event: finished` côté HTTP.
+  - `_run_generation` : chemin nominal → `finish("done"|"error")` après `done` ; chemin erreur sans contenu → `finish("error")` ; `finally` → `finish(...)` comme filet de sécurité (couverture annulation/exception).
+- **Frontend — `frontend/src/lib/api.js`** :
+  - Suivi de `terminalSeen` dans `flushBlock` (`finished` ou `done`).
+  - Sortie de boucle dès le terminal reçu + `reader.cancel()` (fermeture propre, sans attendre le watchdog).
+  - `catch` : plus d'erreur `STREAM_INTERRUPTED` si le terminal a déjà été vu.
+- **Frontend — `frontend/src/pages/Chat.jsx`** :
+  - `terminalRef` remis à `false` à chaque envoi, posé à `true` sur `done`/`finished`.
+  - Branche `catch` : si `terminalRef.current`, aucune resynchronisation ni toast d'erreur.
+- **Tests ajoutés** : `backend/tests/test_sse_finish.py` (4 tests) — terminal unique, idempotence de `finish`, `publish` ignoré après fermeture, statut + données additionnelles.
+- **Vérifications** :
+  - `pytest backend/tests/test_sse_finish.py` → **4 passed**.
+  - `pytest backend/tests/test_tool_loop.py backend/tests/test_sse_finish.py` → **11 passed**.
+  - `pytest backend/tests --collect-only` → **51 tests collectés, 0 erreur**.
+  - `py_compile backend/server.py` → OK ; `esbuild` sur `api.js` et `Chat.jsx` → OK.
+  - `git diff --check` → propre.
+- **Non vérifié** : le rendu réel dans un navigateur (flux live non rejoué en sandbox) ; `eslint` non exécutable (configuration `eslint.config.js` absente du dépôt, préexistant).

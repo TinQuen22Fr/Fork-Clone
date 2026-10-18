@@ -168,6 +168,9 @@ export default function Chat() {
   const [contextOpen, setContextOpen] = useState(false);
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
+  // Vrai des que le tour a recu son evenement terminal : plus aucune
+  // resynchronisation ni toast d'erreur ne doit suivre (Brique B).
+  const terminalRef = useRef(false);
   const recognitionRef = useRef(null);
   const recorderRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -868,6 +871,7 @@ export default function Chat() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    terminalRef.current = false;
     resetStream();
     try {
       const form = new FormData();
@@ -911,6 +915,12 @@ export default function Chat() {
           } else if (event === "done") {
             setMessages((prev) => [...prev, data]);
             resetStream();
+            terminalRef.current = true;
+          } else if (event === "finished") {
+            // Fin de flux explicite (Brique B) : le tour est clos cote serveur.
+            // On fige l'affichage et on empeche toute resynchronisation.
+            terminalRef.current = true;
+            resetStream();
           }
         },
       });
@@ -920,7 +930,10 @@ export default function Chat() {
       const aborted = err?.name === "AbortError";
       const interrupted =
         err?.isStreamInterrupted || err?.message === "STREAM_INTERRUPTED";
-      if (aborted) {
+      if (terminalRef.current) {
+        // Tour clos par un evenement terminal : la fermeture du flux est
+        // normale, on ne signale rien et on ne resynchronise pas.
+      } else if (aborted) {
         // Mode autonome : la génération continue côté serveur. On informe
         // l'utilisateur sans crier à l'erreur, puis on resynchronisera.
         setNotice(
