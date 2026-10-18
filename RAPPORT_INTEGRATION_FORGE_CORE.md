@@ -152,3 +152,19 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - **Statut** : étape terminée et enregistrée.
 
 ---
+### Étape 3 — Tests de la boucle d’outils — FAIT le 2026-10-18 23:23:24 CEST
+
+- **Fichier ajouté** : `backend/tests/test_tool_loop.py` — 7 tests, transports et exécution d’outils simulés, sans appels réseau.
+- **Providers couverts** : OpenAI-compatible, Claude, Gemini, Ollama local et Ollama Cloud ; vérification de la relance après un tour vide suivant l’exécution d’un outil.
+- **Limites couvertes** : nombre maximal de relances `EMPTY_TURN_RETRIES` et garde-fou `MAX_TOOL_ITERS`.
+- **Vérification ciblée** : `backend/.venv/bin/python -m pytest backend/tests/test_tool_loop.py -q` — 7 passed.
+- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
+- **Statut** : étape terminée ; aucun changement du code applicatif. Étape 4 et suivantes en attente du feu vert.
+
+### Étape 3 — Correction de la collecte des tests — FAIT le 2026-10-18 23:35:18 CEST
+
+- **Défaut corrigé** : `backend/tests/test_kokoro_optional.py:17` appelait `.rstrip("/")` sur `os.environ.get("REACT_APP_BACKEND_URL")` sans valeur par défaut, ce qui faisait échouer la collecte de `pytest backend/tests` (`AttributeError: 'NoneType' object has no attribute 'rstrip'`) et bloquait l'exécution de tous les tests.
+- **Correction** : valeur par défaut `http://127.0.0.1:8001` ajoutée, alignant ce fichier sur `test_deps_regression.py`, `test_regression.py` et `test_tts_bugs.py`. Diff d'une seule ligne, hors périmètre applicatif.
+- **Vérification** : `backend/.venv/bin/python -m pytest backend/tests --collect-only -q` — 47 tests collectés, 0 erreur (contre « 34 collected, 1 error » avant correction).
+- **Tests de l'étape 3** : `backend/.venv/bin/python -m pytest backend/tests/test_tool_loop.py -q` — 7 passed.
+- **Statut** : étape 3 conforme au plan ; le test de vérification `pytest backend/tests` n'est plus bloqué par la collecte. Les échecs restants de la suite préexistante relèvent de tests d'intégration HTTP nécessitant un backend en écoute, sans rapport avec l'étape 3. Étape 4 et suivantes en attente du feu vert.

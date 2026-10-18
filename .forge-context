@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-18T21:05:41.684819+00:00
+# Dernière mise à jour : 2026-10-18T21:33:45.498149+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit ff72b7c docs: consigne l'étape 2 (écriture du rapport d'intégration forge-core).
+- Git : branche claude-ai, dernier commit 9fcd705 test(backend): ajoute les tests unitaires de la boucle d'outils (5 providers, relance sur tour vide, limite d'itérations). Etape 3 valider..
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -28,6 +28,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/test_deps_regression.py
   backend/tests/test_kokoro_optional.py
   backend/tests/test_regression.py
+  backend/tests/test_tool_loop.py
   backend/tests/test_tts_bugs.py
   backend/tools/
   backend/tools/web_search.py
@@ -65,7 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/maskable-512.png
   frontend/public/sw.js
   frontend/src/
-  frontend/src/components/
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] Dès que tu dois inspecter, lire un fichier ou exécuter une commande bash : 1.
@@ -74,6 +74,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] 161-- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
   [regle] ok feux vert pour l'étape 3 dans les mêmes conditions et consignes que pour l'étape 1 et 2
   [regle] ok feux vert pour l'étape 2 dans les mêmes conditions et consignes que pour l'étape 1
   [regle] # Sauvegardes de refactoring (ne pas committer)
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] return "Accès aux fichiers de configuration sensibles/secrets interdit via bash."
   [regle] Toujours dans l'outil bash (_tool_bash dans backend/server.py) : tronque la sortie texte à 100 lignes max (les 50 premières et les 50 dernières avec un message d'omission au milieu) si la commande crache trop de logs.
   [regle] 1709- return "Accès aux fichiers de configuration sensibles/secrets interdit via bash."
-  [regle] bon stop on va corriger ça parce que ton fonctionnement là me gonfle à couper, et ne pas aller au bout.
