@@ -142,3 +142,13 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - **Vérification** : `git ls-files | grep '\.bak'` ne renvoie plus rien ; les 4 variantes (`.bak`, `.bak-1`, `.bak_1`, `.bak.item10`) sont toutes ignorées par git.
 - **Fichiers réels intacts** : `backend/server.py` (302114 o), `frontend/src/pages/Chat.jsx` (72486 o), `frontend/src/lib/api.js` (7687 o), `upgrade.sh` (15812 o).
 - **Statut** : étape terminée, non commitée (en attente de la sauvegarde GitHub).
+
+### Étape 2 — Écriture du rapport en `.md` — FAIT le 2026-10-18 22:35:25
+
+- **Fichier** : `RAPPORT_INTEGRATION_FORGE_CORE.md` (racine du dépôt, branche `claude-ai`).
+- **Contenu** : sections 0 à 6 (objet, cartographie `forge-core`, état du backend, briques A→H priorisées, nettoyage, plan en 11 étapes, limites).
+- **Intégrité vérifiée** : 144 lignes, 8 briques présentes, plan complet, fin de fichier propre.
+- **Commit** : `7096ae6 docs: rapport d'intégration forge-core (vibe-kanban) — patterns flux SSE, statut terminal idempotent et boucle d'outils pour stabiliser la Forge`.
+- **Statut** : étape terminée et enregistrée.
+
+---
