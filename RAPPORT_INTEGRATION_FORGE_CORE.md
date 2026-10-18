@@ -129,3 +129,16 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - La liste exacte des `*.bak-*` suivis vs non suivis (seuls quatre confirmés suivis).
 - La cause racine des coupures SSE en production sur Claude, non reproduite en conditions réelles.
 - L'API de reprise de session de chaque provider (Brique F) : dépend de fournisseurs externes.
+
+---
+
+## 7. Suivi d'exécution
+
+### Étape 1 — Nettoyage des `.bak` — FAIT le 2026-10-18 22:28:52
+
+- **Fichiers suivis retirés de l'index git** (`git rm --cached`) : `backend/server.py.bak_item10`, `frontend/src/pages/Chat.jsx.bak-20261004-010941`, `frontend/src/pages/Chat.jsx.bak-20261004-012215`, `upgrade.sh.bak-20261004-005003`.
+- **Fichiers `.bak*` supprimés du disque** : 62 au total (archive de sécurité préalable dans `/tmp/forge_bak_archive_20261018-2228/backups.tar.gz`).
+- **`.gitignore` complété** : ajout de `*.bak` et `*.bak.*` aux règles existantes `*.bak-*` et `*.bak_*`.
+- **Vérification** : `git ls-files | grep '\.bak'` ne renvoie plus rien ; les 4 variantes (`.bak`, `.bak-1`, `.bak_1`, `.bak.item10`) sont toutes ignorées par git.
+- **Fichiers réels intacts** : `backend/server.py` (302114 o), `frontend/src/pages/Chat.jsx` (72486 o), `frontend/src/lib/api.js` (7687 o), `upgrade.sh` (15812 o).
+- **Statut** : étape terminée, non commitée (en attente de la sauvegarde GitHub).

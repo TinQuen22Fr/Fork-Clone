@@ -91,3 +91,5 @@ backend/models/
 # Sauvegardes de refactoring (ne pas committer)
 *.bak-*
 *.bak_*
+*.bak
+*.bak.*
