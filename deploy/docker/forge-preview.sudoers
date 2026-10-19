@@ -1,0 +1,6 @@
+# Genere par deploy/docker/install-d2.sh — etape D2 (previews Docker).
+# Seul point d'entree privilegie du backend vers Docker.
+# Le wrapper valide verbe, projet (regex), port (plage) et workspace (racine).
+# AUCUNE autre commande docker n'est autorisee pour cet utilisateur.
+# Ne pas editer a la main : relancer install-d2.sh.
+quentin ALL=(root) NOPASSWD: /usr/local/bin/forge-preview *

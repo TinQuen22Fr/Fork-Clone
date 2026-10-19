@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+#
+# Claude Unchained Forge — Copyright (C) 2026 Quentin Dumont
+# Logiciel libre sous GNU GPL v3 — voir LICENSE.
+#
+# forge-preview — wrapper STRICT de l'etape D2.
+#   Seul point d'entree privilegie du backend vers Docker.
+#   Installe sous /usr/local/bin/forge-preview, appele via sudoers dedie.
+#
+#   forge-preview <verbe> <projet> [options bornees]
+#
+# Verbes : start | stop | rm | ps | logs | inspect | health
+# Le projet est valide par regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$).
+# Toute autre commande est refusee. Aucun passage de commande arbitraire.
+# Aucun montage du socket Docker, jamais.
+#
+set -u -o pipefail
+
+PROG="forge-preview"
+DOCKER=/usr/bin/docker
+PREVIEW_HOST=127.0.0.1
+PORT_BASE=${PREVIEW_PORT_BASE:-8090}
+PORT_MAX=${PREVIEW_PORT_MAX:-8189}
+# L'API d'un projet ecoute sur port+100 (preview_runtime.API_PORT_OFFSET).
+PORT_MAX=$(( PORT_MAX + 100 ))
+IMAGE=${FORGE_PREVIEW_IMAGE:-forge-preview-base:local}
+ROOTS=${FORGE_PREVIEW_WORKSPACE_ROOTS:-/var/www/forge/workspace}
+
+die() { printf '%s: %s\n' "$PROG" "$*" >&2; exit 64; }
+
+usage() {
+  cat >&2 <<USAGE
+Usage : $PROG <start|stop|rm|ps|logs|inspect|health> <projet> [options]
+
+  start   <projet> --port <p> --workspace <dir> [--cpus N] [--memory M] [--env CLE=VAL]...
+  stop    <projet>
+  rm      <projet>
+  ps      <projet|-->
+  logs    <projet> [--tail N]
+  inspect <projet>
+  health  <projet>
+USAGE
+  exit 64
+}
+
+valid_project() {
+  case "$1" in
+    ''|*/*|.*|*..*) return 1 ;;
+  esac
+  printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+}
+
+valid_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
+no_dash_value() { case "$1" in -*) die "valeur d'option invalide : $1" ;; esac; }
+
+# --- Appel docker a config deterministe (pas de HOME utilisateur) -----------
+# En execution sudo, HOME vaut /root : on force un DOCKER_CONFIG neutre pour
+# eviter tout warning de config.json et toute lecture d'un profil utilisateur.
+DKCFG="${FORGE_PREVIEW_DOCKER_CONFIG:-/var/lib/forge-preview/.docker}"
+mkdir -p "$DKCFG" 2>/dev/null || { DKCFG="$(mktemp -d /tmp/forge-preview-dockercfg.XXXXXX 2>/dev/null)"; }
+dk() {
+  if [ -n "$DKCFG" ]; then
+    "$DOCKER" --config "$DKCFG" "$@"
+  else
+    "$DOCKER" "$@"
+  fi
+}
+
+# --- Verbe health : aucun projet, sert de controle sudoers ------------------
+if [ "${1:-}" = "health" ]; then
+  [ -x "$DOCKER" ] || die "docker introuvable ($DOCKER)"
+  dk version --format '{{.Server.Version}}' 2>/dev/null | head -n1
+  exit 0
+fi
+
+[ $# -ge 2 ] || usage
+VERB=$1; PROJECT=$2; shift 2
+
+case "$VERB" in
+  start|stop|rm|logs|inspect) valid_project "$PROJECT" || die "nom de projet invalide" ;;
+  ps)
+    if [ "$PROJECT" != "--" ]; then
+      valid_project "$PROJECT" || die "nom de projet invalide"
+    fi ;;
+  *) usage ;;
+esac
+
+[ -x "$DOCKER" ] || die "docker introuvable ($DOCKER)"
+NAME="forge-preview-$PROJECT"
+STATEDIR="/var/lib/forge-preview/$PROJECT"
+
+case "$VERB" in
+stop|rm)
+  [ $# -eq 0 ] || die "le verbe $VERB n'accepte aucune option"
+  RC=0
+  dk "$VERB" --time 10 "$NAME" >/dev/null 2>&1 || RC=$?
+  [ "$VERB" = "rm" ] && { rm -rf "$STATEDIR" 2>/dev/null || true; }
+  printf '%s: %s %s (rc=%s)\n' "$PROG" "$VERB" "$NAME" "$RC" >&2
+  exit "$RC"
+  ;;
+
+ps)
+  [ $# -eq 0 ] || die "option non reconnue pour ps"
+  if [ "$PROJECT" = "--" ]; then
+    dk ps -a --filter "name=forge-preview-" \
+      --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+  else
+    dk ps -a --filter "name=^${NAME}$" \
+      --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+  fi
+  ;;
+
+logs)
+  TAIL=200
+  if [ $# -eq 2 ] && [ "$1" = "--tail" ]; then
+    valid_int "$2" || die "--tail attend un entier"
+    [ "$2" -ge 1 ] && [ "$2" -le 5000 ] || die "--tail hors bornes (1-5000)"
+    TAIL=$2
+  elif [ $# -ne 0 ]; then
+    die "option non reconnue pour logs"
+  fi
+  dk logs --tail "$TAIL" "$NAME" 2>&1
+  ;;
+
+inspect)
+  [ $# -eq 0 ] || die "option non reconnue pour inspect"
+  dk inspect "$NAME"
+  ;;
+
+start)
+  PORT=""; WORKSPACE=""; CPUS=1.0; MEMORY=1g; PIDSLIMIT=256
+  ENVS=(); SEEN_PORT=0; SEEN_WS=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port)
+        [ $# -ge 2 ] || die "--port attend une valeur"
+        no_dash_value "$2"
+        valid_int "$2" || die "--port attend un entier"
+        [ "$2" -ge "$PORT_BASE" ] && [ "$2" -le "$PORT_MAX" ] \
+          || die "port $2 hors plage autorisee ($PORT_BASE-$PORT_MAX)"
+        PORT=$2; SEEN_PORT=1; shift 2 ;;
+      --workspace)
+        [ $# -ge 2 ] || die "--workspace attend un chemin"
+        no_dash_value "$2"
+        case "$2" in /*) ;; *) die "--workspace doit etre un chemin absolu" ;; esac
+        RESOLVED=$(readlink -f -- "$2" 2>/dev/null) || die "--workspace introuvable : $2"
+        [ -d "$RESOLVED" ] || die "--workspace n'est pas un dossier : $2"
+        case "$RESOLVED" in */..|*/../*) die "--workspace contient une remontee interdite" ;; esac
+        OKROOT=0
+        IFS=':' read -r -a _roots <<< "$ROOTS"
+        for _r in "${_roots[@]}"; do
+          case "$RESOLVED" in "$_r"|"$_r"/*) OKROOT=1 ;; esac
+        done
+        [ "$OKROOT" -eq 1 ] || die "--workspace hors racine autorisee ($ROOTS)"
+        WORKSPACE=$RESOLVED; SEEN_WS=1; shift 2 ;;
+      --cpus)
+        [ $# -ge 2 ] || die "--cpus attend une valeur"
+        case "$2" in ''|*[!0-9.]*) die "--cpus numerique attendu" ;; esac
+        CPUS=$2; shift 2 ;;
+      --memory)
+        [ $# -ge 2 ] || die "--memory attend une valeur"
+        case "$2" in ''|*[!0-9a-zA-Z]*) die "--memory invalide" ;; esac
+        MEMORY=$2; shift 2 ;;
+      --env)
+        [ $# -ge 2 ] || die "--env attend CLE=VAL"
+        case "$2" in *=*) ;; *) die "--env attend CLE=VAL" ;; esac
+        KEY=${2%%=*}
+        case "$KEY" in
+          ""|*[!A-Za-z0-9_]*) die "--env : nom de variable invalide" ;;
+        esac
+        case "$KEY" in
+          LD_PRELOAD|LD_LIBRARY_PATH|DOCKER_HOST|PATH|BASH_ENV) die "--env $KEY interdit" ;;
+        esac
+        ENVS+=(--env "$2"); shift 2 ;;
+      *) die "option non reconnue pour start : $1" ;;
+    esac
+  done
+  [ "$SEEN_WS" -eq 1 ] || die "start exige --workspace <dir>"
+  [ "$SEEN_PORT" -eq 1 ] || die "start exige --port <p>"
+
+  if dk inspect -f '{{.State.Running}}' "$NAME" >/dev/null 2>&1; then
+    if [ "$(dk inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = "true" ]; then
+      die "conteneur $NAME deja en cours (stop d'abord)"
+    fi
+    dk rm -f "$NAME" >/dev/null 2>&1 || true
+  fi
+
+  mkdir -p "$STATEDIR" 2>/dev/null || true
+
+  RUN_ARGS=(-d
+    --name "$NAME"
+    --hostname "$PROJECT"
+    -p "${PREVIEW_HOST}:${PORT}:${PORT}"
+    --cpus "$CPUS"
+    --memory "$MEMORY" --memory-swap "$MEMORY"
+    --pids-limit "$PIDSLIMIT"
+    --read-only
+    --tmpfs /tmp:rw,size=256m,noexec,nosuid,nodev
+    --tmpfs /run:rw,size=64m,noexec,nosuid,nodev
+    --security-opt no-new-privileges
+    --cap-drop ALL
+    --restart=no
+    -v "${WORKSPACE}:/workspace:rw"
+    -w /workspace
+    --env "PORT=${PORT}"
+    --env "HOST=127.0.0.1"
+    --env "FORGE_PREVIEW=1"
+    --env "FORGE_PREVIEW_PROJECT=${PROJECT}")
+  if [ ${#ENVS[@]} -gt 0 ]; then RUN_ARGS+=("${ENVS[@]}"); fi
+  RUN_ARGS+=("$IMAGE")
+  dk run "${RUN_ARGS[@]}"
+  ;;
+
+*)
+  usage
+  ;;
+esac
