@@ -154,56 +154,70 @@ D8 (secrets) doit être traité **avant** la bascule générale si des projets c
 - **Pas de réveil automatique** : cela suppose d'assumer qu'une preview reste éteinte après un reboot serveur.
 - **Ports** : le binding reste `127.0.0.1` ; l'exposition publique demeure Nginx + wildcard.
 - **Pas de gain de sécurité contre du code malveillant déterminé** : Docker borne les ressources et isole le système de fichiers, il ne remplace pas une VM. Pour un durcissement supérieur, envisager `gVisor` ou `Firecracker` ultérieurement.
-- **Non vérifié à ce stade** : aucun test d'exécution réel n'a été mené, Docker n'étant pas installé. Les étapes D1 à D12 restent à exécuter.
+- **Non vérifié à ce stade** : D1 est installé et conforme (voir section 7). Les étapes D2 à D12 restent à exécuter ; les contrôles moteur exigent `sudo` car `quentin` est hors du groupe `docker`.
 
 ---
 
-### Étape D1 — Installation et durcissement de Docker
-- **Date** : 2026-10-19 23:35:28 CEST
-- **Statut** : **artefacts livrés et vérifiés statiquement — exécution système EN ATTENTE**
-- **Commit (code D1)** : `ba69b7c`
+## 7. Suivi d'exécution
 
-**Livré** (`deploy/docker/`, 232 lignes) :
+### Étape D1 — Installation et durcissement de Docker
+- **Date** : 2026-10-19 23:47 CEST
+- **Statut** : **installé et exécuté — conforme**
+- **Commits** : `ba69b7c` (artefacts D1), `c2e9424` (correction du script de vérification)
+
+**Livré** — `deploy/docker/`, 249 lignes :
 | Fichier | Lignes | Rôle |
 |---|---|---|
-| `install-d1.sh` | 119 | Installation idempotente : dépôt officiel Docker, `daemon.json`, sysctl/modules, activation du service, vérifications |
-| `verify-d1.sh` | 79 | Contrôles de conformité D1 en lecture seule (code retour 0 = conforme) |
-| `daemon.json` | 26 | `live-restore`, `overlay2`, `cgroupdriver=systemd`, logs bornés 10m×3, `nofile` 4096, pool `172.31.0.0/16`-/24 |
+| `install-d1.sh` | 119 | Installation idempotente : dépôt officiel Docker, `daemon.json`, sysctl/modules, activation du service, contrôle `hello-world` |
+| `verify-d1.sh` | 96 | Contrôles de conformité D1 en lecture seule (code retour 0 = conforme) |
+| `daemon.json` | 26 | `live-restore`, `overlay2`, `cgroupdriver=systemd`, logs bornés 10m×3, `nofile` 4096, pool `172.31.0.0/16` en `/24` |
 | `99-forge-docker.conf` | 5 | `ip_forward`, `bridge-nf-call-iptables`, `bridge-nf-call-ip6tables` |
 | `forge-docker-modules.conf` | 3 | `br_netfilter` chargé au boot |
 
-**Résultat mesuré** — `bash deploy/docker/verify-d1.sh` (lancé le 2026-10-19 23:35 CEST) :
+**Installation exécutée** — `sudo bash deploy/docker/install-d1.sh` (commande lancée par l'utilisateur) :
+```
+docker-ce 5:29.9.1, containerd.io 2.4.2, docker-compose-plugin 5.6.0, docker-buildx-plugin 0.38.0
+version serveur : 29.9.1
+cgroup          : 2 (driver systemd)
+storage driver  : overlay2
+live-restore    : true
+data-root       : /var/lib/docker
+hello-world : OK
+groupe docker : quentin n'en est pas membre (conforme à D2)
+```
+
+**Vérification** — `bash deploy/docker/verify-d1.sh` (sans privilège) :
 ```
 == D1 : prérequis noyau ==
   OK   cgroup v2 supporté
   OK   cgroup monté en v2
-       br_netfilter disponible mais non chargé (D1 le charge)
-       overlay disponible mais non chargé (D1 le charge)
-       ip_forward=0 (D1 l active)
+  OK   module br_netfilter chargé
+  OK   module overlay chargé
+  OK   ip_forward actif
 == D1 : moteur ==
-  KO   docker absent
+  OK   docker présent : Docker version 29.9.1, build dfc520d
+       socket Docker inaccessible sans privilège (quentin hors groupe docker — conforme)
+       contrôles moteur NON vérifiés : relancer 'sudo bash deploy/docker/verify-d1.sh'
+       indice : docker.service est actif
 == D1 : configuration ==
-  KO   /etc/docker/daemon.json absent
-  KO   sysctl non persisté
-  KO   modules non persistés
+  OK   /etc/docker/daemon.json présent
+  OK   JSON valide
+  OK   clés durcissement présentes
+  OK   aucune clé invalide dans daemon.json
+  OK   sysctl persisté
+  OK   modules persistés
 == D1 : isolation de l'accès ==
-  KO   docker.service non activé
-  KO   docker.service inactif
+  OK   docker.service activé au boot
+  OK   docker.service actif
   OK   quentin hors du groupe docker
-RÉSULTAT : D1 NON conforme — corriger les lignes KO ci-dessus.
+
+RÉSULTAT : D1 partiellement vérifié — contrôles moteur à refaire avec sudo.
 ```
 
-**Ce qui a été vérifié** : `bash -n` sur les deux scripts (syntaxe OK), `jq -e` sur `daemon.json` (JSON valide), exécution du script de vérification (sortie ci-dessus).
-
-**Ce qui n'a pas pu être fait** : l'installation elle-même. `sudo -n` renvoie `sudo: interactive authentication is required` — aucune authentification non interactive n'est disponible pour l'agent, et le mot de passe root n'est pas communicable. **Docker n'est donc pas installé.**
-
-**Commande à lancer (une seule, à la main)** :
-```bash
-cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/install-d1.sh && bash deploy/docker/verify-d1.sh
-```
+**Défaut corrigé dans le script de vérification** : la première version concluait 4 fois « KO » sur le moteur alors que l'installation avait réussi. Cause : `verify-d1.sh` était lancé en tant que `quentin`, volontairement hors du groupe `docker` ; `docker info` renvoyait donc `permission denied` et tous les champs (`CgroupVersion`, `Driver`, `LiveRestoreEnabled`) ressortaient vides. Le script bascule désormais sur `sudo -n docker info` et, si le socket reste inaccessible sans privilège, affiche « non vérifié » au lieu de « KO » — un défaut de privilège n'est pas un défaut du moteur.
 
 **Correction apportée à la spécification** : D1 listait `"no-new-privileges": true` dans `daemon.json`. Cette clé **n'existe pas** dans la configuration du démon : `dockerd` refuse de démarrer sur une clé inconnue. La protection est par-conteneur (`--security-opt no-new-privileges`) et relève de D4. La spécification D1 a été corrigée en conséquence, `verify-d1.sh` détecte activement cette clé comme non conforme.
 
-**Point d'attention pour D2** : `quentin` dispose de `(ALL : ALL) ALL` dans le sudoers actuel — la contrainte « pas de root pour le backend » de D2 devra traiter ce point, pas seulement le groupe `docker`.
+**Point d'attention pour D2** : `quentin` dispose de `(ALL : ALL) ALL` dans le sudoers actuel — la contrainte « pas de root pour le backend » de D2 devra traiter ce point, pas seulement le groupe `docker`. De plus, `sudo -n docker info` exige que `quentin` soit autorisé à lancer `docker` via sudo ; le compte actuel a un `NOPASSWD` limité à des scripts de preview, à étendre de façon ciblée si la vérification privilégiée doit rester automatisable.
 
 ---
