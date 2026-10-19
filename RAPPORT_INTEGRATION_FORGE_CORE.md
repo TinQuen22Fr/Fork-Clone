@@ -218,3 +218,188 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
   - `git diff --check` → propre.
 - **Défauts corrigés pendant l'étape** : (1) terminal non livré quand `after_seq` dépassait le tampon ; (2) assertion de test erronée sur la borne du tampon. Les deux sont couverts par les tests.
 - **Non vérifié** : la reconnexion réelle dans un navigateur (rafraîchir en plein tour) — non exécutable en sandbox sans serveur + client lancés.
+
+---
+
+# 8. Annexe — Bascule des previews en conteneurs Docker isolés
+
+**Rédigé le 2026-10-19 21:54:25 CEST** — analyse de faisabilité et plan de mise en place.
+Statut : **étude uniquement — aucun paquet installé, aucun code modifié.**
+
+## 8.1 Intention retenue
+
+Les previews cessent d'être des processus lancés **sur l'OS hôte** (`PreviewManager` +
+`subprocess.Popen`) et deviennent des **conteneurs Docker jetables** :
+
+1. **Docker = sandbox des previews uniquement**, sous limites de ressources strictes.
+2. **Endormissement après inactivité** : conteneur `stop` (workspace conservé sur l'hôte pour
+   GitHub), **aucun réveil automatique** — reprise sur action explicite de l'utilisateur.
+3. **Interdiction stricte aux agents** de lancer compilation ou service sur l'OS principal :
+   tout s'exécute dans le conteneur du projet, sur ordre explicite.
+4. **Secrets maîtrisés** : `.env` jamais affiché en clair, masquage/tronquage systématique des
+   sorties (`sed`, `grep`) pour éviter l'exposition de clés et les faux blocages de sécurité.
+
+## 8.2 Constat serveur (mesuré le 2026-10-19)
+
+| Élément | Valeur réelle | Conséquence |
+|---|---|---|
+| vCPU | 2 | Compilations **sérialisées** obligatoires |
+| RAM | 3,8 GiB (≈ 2,2 dispo) | **1 conteneur en build à la fois** ; 768 Mo/conteneur |
+| Swap | **absent** | OOM = mort d'un service ; swapfile à créer avant Docker |
+| Disque | 915 G, 40 G utilisés | Suffisant (image de base ≈ 1,5 Go) |
+| Noyau / cgroups | 7.0.0-38, cgroup v2 unifié | Compatible Docker |
+| Docker | **non installé** (`docker.io` 29.1.3 dispo en apt) | Installation requise |
+| `forge-backend` | `User=quentin`, `ProtectSystem=strict`, `/run` inscriptible | Accès `/run/docker.sock` possible |
+| `forge-backend-preview` | `User=www-data`, racine `/var/www/forge-dev` | Groupe `docker` à prévoir aussi |
+| Previews actuelles | `backend/preview_runtime.py` (618 l.), ports 8090→8189 | Lancement **hôte**, à remplacer |
+| Reverse proxy | nginx wildcard `*.preview.quentin-astro.fr` → `127.0.0.1:$port` | Modèle conservable tel quel |
+| Inactivité | `PREVIEW_IDLE_TIMEOUT=900`, `PREVIEW_AUTOSTART=0` | Base saine, à durcir |
+| **Faille** | `PreviewManager._env()` fait `dict(os.environ)` | **Toutes les clés API du backend sont héritées par les projets** |
+| Masquage | `redact_secrets()` (server.py:2042) | Réutilisable et à étendre |
+
+### Cause de la boucle infinie constatée
+
+`gemini-perso.service` : `NRestarts=1451`, `Result=exit-code`, code 3.
+Boucle = `Restart=always` + `RestartSec=3` **sans `StartLimitBurst`**, sur un échec de démarrage
+**systématique** : `pymongo.errors.ServerSelectionTimeoutError` (hôte MongoDB non résolvable,
+`[Errno -2] Name or service not known`). Chaque cycle coûte ~37 s de temps réel : d'où la charge,
+la saturation SSH et les déconnexions. **Ce n'est pas un problème Docker** : correctif immédiat
+en 8.3 Étape 0.
+
+## 8.3 Faisabilité — verdict
+
+**Faisable**, avec trois contraintes structurantes :
+
+* **2 vCPU / 3,8 GiB** : impossible de builder plusieurs projets simultanément → **file d'attente
+  sérialisée** (un seul build à la fois) et `--memory=768m --cpus=1.0 --pids-limit=256` par conteneur.
+* **Pas de swap** : à créer (2 Go) avant toute charge Docker, sinon l'OOM killer tue au hasard.
+* **Docker est un privilège root déguisé** : `forge-backend` doit joindre le socket sans être root
+  → passer par le groupe `docker` (accès quasi-root assumé) **ou** par un proxy `docker-socket-proxy`
+  limité aux verbes nécessaires. Recommandé : proxy.
+
+## 8.4 Étapes indispensables (ordre d'exécution)
+
+### Étape 0 — Stopper l'hémorragie (immédiat, hors Docker)
+- `systemctl stop gemini-perso` puis `systemctl disable gemini-perso` (échec de démarrage permanent).
+- Ajouter dans toute unité Forge : `StartLimitIntervalSec=300` + `StartLimitBurst=5` (section `[Unit]`)
+  et `Restart=on-failure` au lieu de `always` sur les services à démarrage fragile.
+- Créer un swapfile 2 Go (`fallocate -l 2G /swapfile`, `mkswap`, `swapon`) et l'inscrire en `/etc/fstab`.
+- **Vérif** : `swapon --show` renvoie 2 G ; `systemctl --failed` vide ; `NRestarts` stable après 10 min.
+
+### Étape 1 — Installation Docker + daemon durci
+- `apt-get install docker.io docker-compose-v2` (dépôt Ubuntu, pas de `curl | sh`).
+- `/etc/docker/daemon.json` : `live-restore: true`, rotation des logs (`max-size 10m`, `max-file 3`),
+  `no-new-privileges: true`, `default-ulimits.nofile` 2048/4096.
+- **Ne pas** exposer l'API TCP : socket Unix uniquement.
+- Accès du service : soit `quentin` + `www-data` ajoutés au groupe `docker` (privilège quasi-root),
+  soit `docker-socket-proxy` restreint (`CONTAINERS=1 IMAGES=1`, `EXEC=0`). Recommandé : proxy.
+- `forge-backend.service` conserve `ProtectSystem=strict` ; `/run` est déjà en écriture (socket).
+- **Vérif** : `docker info` (cgroup v2, overlay2) ; `docker run --rm hello-world` **sans sudo**.
+
+### Étape 2 — Image de base unique des previews
+- `deploy/docker/preview-base.Dockerfile` : `node:22-bookworm-slim` + python3/pip/git, utilisateur
+  non-root `preview` (UID 10001), `WORKDIR /workspace`, `CMD ["sleep","infinity"]`.
+- Un **seul** tag versionné (`forge-preview-base:1`). Aucun `.env`, aucun secret dans l'image.
+- **Vérif** : build < 2 min ; `docker run --rm forge-preview-base:1 id` renvoie UID 10001.
+
+### Étape 3 — Modèle d'exécution (bind-mount, pas de copie)
+- Le workspace **reste sur l'hôte** (`/var/www/forge/workspace/<projet>`), monté en
+  `-v <projet>:/workspace:rw`. Aucune duplication : GitHub et l'utilisateur gardent la main.
+- `--read-only` + `--tmpfs /tmp:rw,noexec,nosuid,size=256m` ; pas de `--privileged`,
+  `--cap-drop=ALL`, `--security-opt=no-new-privileges`.
+- **Vérif** : dans le conteneur `touch /etc/x` échoue, `touch /workspace/ok` réussit.
+
+### Étape 4 — Limites de ressources
+- `--memory=768m --memory-swap=768m --cpus=1.0 --pids-limit=256`.
+- **File sérialisée** pour `npm install` / `pip install` : sémaphore asyncio global (1 slot) dans
+  `PreviewManager`, pour ne jamais lancer deux builds sur 2 vCPU.
+- **Vérif** : `docker stats --no-stream` pendant un build → mémoire plafonnée ; 2e build en attente.
+
+### Étape 5 — Cycle de vie et états
+- Remplacer `PreviewProcess` par `PreviewContainer` : `create → start → wait_ready → stop → remove`.
+- Attente d'ouverture de port identique à l'existant (polling 180 s) mais via le socket Docker.
+- États exposés **inchangés** (`stopped|starting|running|error`) : l'API frontend ne bouge pas.
+- Arrêt = `docker stop -t 10` ; suppression = `docker rm -f` + nettoyage des volumes anonymes.
+- **Vérif** : `preview/start|stop|status|logs` renvoient le même schéma JSON qu'aujourd'hui.
+
+### Étape 6 — Sommeil sur inactivité, sans réveil automatique
+- Conserver `PREVIEW_IDLE_TIMEOUT` (900 s) ; le reaper appelle `docker stop` au lieu de `killpg`.
+  Le conteneur **arrêté est conservé**, le workspace hôte est intact.
+- `PREVIEW_AUTOSTART` reste **0** : après redémarrage du backend, **rien** n'est relancé.
+  Reprise uniquement via `POST /preview/start` (action explicite) → `docker start`.
+- `--restart=no` (jamais `always`) : Docker ne ressuscite pas les previews au boot.
+- **Vérif** : preview inactive > 15 min → `docker ps` vide, `docker ps -a` montre `Exited (0)` ;
+  `systemctl restart forge-backend` → **aucun** conteneur relancé.
+
+### Étape 7 — Interdiction de compiler sur l'OS hôte
+- `PreviewManager` : supprimer tout `subprocess.Popen` de `npm`/`pip`/`node`/`uvicorn` hôte ; ces
+  commandes ne sont plus produites que sous forme d'`docker exec` dans le conteneur du projet.
+- Côté agent : confinement au répertoire du projet **et** contrôle que les commandes de build/serve
+  passent par l'API preview (allowlist) ; refus explicite et journalisé sinon.
+- **Vérif** : `grep -n "subprocess.Popen" backend/preview_runtime.py` → plus aucun lancement de service ;
+  tentative `npm run dev` hors conteneur → refus journalisé.
+
+### Étape 8 — Secrets : injection et masquage
+- Variables du projet injectées **au runtime** (`--env-file` ou `docker exec --env`), **jamais**
+  copiées dans l'image ni dans un `Dockerfile`.
+- **Fin de l'héritage global** : `_env()` ne fait plus `dict(os.environ)` (fuite actuelle de toutes
+  les clés du backend). Liste blanche stricte (`PATH`, `HOME`, `LANG`, `NODE_ENV`, `PORT`).
+- Masquage : étendre `redact_secrets()` (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `sk-*`,
+  `ghp_*`, `Bearer …`) et l'appliquer à **toute** sortie de log preview.
+- Tronquage : logs UI filtrés via `sed -E "s/(=.{4}).*/\1***/"` ; jamais de dump intégral de `.env`.
+- **Vérif** : `docker inspect` sans secret en clair hors variables injectées ; `preview/logs` sur un
+  projet à `.env` ne révèle aucune valeur ; test unitaire de `redact_secrets()` sur 6 motifs.
+
+### Étape 9 — Reverse proxy et domaine (inchangé)
+- nginx wildcard existant conservé : chaque conteneur publie `-p 127.0.0.1:<port>:<port>` dans la
+  plage 8090→8189, donc `proxy_pass http://127.0.0.1:$port` fonctionne sans modification.
+- Aucun port publié sur `0.0.0.0` : **jamais** d'exposition directe.
+- **Vérif** : `ss -ltn` ne montre que des `127.0.0.1:<port>` ; le domaine preview répond en HTTPS.
+
+### Étape 10 — Hygiène, quotas, nettoyage
+- Étiqueter chaque conteneur : `--label forge.project=<nom> --label forge.managed=1` (base du GC).
+- `docker system df` en tâche quotidienne ; `docker image prune -f --filter until=168h`.
+- Plafond de conteneurs simultanés (ex. 3) ; au-delà, refus explicite à l'utilisateur.
+- État reconstruit depuis `docker ps -a --filter label=forge.managed=1` (pas d'état en mémoire).
+- **Vérif** : après GC, aucune image intermédiaire ; disque stable sur 7 jours.
+
+### Étape 11 — Recette et retour arrière
+- Recette : 3 projets (node, python, statique) → start/stop/sleep/reprise, log sans secret,
+  domaine HTTPS, isolation (écriture hors workspace refusée).
+- Retour arrière : `PREVIEW_RUNTIME=host` (variable d'env) conserve l'ancien `PreviewManager`
+  fonctionnel pendant toute la transition ; bascule atomique, sans migration de données.
+- **Vérif** : avec `PREVIEW_RUNTIME=host`, les previews repartent exactement comme avant.
+
+## 8.5 Ordre recommandé et effort
+
+| # | Étape | Effort | Bloquant pour la suite |
+|---|---|---|---|
+| 0 | Stop boucle gemini + swap + StartLimit | 20 min | **Oui** (stabilité serveur) |
+| 1 | Docker + daemon durci | 30 min | Oui |
+| 2 | Image de base | 30 min | Oui |
+| 3-4 | Montages + limites + file sérialisée | 2 h | Oui |
+| 5-6 | Cycle de vie + sommeil sans réveil | 3 h | Oui |
+| 7 | Interdiction build hôte | 1 h 30 | Non (peut suivre) |
+| 8 | Secrets + masquage | 1 h 30 | Non (à faire avant prod) |
+| 9-10 | Proxy + hygiène | 1 h | Non |
+| 11 | Recette + rollback | 1 h | — |
+
+## 8.6 Points de vigilance
+
+- **Ne pas** installer Docker avant l'étape 0 : sans swap ni `StartLimitBurst`, un build qui part en
+  boucle reproduirait exactement la panne actuelle, en plus grave.
+- **Un seul build à la fois** : c'est la contrainte dimensionnante des 2 vCPU, non négociable.
+- **Le groupe `docker` vaut root** : si le proxy socket n'est pas retenu, l'isolation des agents
+  reste protéiforme — un agent qui atteint le socket peut tout faire sur l'hôte.
+- **Workspace monté en `rw`** : un projet peut corrompre ses propres fichiers ; c'est voulu (Git
+  reste le filet), mais aucun montage ne doit dépasser son dossier.
+- **`--memory-swap` égal à `--memory`** : sans swap hôte, un conteneur qui s'échappe déclenche l'OOM
+  killer ; c'est préférable à un gel du serveur, mais doit être surveillé (`dmesg | grep -i oom`).
+
+## 8.7 Non vérifiable sans exécution
+
+- Le débit réel de `npm install` dans un conteneur sur 2 vCPU (estimation, non mesuré).
+- L'impact du proxy socket sur la latence des appels `docker` depuis `server.py`.
+- Le comportement de nginx wildcard avec des conteneurs démarrés/arrêtés (test de charge à faire).
+Ces trois points ne peuvent être tranchés qu'après l'étape 1.
+
