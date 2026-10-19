@@ -52,4 +52,9 @@ def test_finish_carries_status_and_extra():
     q = server._SSEQueue()
     q.finish("error", detail="boom")
     events = _drain(q)
-    assert events == [{"type": "finished", "status": "error", "detail": "boom"}]
+    assert len(events) == 1
+    assert events[0]["type"] == "finished"
+    assert events[0]["status"] == "error"
+    assert events[0]["detail"] == "boom"
+    # Brique A : chaque evenement porte un numero de sequence monotone.
+    assert events[0]["seq"] == 1

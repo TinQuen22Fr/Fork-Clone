@@ -5411,9 +5411,11 @@ async def chat_stream(
         # decouplee de cette connexion SSE. Si le client se deconnecte, le runner
         # va jusqu'au bout et persiste le message final (stopped=False). On
         # publie immediatement l'echo du message utilisateur.
-        yield _sse("user_message", public_user_msg)
-
         channel = _SSEQueue()
+        # L'echo du message utilisateur est TAMPONNE (avec son seq) : il sera
+        # rejoue tel quel a une reconnexion (Brique A).
+        channel.publish({"type": "user_message", **public_user_msg})
+
         project = conv.get("project")
         _ACTIVE_RUNS[conversation_id] = {
             "started_at": now_iso(),
@@ -5438,30 +5440,9 @@ async def chat_stream(
         )
         try:
             async for ev in channel.stream(ping_interval=4.0):
-                if ev["type"] == "__ping__":
-                    # Commentaire SSE : maintient la connexion ouverte sans
-                    # etre interprete comme un evenement par le client.
-                    yield ": ping\n\n"
-                elif ev["type"] == "delta":
-                    yield _sse("delta", {"text": ev["text"]})
-                elif ev["type"] == "start":
-                    yield _sse("start", ev)
-                elif ev["type"] == "step_start":
-                    yield _sse("step_start", {"index": ev["index"]})
-                elif ev["type"] == "tool":
-                    yield _sse("tool", ev["step"])
-                elif ev["type"] == "step_done":
-                    # Evenement de fin d'etape : le client cloture le cadre de
-                    # l'etape courante (evite les coupures de flux tronquees).
-                    yield _sse("step_done", {"step": ev["step"]})
-                elif ev["type"] == "error":
-                    yield _sse("error", {"detail": ev["detail"]})
-                elif ev["type"] == "done":
-                    yield _sse("done", ev["doc"])
-                elif ev["type"] == "finished":
-                    # Evenement terminal UNIQUE (Brique B) : le client sait que
-                    # le tour est clos, sans deviner ni resynchroniser.
-                    yield _sse("finished", {"status": ev.get("status", "done")})
+                frame = _sse_from_event(ev)
+                if frame is not None:
+                    yield frame
         except asyncio.CancelledError:
             # Client deconnecte : le runner de fond continue sa route. On ne
             # marque SURTOUT pas la generation comme arretee.
@@ -5481,6 +5462,56 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@api_router.get("/chat/stream/{conversation_id}")
+async def chat_stream_resume(
+    conversation_id: str,
+    after_seq: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
+    """Reprise d'un tour en cours apres coupure du flux (Brique A).
+
+    Rejoue les evenements manques depuis `after_seq`, puis suit le flux en
+    direct. Si aucun run n'est actif (tour deja termine), emet immediatement
+    l'evenement terminal `finished` : le client se resynchronise sans attendre.
+    """
+    database = get_db()
+    conv = await database.conversations.find_one(
+        {"id": conversation_id, "user_id": current_user["id"]}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    info = _ACTIVE_RUNS.get(conversation_id)
+    channel = info.get("queue") if info else None
+
+    async def event_source():
+        if channel is None:
+            # Tour deja clos : le client sait qu'il n'y a plus rien a suivre.
+            yield _sse("finished", {"status": "done"})
+            return
+        try:
+            async for ev in channel.stream(ping_interval=4.0, after_seq=after_seq):
+                frame = _sse_from_event(ev)
+                if frame is not None:
+                    yield frame
+        except asyncio.CancelledError:
+            logger.info(
+                "Reprise interrompue (conv %s) : generation poursuivie en fond",
+                conversation_id,
+            )
+            raise
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 
 def _purge_old_screenshots() -> None:
@@ -5545,57 +5576,154 @@ async def _persist_stopped(
 _ACTIVE_RUNS: dict = {}   # conversation_id -> {started_at, queue, tools, chars}
 
 
-class _SSEQueue:
-    """File d'evenements d'un tour, partagee entre le runner et le(s) client(s).
+_SSE_BUFFER_MAX = int(os.environ.get("SSE_BUFFER_MAX", "500"))
 
-    Le runner y publie chaque evenement. Tant qu'au moins un client est abonne,
-    il les recoit en direct. Si le client se deconnecte, le runner continue :
-    les evenements restent dans la file (bornee) et sont ignores.
+
+def _sse_from_event(ev: dict) -> Optional[str]:
+    """Traduit un evenement interne en trame SSE (None si non transmis).
+
+    Le numero de sequence `seq` (Brique A) est joint a chaque trame : le client
+    le memorise et le renvoie a la reconnexion (`after_seq`) pour rejouer sans
+    trou les evenements manques.
+    """
+    etype = ev.get("type")
+    if etype == "__ping__":
+        # Commentaire SSE : maintient la connexion ouverte sans etre interprete
+        # comme un evenement par le client.
+        return ": ping\n\n"
+    if etype == "delta":
+        payload: dict = {"text": ev["text"]}
+    elif etype == "start":
+        payload = {k: v for k, v in ev.items() if k != "seq"}
+    elif etype == "step_start":
+        payload = {"index": ev["index"]}
+    elif etype == "tool":
+        payload = dict(ev["step"])
+    elif etype == "step_done":
+        payload = {"step": ev["step"]}
+    elif etype == "error":
+        payload = {"detail": ev["detail"]}
+    elif etype == "done":
+        payload = dict(ev["doc"])
+    elif etype == "finished":
+        payload = {"status": ev.get("status", "done")}
+    elif etype == "user_message":
+        payload = {k: v for k, v in ev.items() if k != "seq"}
+    else:
+        return None
+    if ev.get("seq") is not None:
+        payload = {**payload, "seq": ev["seq"]}
+    return _sse(etype, payload)
+
+
+class _SSEQueue:
+    """File d'evenements d'un tour, tampon borne rejouable (Brique A).
+
+    Le runner publie chaque evenement via `publish()`. Chaque evenement recoit
+    un numero de sequence monotone et est conserve dans un tampon borne. Un
+    client qui se (re)connecte avec `subscribe(after_seq=N)` recoit d'abord tout
+    ce qui a ete emis depuis N (rejeu), puis suit le flux en direct — sans race
+    ni perte : le rejeu et l'enregistrement de l'abonne sont atomiques (aucun
+    `await` entre les deux).
+
+    Le tampon est borne (`SSE_BUFFER_MAX`, defaut 500) : au-dela, les plus
+    anciens evenements sont oublies (rejeu best-effort, jamais bloquant).
     """
 
     def __init__(self) -> None:
-        self._q: asyncio.Queue = asyncio.Queue()
+        self._subscribers: set = set()
+        self._buffer: list = []
+        self._seq = 0
         self._closed = False
 
     async def put(self, ev: dict) -> None:
-        await self._q.put(ev)
+        self.publish(ev)
+
+    def _record(self, ev: dict) -> dict:
+        """Numerote l'evenement et l'ajoute au tampon borne."""
+        self._seq += 1
+        item = {"seq": self._seq, "event": ev}
+        self._buffer.append(item)
+        if len(self._buffer) > _SSE_BUFFER_MAX:
+            del self._buffer[: len(self._buffer) - _SSE_BUFFER_MAX]
+        return item
+
+    def _broadcast(self, item: dict) -> None:
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(item)
+            except asyncio.QueueFull:  # pragma: no cover - file non bornee
+                pass
 
     def publish(self, ev: dict) -> None:
         """Version synchrone : ne bloque jamais le runner.
 
-        Apres fermeture de la file, tout evenement tardif est ignore : plus
-        rien ne doit suivre l'evenement terminal (Brique B).
+        Apres fermeture, tout evenement tardif est ignore : plus rien ne doit
+        suivre l'evenement terminal (Brique B).
         """
         if self._closed:
             return
-        try:
-            self._q.put_nowait(ev)
-        except asyncio.QueueFull:  # pragma: no cover - file non bornee ici
-            pass
+        self._broadcast(self._record(ev))
 
     def close(self) -> None:
-        """Ferme la file. Idempotent : un seul sentinelle `__end__` au total."""
+        """Ferme la file. Idempotent : un seul `__end__` par abonne."""
         if self._closed:
             return
         self._closed = True
-        self._q.put_nowait({"type": "__end__"})
+        end = {"seq": None, "event": {"type": "__end__"}}
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(end)
+            except asyncio.QueueFull:  # pragma: no cover
+                pass
 
     def finish(self, status: str = "done", **extra) -> None:
         """Emet l'evenement terminal UNIQUE du tour, puis ferme la file.
 
         Idempotent : un second appel (ex. `finally` apres un chemin d'erreur)
         n'emet rien et ne referme pas. C'est ce qui garantit une fin de flux
-        explicite et unique cote client, au lieu d'une fin implicite (Brique B).
+        explicite et unique cote client (Brique B).
         """
         if self._closed:
             return
         ev = {"type": "finished", "status": status}
         ev.update(extra)
-        self._q.put_nowait(ev)
+        self.publish(ev)
         self.close()
 
-    async def stream(self, ping_interval: float = 0.0):
-        """Genere les evenements jusqu'a la fermeture. Utilisable par le SSE.
+    def subscribe(self, after_seq: int = 0) -> "asyncio.Queue":
+        """Retourne une file rejouant le tampon depuis `after_seq`.
+
+        Aucun `await` : le rejeu et l'ajout de l'abonne sont atomiques, donc un
+        evenement publie concurremment ne peut pas etre perdu entre les deux.
+        """
+        q: asyncio.Queue = asyncio.Queue()
+        start = after_seq if after_seq > 0 else 0
+        delivered_terminal = False
+        for item in self._buffer:
+            if item["seq"] > start:
+                q.put_nowait(item)
+                if item["event"].get("type") == "finished":
+                    delivered_terminal = True
+        if self._closed:
+            # Le tour est clos : l'abonne DOIT recevoir l'evenement terminal,
+            # meme si son `after_seq` depasse le dernier seq du tampon (sinon le
+            # client resterait bloque sans savoir que le tour est fini).
+            if not delivered_terminal:
+                for item in reversed(self._buffer):
+                    if item["event"].get("type") == "finished":
+                        q.put_nowait(item)
+                        break
+            q.put_nowait({"seq": None, "event": {"type": "__end__"}})
+        else:
+            self._subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: "asyncio.Queue") -> None:
+        self._subscribers.discard(q)
+
+    async def stream(self, ping_interval: float = 0.0, after_seq: int = 0):
+        """Genere les evenements rejoues puis en direct, jusqu'a la fermeture.
 
         Si `ping_interval` > 0, un evenement {"type": "__ping__"} est emis
         apres chaque periode d'inactivite. C'est un HEARTBEAT : il empeche les
@@ -5604,20 +5732,25 @@ class _SSEQueue:
         du message navigateur brut "Error in input stream" qui coupait la
         reponse en plein vol.
         """
-        while True:
-            if ping_interval > 0:
-                try:
-                    ev = await asyncio.wait_for(
-                        self._q.get(), timeout=ping_interval
-                    )
-                except asyncio.TimeoutError:
-                    yield {"type": "__ping__"}
-                    continue
-            else:
-                ev = await self._q.get()
-            if ev.get("type") == "__end__":
-                return
-            yield ev
+        q = self.subscribe(after_seq)
+        try:
+            while True:
+                if ping_interval > 0:
+                    try:
+                        item = await asyncio.wait_for(q.get(), timeout=ping_interval)
+                    except asyncio.TimeoutError:
+                        yield {"type": "__ping__"}
+                        continue
+                else:
+                    item = await q.get()
+                ev = item["event"]
+                if ev.get("type") == "__end__":
+                    return
+                if ev.get("type") != "__ping__" and item.get("seq") is not None:
+                    ev = {**ev, "seq": item["seq"]}
+                yield ev
+        finally:
+            self.unsubscribe(q)
 
 
 

@@ -90,6 +90,95 @@ const SSE_WATCHDOG_MS = 10000;
  * STREAM_INTERRUPTED identifiable, apres avoir quand meme traite tous les
  * evenements deja recus.
  */
+// Lit un corps de flux SSE (POST initial ou reprise GET). Met a jour `state` :
+// - terminalSeen : l'evenement terminal `finished`/`done` a ete recu
+// - lastSeq : dernier numero de sequence vu (pour reprendre sans trou)
+async function readSSEStream(resp, { onEvent, state }) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const flushBlock = (block) => {
+    let event = "message";
+    const dataLines = [];
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (!dataLines.length) return;
+    let data;
+    try {
+      data = JSON.parse(dataLines.join("\n"));
+    } catch (_) {
+      // fragment illisible : on l'ignore plutot que de casser le flux
+      return;
+    }
+    if (typeof data?.seq === "number") state.lastSeq = data.seq;
+    onEvent({ event, data });
+    if (event === "finished" || event === "done") state.terminalSeen = true;
+  };
+
+  // Watchdog : le backend emet un ping SSE toutes les 4 s. Si plus aucun octet
+  // (evenement OU ping) n'arrive pendant SSE_WATCHDOG_MS, la connexion est
+  // consideree comme coupee : on annule la lecture (declenche la reprise).
+  let timedOut = false;
+  let watchdog = null;
+  const armWatchdog = () => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      timedOut = true;
+      reader.cancel().catch(() => {});
+    }, SSE_WATCHDOG_MS);
+  };
+
+  try {
+    armWatchdog();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (timedOut) throw new Error("SSE watchdog: aucun paquet depuis 10 s");
+      if (done) break;
+      if (state.terminalSeen) {
+        // Fin de flux explicite : on ferme proprement sans attendre que le
+        // serveur coupe la connexion (evite le watchdog et la resynchro).
+        reader.cancel().catch(() => {});
+        break;
+      }
+      armWatchdog();
+      buffer += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        flushBlock(block);
+      }
+    }
+    // Dernier bloc eventuel non termine par un double saut de ligne.
+    if (buffer.trim()) flushBlock(buffer);
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+// Reprise d'un tour en cours apres coupure (Brique A) : rejoue les evenements
+// manques depuis `afterSeq`, puis suit le flux en direct.
+async function resumeSSE(conversationId, afterSeq, { signal, onEvent, state }) {
+  const headers = {};
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const url = cleanDoubleSlashes(
+    `${API}/chat/stream/${encodeURIComponent(conversationId)}?after_seq=${afterSeq}`
+  );
+  const resp = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+    headers,
+    signal,
+    cache: "no-store",
+  });
+  if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+  await readSSEStream(resp, { onEvent, state });
+}
+
 export async function postSSE(path, formData, { signal, onEvent }) {
   const headers = {};
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -116,83 +205,33 @@ export async function postSSE(path, formData, { signal, onEvent }) {
     throw new Error(detail);
   }
 
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
+  // L'identifiant de conversation permet la reprise transparente apres coupure.
+  const conversationId =
+    typeof formData?.get === "function" ? formData.get("conversation_id") : null;
 
-  // Le serveur emet un evenement terminal unique `finished` (ou `done` pour
-  // compat) : des qu'il est vu, le tour est clos et la fermeture du corps
-  // n'est plus une coupure.
-  let terminalSeen = false;
-
-  const flushBlock = (block) => {
-    let event = "message";
-    const dataLines = [];
-    for (const line of block.split("\n")) {
-      if (line.startsWith("event:")) event = line.slice(6).trim();
-      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-    }
-    if (!dataLines.length) return;
-    try {
-      onEvent({ event, data: JSON.parse(dataLines.join("\n")) });
-    } catch (_) {
-      // fragment illisible : on l'ignore plutot que de casser le flux
-    }
-    if (event === "finished" || event === "done") terminalSeen = true;
-  };
-
-  // Watchdog : le backend emet un ping SSE toutes les 4 s. Si plus aucun octet
-  // (evenement OU ping) n'arrive pendant SSE_WATCHDOG_MS, la connexion est
-  // consideree comme coupee : on annule la lecture et on leve STREAM_INTERRUPTED.
-  let timedOut = false;
-  let watchdog = null;
-  const armWatchdog = () => {
-    clearTimeout(watchdog);
-    watchdog = setTimeout(() => {
-      timedOut = true;
-      reader.cancel().catch(() => {});
-    }, SSE_WATCHDOG_MS);
-  };
+  const state = { terminalSeen: false, lastSeq: 0 };
 
   try {
-    armWatchdog();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (timedOut) throw new Error("SSE watchdog: aucun paquet depuis 10 s");
-      if (done) break;
-      if (terminalSeen) {
-        // Fin de flux explicite : on ferme proprement sans attendre que le
-        // serveur coupe la connexion (evite le watchdog et la resynchro).
-        reader.cancel().catch(() => {});
-        break;
-      }
-      armWatchdog();
-      buffer += decoder.decode(value, { stream: true });
-      let sep;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        flushBlock(block);
-      }
-    }
-    // Dernier bloc eventuel non termine par un double saut de ligne.
-    if (buffer.trim()) flushBlock(buffer);
+    await readSSEStream(resp, { onEvent, state });
   } catch (streamErr) {
-    clearTimeout(watchdog);
-    if (terminalSeen) {
-      // Le terminal a deja ete recu : la fermeture du corps est nominale.
-      return;
+    if (state.terminalSeen) return; // fermeture nominale apres le terminal
+    // Coupure en plein vol : reprise transparente (Brique A) avant d'echouer.
+    let lastErr = streamErr;
+    if (conversationId && !signal?.aborted) {
+      try {
+        await resumeSSE(conversationId, state.lastSeq, { signal, onEvent, state });
+        if (state.terminalSeen) return;
+      } catch (resumeErr) {
+        lastErr = resumeErr;
+      }
     }
-    // Flux coupe en plein vol : on remonte une erreur identifiable pour que
-    // l'appelant affiche un message lisible et resynchronise, au lieu de
-    // laisser remonter le "Error in input stream" brut du navigateur.
+    // Flux coupe malgre la reprise : erreur identifiable pour que l'appelant
+    // affiche un message lisible et resynchronise.
     const e = new Error(STREAM_INTERRUPTED);
-    e.cause = streamErr;
+    e.cause = lastErr;
     e.isStreamInterrupted = true;
-    e.watchdog = timedOut;
+    e.watchdog = true;
     throw e;
-  } finally {
-    clearTimeout(watchdog);
   }
 }
 

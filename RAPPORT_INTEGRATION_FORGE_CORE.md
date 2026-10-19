@@ -193,3 +193,28 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
   - `py_compile backend/server.py` → OK ; `esbuild` sur `api.js` et `Chat.jsx` → OK.
   - `git diff --check` → propre.
 - **Non vérifié** : le rendu réel dans un navigateur (flux live non rejoué en sandbox) ; `eslint` non exécutable (configuration `eslint.config.js` absente du dépôt, préexistant).
+
+### Étape 5 — Brique A : rejeu d'historique à la reconnexion — FAIT le 2026-10-19 11:16:01 CEST
+
+- **Objectif** : ne plus perdre d'événements quand un client se (re)connecte en plein tour. Un **tampon borné séquencé** dans `_SSEQueue` est rejoué en tête de connexion ; le watchdog frontend devient une **reconnexion transparente** au lieu d'une erreur.
+- **Backend — `backend/server.py`** :
+  - `_SSEQueue` réécrite : **tampon borné** (`SSE_BUFFER_MAX`, défaut 500) + **numérotation monotone** (`seq`) de chaque événement + **diffusion multi-abonnés**.
+  - `subscribe(after_seq)` : rejoue le tampon depuis `after_seq` puis suit le live, **atomiquement** (aucun `await` entre rejeu et enregistrement → pas de trou). `unsubscribe()` nettoie l'abonné en sortie.
+  - `stream(ping_interval, after_seq)` : génère le rejeu puis le direct ; heartbeat `__ping__` conservé.
+  - Garantie terminale : à la reprise d'un tour **déjà clos**, l'événement `finished` est **toujours** livré, même si `after_seq` dépasse le dernier `seq` du tampon (sinon le client resterait bloqué sans savoir que le tour est fini).
+  - `_sse_from_event(ev)` : mapping **unique** événement interne → trame SSE (avec `seq`), partagé par les deux ponts.
+  - `chat_stream` : l'écho `user_message` est désormais **tamponné** (rejoué à la reconnexion) ; pont SSE factorisé via `_sse_from_event`.
+  - **Nouvel endpoint** `GET /chat/stream/{conversation_id}?after_seq=N` : rejoue depuis `N` si un run est actif, sinon émet `finished` immédiatement.
+- **Frontend — `frontend/src/lib/api.js`** :
+  - `readSSEStream()` : boucle de lecture partagée, mémorise `lastSeq` (via `data.seq`) et `terminalSeen`.
+  - `resumeSSE(conversationId, afterSeq)` : reprise `GET` du flux depuis le dernier `seq` vu.
+  - `postSSE` : sur coupure (watchdog/réseau) **sans** terminal vu, déclenche la **reprise transparente** ; ne lève `STREAM_INTERRUPTED` que si la reprise échoue aussi. `conversation_id` récupéré du formulaire.
+- **Tests ajoutés** : `backend/tests/test_sse_replay.py` (5 tests) — rejeu complet, rejeu partiel après `seq`, terminal seul si rien de neuf, tampon borné, ajout du `seq` dans la trame.
+- **Test adapté** : `test_sse_finish.py::test_finish_carries_status_and_extra` — vérifie désormais que chaque événement porte un `seq` (nouveau contrat de la Brique A).
+- **Vérifications** :
+  - `pytest backend/tests/test_sse_finish.py test_sse_replay.py test_tool_loop.py` → **16 passed**.
+  - `pytest backend/tests --collect-only` → **56 tests collectés, 0 erreur**.
+  - `py_compile backend/server.py` → OK ; `esbuild` sur `api.js` et `Chat.jsx` → OK.
+  - `git diff --check` → propre.
+- **Défauts corrigés pendant l'étape** : (1) terminal non livré quand `after_seq` dépassait le tampon ; (2) assertion de test erronée sur la borne du tampon. Les deux sont couverts par les tests.
+- **Non vérifié** : la reconnexion réelle dans un navigateur (rafraîchir en plein tour) — non exécutable en sandbox sans serveur + client lancés.
