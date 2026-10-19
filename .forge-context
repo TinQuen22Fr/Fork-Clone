@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-18T22:44:52.910975+00:00
+# Dernière mise à jour : 2026-10-19T21:04:29.043750+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit d84ea98 test(backend): ajoute les tests unitaires de la boucle d'outils (5 providers, relance sur tour vide, limite d'itérations) test(backend): débloque la collecte pytest (REACT_APP_BACKEND_URL avec valeur par défaut) docs: consigne l'étape 3 et sa correction dans le rapport d'intégration forge-core.
+- Git : branche claude-ai, dernier commit 102bec2 docs(rapport): annexe 8 — étude de faisabilité bascule des previews en conteneurs Docker isolés.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -29,6 +29,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/test_kokoro_optional.py
   backend/tests/test_regression.py
   backend/tests/test_sse_finish.py
+  backend/tests/test_sse_replay.py
   backend/tests/test_tool_loop.py
   backend/tests/test_tts_bugs.py
   backend/tools/
@@ -65,16 +66,21 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   frontend/public/manifest.webmanifest
   frontend/public/maskable-192.png
   frontend/public/maskable-512.png
-  frontend/public/sw.js
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
+  [regle] **Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
   [regle] Dès que tu dois inspecter, lire un fichier ou exécuter une commande bash : 1.
   [regle] Consigne directe : 1.
   [regle] Première chose il faut impérativement que les graphiques sois Implémentif (pour affichage correct sur mobile tablette tactile...) après par contre peu on approfondir la vitesse de chargement qui est encore lent je trouve sur ordi en wifi ?
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
-  [regle] **Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
+  [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
+  [regle] consigne la chose dans "RAPPORT_INTEGRATION_FORGE_CORE.md", indique le point traitée et coder en rajoutant une instruction dans le fichier rapport avec la date et l'heure.
+  [regle] 74-**Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
+  [regle] - **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
+  [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
+  [regle] ff72b7c docs: consigne l'étape 2 (écriture du rapport d'intégration forge-core)
   [regle] 161-- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
   [regle] ok feux vert pour l'étape 3 dans les mêmes conditions et consignes que pour l'étape 1 et 2
   [regle] ok feux vert pour l'étape 2 dans les mêmes conditions et consignes que pour l'étape 1
@@ -101,9 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Crée un dossier /agents à la racine avec un premier fichier vibe-coder.md contenant des règles de dev strictes (pas de bavardage, édition chirurgicale, respect des consignes).
   [regle] Ce n'est pas ton comportement de réponse que tu dois changer, c'est le composant d'affichage dans le frontend : 1.
   [regle] revoir les captures des projets qui ne fonctionne pas à 100%.
-  [regle] // Les appelants peuvent la reconnaitre pour ne PAS traiter ca comme un echec
-  [regle] Chaque action doit être visible au moment où elle s'exécute.
-  [regle] Si aucun paquet ni ping n'arrive au bout de 10 secondes pendant une génération en cours, la connexion doit être considérée comme coupée, déclencher immédiatement STREAM_INTERRUPTED et basculer sur le rattrapage automatique, sans laisser l'interface figée sur un curseur qui clignote.
-  [regle] 1681: asyncio.create_task : il faut donc la reaffirmer explicitement).
-  [regle] return "Accès aux fichiers de configuration sensibles/secrets interdit via bash."
-  [regle] Toujours dans l'outil bash (_tool_bash dans backend/server.py) : tronque la sortie texte à 100 lignes max (les 50 premières et les 50 dernières avec un message d'omission au milieu) si la commande crache trop de logs.
