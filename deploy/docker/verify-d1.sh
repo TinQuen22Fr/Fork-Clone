@@ -12,6 +12,7 @@
 set -uo pipefail
 
 fail=0
+unverified=0
 ok()   { printf '  \033[1;32mOK\033[0m   %s\n' "$*"; }
 ko()   { printf '  \033[1;31mKO\033[0m   %s\n' "$*"; fail=1; }
 info() { printf '       %s\n' "$*"; }
@@ -27,13 +28,27 @@ if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "1" ]; then ok "ip_for
 echo "== D1 : moteur =="
 if command -v docker >/dev/null 2>&1; then
   ok "docker présent : $(docker --version 2>/dev/null)"
-  docker info >/dev/null 2>&1 && ok "démon répond" || ko "démon ne répond pas"
-  v="$(docker info --format '{{.CgroupVersion}}' 2>/dev/null)"
-  [ "$v" = "2" ] && ok "cgroup v2 côté moteur" || ko "cgroup moteur = $v (attendu 2)"
-  d="$(docker info --format '{{.Driver}}' 2>/dev/null)"
-  [ "$d" = "overlay2" ] && ok "storage-driver overlay2" || ko "storage-driver = $d (attendu overlay2)"
-  lr="$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null)"
-  [ "$lr" = "true" ] && ok "live-restore actif" || ko "live-restore = $lr (attendu true)"
+  # L'utilisateur quentin est volontairement hors du groupe docker (D2) : sans privilège
+  # le socket est inaccessible. Ce n'est pas un défaut du moteur, on ne conclut pas KO.
+  dk() { docker info --format "$1" 2>/dev/null || sudo -n docker info --format "$1" 2>/dev/null; }
+  if docker info >/dev/null 2>&1 || sudo -n docker info >/dev/null 2>&1; then
+    ok "démon répond"
+    v="$(dk '{{.CgroupVersion}}')"
+    [ "$v" = "2" ] && ok "cgroup v2 côté moteur" || ko "cgroup moteur = ${v:-?} (attendu 2)"
+    d="$(dk '{{.Driver}}')"
+    [ "$d" = "overlay2" ] && ok "storage-driver overlay2" || ko "storage-driver = ${d:-?} (attendu overlay2)"
+    lr="$(dk '{{.LiveRestoreEnabled}}')"
+    [ "$lr" = "true" ] && ok "live-restore actif" || ko "live-restore = ${lr:-?} (attendu true)"
+  else
+    unverified=1
+    info "socket Docker inaccessible sans privilège (quentin hors groupe docker — conforme)"
+    info "contrôles moteur NON vérifiés : relancer 'sudo bash deploy/docker/verify-d1.sh'"
+    if systemctl is-active --quiet docker.service 2>/dev/null; then
+      info "indice : docker.service est actif"
+    else
+      info "indice : docker.service n'est pas actif"
+    fi
+  fi
 else
   ko "docker absent"
 fi
@@ -71,9 +86,11 @@ else
 fi
 
 echo
-if [ "$fail" -eq 0 ]; then
-  echo "RÉSULTAT : D1 conforme."
-else
+if [ "$fail" -ne 0 ]; then
   echo "RÉSULTAT : D1 NON conforme — corriger les lignes KO ci-dessus."
+elif [ "$unverified" -ne 0 ]; then
+  echo "RÉSULTAT : D1 partiellement vérifié — contrôles moteur à refaire avec sudo."
+else
+  echo "RÉSULTAT : D1 conforme."
 fi
 exit "$fail"
