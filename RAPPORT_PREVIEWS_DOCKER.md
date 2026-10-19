@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : analyse de faisabilité + plan d'implémentation — **aucune modification appliquée**
+**Statut** : en exécution — **D1 terminée et conforme** (voir section 7) ; étapes D2 à D12 à venir
 
 ---
 
@@ -162,7 +162,7 @@ D8 (secrets) doit être traité **avant** la bascule générale si des projets c
 
 ### Étape D1 — Installation et durcissement de Docker
 - **Date** : 2026-10-19 23:47 CEST
-- **Statut** : **installé — conforme côté installation** ; la re-vérification non privilégiée est partielle (contrôles moteur non re-testables sans `sudo`, cf. ci-dessous)
+- **Statut** : **installé et conforme** — vérification moteur reprise avec privilège, 19/19 contrôles OK (voir ci-dessous)
 - **Commits** : `ba69b7c` (artefacts D1), `c2e9424` (correction du script de vérification)
 
 **Livré** — `deploy/docker/`, 249 lignes :
@@ -186,7 +186,7 @@ hello-world : OK
 groupe docker : quentin n'en est pas membre (conforme à D2)
 ```
 
-**Vérification** — `bash deploy/docker/verify-d1.sh` (sans privilège) :
+**Vérification** — `sudo bash deploy/docker/verify-d1.sh` (2026-10-19 23:51 CEST) :
 ```
 == D1 : prérequis noyau ==
   OK   cgroup v2 supporté
@@ -196,9 +196,10 @@ groupe docker : quentin n'en est pas membre (conforme à D2)
   OK   ip_forward actif
 == D1 : moteur ==
   OK   docker présent : Docker version 29.9.1, build dfc520d
-       socket Docker inaccessible sans privilège (quentin hors groupe docker — conforme)
-       contrôles moteur NON vérifiés : relancer 'sudo bash deploy/docker/verify-d1.sh'
-       indice : docker.service est actif
+  OK   démon répond
+  OK   cgroup v2 côté moteur
+  OK   storage-driver overlay2
+  OK   live-restore actif
 == D1 : configuration ==
   OK   /etc/docker/daemon.json présent
   OK   JSON valide
@@ -211,8 +212,9 @@ groupe docker : quentin n'en est pas membre (conforme à D2)
   OK   docker.service actif
   OK   quentin hors du groupe docker
 
-RÉSULTAT : D1 partiellement vérifié — contrôles moteur à refaire avec sudo.
+RÉSULTAT : D1 conforme.
 ```
+Lancé sans privilège, le script affiche « partiellement vérifié » (les 5 contrôles moteur ne sont pas re-testables : `quentin` est hors groupe `docker`, `docker info` renvoie `permission denied`). C'est le comportement voulu, pas un échec.
 
 **Défaut corrigé dans le script de vérification** : la première version concluait 4 fois « KO » sur le moteur alors que l'installation avait réussi. Cause : `verify-d1.sh` était lancé en tant que `quentin`, volontairement hors du groupe `docker` ; `docker info` renvoyait donc `permission denied` et tous les champs (`CgroupVersion`, `Driver`, `LiveRestoreEnabled`) ressortaient vides. Le script bascule désormais sur `sudo -n docker info` et, si le socket reste inaccessible sans privilège, affiche « non vérifié » au lieu de « KO » — un défaut de privilège n'est pas un défaut du moteur.
 
