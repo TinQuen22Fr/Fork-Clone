@@ -161,7 +161,7 @@ D8 (secrets) doit être traité **avant** la bascule générale si des projets c
 ### Étape D1 — Installation et durcissement de Docker
 - **Date** : 2026-10-19 23:35:28 CEST
 - **Statut** : **artefacts livrés et vérifiés statiquement — exécution système EN ATTENTE**
-- **Commit (code D1)** : `72d0f13`
+- **Commit (code D1)** : `ba69b7c`
 
 **Livré** (`deploy/docker/`, 232 lignes) :
 | Fichier | Lignes | Rôle |
