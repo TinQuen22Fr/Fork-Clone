@@ -61,11 +61,13 @@ Objectifs :
 1. Installer `docker-ce` + `docker-compose-plugin` depuis le dépôt officiel, activer `docker.service`.
 2. `/etc/docker/daemon.json` :
    - `"live-restore": true`
-   - `"no-new-privileges": true`
    - `"log-driver": "local"`, `"log-opts": {"max-size": "10m", "max-file": "3"}`
    - `"default-ulimits": {"nofile": {"Name": "nofile", "Hard": 4096, "Soft": 4096}}`
-   - pool d'adresses bridge dédié (évite les collisions avec les réseaux existants).
-3. Vérifier : `docker run --rm hello-world`, puis `docker info` (cgroup v2, driver `overlay2`).
+   - `"exec-opts": ["native.cgroupdriver=systemd"]`, `"storage-driver": "overlay2"`
+   - `"default-address-pools"` : `172.31.0.0/16` en `/24` (évite les collisions avec les réseaux existants).
+   - **Note** : `no-new-privileges` n'est **pas** une clé valide de `daemon.json` (dockerd refuse toute clé inconnue). Cette protection est par-conteneur (`--security-opt no-new-privileges`) et relève de D4.
+3. Prérequis noyau persistés : `br_netfilter` (`/etc/modules-load.d/forge-docker.conf`) + `ip_forward`/`bridge-nf-call-*` (`/etc/sysctl.d/99-forge-docker.conf`).
+4. Vérifier : `docker run --rm hello-world`, puis `docker info` (cgroup v2, driver `overlay2`, live-restore actif).
 
 ### Étape D2 — Contrôle d'accès sans donner root au backend
 1. Créer `/usr/local/bin/forge-preview` : wrapper strict, verbes fermés (`start|stop|rm|ps|logs|inspect`), identifiant de projet validé par regex.
@@ -156,6 +158,52 @@ D8 (secrets) doit être traité **avant** la bascule générale si des projets c
 
 ---
 
-## 7. Suivi d'exécution
+### Étape D1 — Installation et durcissement de Docker
+- **Date** : 2026-10-19 23:35:28 CEST
+- **Statut** : **artefacts livrés et vérifiés statiquement — exécution système EN ATTENTE**
+- **Commit (code D1)** : `72d0f13`
 
-*(section à compléter à chaque étape réalisée, avec date et heure CEST)*
+**Livré** (`deploy/docker/`, 232 lignes) :
+| Fichier | Lignes | Rôle |
+|---|---|---|
+| `install-d1.sh` | 119 | Installation idempotente : dépôt officiel Docker, `daemon.json`, sysctl/modules, activation du service, vérifications |
+| `verify-d1.sh` | 79 | Contrôles de conformité D1 en lecture seule (code retour 0 = conforme) |
+| `daemon.json` | 26 | `live-restore`, `overlay2`, `cgroupdriver=systemd`, logs bornés 10m×3, `nofile` 4096, pool `172.31.0.0/16`-/24 |
+| `99-forge-docker.conf` | 5 | `ip_forward`, `bridge-nf-call-iptables`, `bridge-nf-call-ip6tables` |
+| `forge-docker-modules.conf` | 3 | `br_netfilter` chargé au boot |
+
+**Résultat mesuré** — `bash deploy/docker/verify-d1.sh` (lancé le 2026-10-19 23:35 CEST) :
+```
+== D1 : prérequis noyau ==
+  OK   cgroup v2 supporté
+  OK   cgroup monté en v2
+       br_netfilter disponible mais non chargé (D1 le charge)
+       overlay disponible mais non chargé (D1 le charge)
+       ip_forward=0 (D1 l active)
+== D1 : moteur ==
+  KO   docker absent
+== D1 : configuration ==
+  KO   /etc/docker/daemon.json absent
+  KO   sysctl non persisté
+  KO   modules non persistés
+== D1 : isolation de l'accès ==
+  KO   docker.service non activé
+  KO   docker.service inactif
+  OK   quentin hors du groupe docker
+RÉSULTAT : D1 NON conforme — corriger les lignes KO ci-dessus.
+```
+
+**Ce qui a été vérifié** : `bash -n` sur les deux scripts (syntaxe OK), `jq -e` sur `daemon.json` (JSON valide), exécution du script de vérification (sortie ci-dessus).
+
+**Ce qui n'a pas pu être fait** : l'installation elle-même. `sudo -n` renvoie `sudo: interactive authentication is required` — aucune authentification non interactive n'est disponible pour l'agent, et le mot de passe root n'est pas communicable. **Docker n'est donc pas installé.**
+
+**Commande à lancer (une seule, à la main)** :
+```bash
+cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/install-d1.sh && bash deploy/docker/verify-d1.sh
+```
+
+**Correction apportée à la spécification** : D1 listait `"no-new-privileges": true` dans `daemon.json`. Cette clé **n'existe pas** dans la configuration du démon : `dockerd` refuse de démarrer sur une clé inconnue. La protection est par-conteneur (`--security-opt no-new-privileges`) et relève de D4. La spécification D1 a été corrigée en conséquence, `verify-d1.sh` détecte activement cette clé comme non conforme.
+
+**Point d'attention pour D2** : `quentin` dispose de `(ALL : ALL) ALL` dans le sudoers actuel — la contrainte « pas de root pour le backend » de D2 devra traiter ce point, pas seulement le groupe `docker`.
+
+---
