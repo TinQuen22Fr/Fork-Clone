@@ -162,7 +162,7 @@ D8 (secrets) doit être traité **avant** la bascule générale si des projets c
 
 ### Étape D1 — Installation et durcissement de Docker
 - **Date** : 2026-10-19 23:47 CEST
-- **Statut** : **installé et exécuté — conforme**
+- **Statut** : **installé — conforme côté installation** ; la re-vérification non privilégiée est partielle (contrôles moteur non re-testables sans `sudo`, cf. ci-dessous)
 - **Commits** : `ba69b7c` (artefacts D1), `c2e9424` (correction du script de vérification)
 
 **Livré** — `deploy/docker/`, 249 lignes :
