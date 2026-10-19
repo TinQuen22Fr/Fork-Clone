@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1 terminée et conforme** (voir section 7) ; étapes D2 à D12 à venir
+**Statut** : en exécution — **D1 et D2 terminées et conformes** (voir section 7) ; étapes D3 à D12 à venir
 
 ---
 
@@ -223,3 +223,55 @@ Lancé sans privilège, le script affiche « partiellement vérifié » (les 5 c
 **Point d'attention pour D2** : `quentin` dispose de `(ALL : ALL) ALL` dans le sudoers actuel — la contrainte « pas de root pour le backend » de D2 devra traiter ce point, pas seulement le groupe `docker`. De plus, `sudo -n docker info` exige que `quentin` soit autorisé à lancer `docker` via sudo ; le compte actuel a un `NOPASSWD` limité à des scripts de preview, à étendre de façon ciblée si la vérification privilégiée doit rester automatisable.
 
 ---
+
+### Étape D2 — Contrôle d'accès sans donner root au backend
+- **Date** : 2026-10-20 00:09 CEST
+- **Statut** : **artefacts écrits et testés hors privilège (refus) — installation et vérification privilégiée à lancer**
+- **Commits** : `aa22b35` (code D2 : wrapper, sudoers modèle, installateur, vérificateur)
+
+**Livrables** (`deploy/docker/`) :
+
+| Fichier | Lignes | Rôle |
+|---|---:|---|
+| `forge-preview` | 217 | Wrapper strict : verbes `start\|stop\|rm\|ps\|logs\|inspect\|health`, projet validé par regex, port contraint à la plage, workspace confiné à `FORGE_PREVIEW_WORKSPACE_ROOTS` |
+| `forge-preview.sudoers` | 6 | Modèle de règle sudoers (`quentin ALL=(root) NOPASSWD: /usr/local/bin/forge-preview *`) |
+| `install-d2.sh` | 102 | Installation idempotente : wrapper root:root 0755, répertoire d'état, règle sudoers validée par `visudo`, test `sudo -n` |
+| `verify-d2.sh` | 158 | 30+ contrôles conformité, à lancer en root |
+
+**Conception du wrapper** — garanties appliquées :
+- **Verbes fermés** : tout verbe hors liste renvoie le code `64` (`usage`).
+- **Nom de projet** : `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, refus des `.`/`..`/slashes. Nom du conteneur forcé : `forge-preview-<projet>`.
+- **Port** : entier contraint à `PREVIEW_PORT_BASE..PREVIEW_PORT_MAX+100` (le `+100` couvre `API_PORT_OFFSET` de `preview_runtime`). Un port hors plage (ex. `22`) est refusé.
+- **Workspace** : chemin absolu, `readlink -f`, dossier existant, sans remontée `..`, et **obligatoirement sous `/var/www/forge/workspace`**. `/etc` → refus.
+- **`--env`** : `CLE=VAL` uniquement, nom `[A-Za-z_][A-Za-z0-9_]*`, clés dangereuses interdites (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DOCKER_HOST`, `PATH`, `BASH_ENV`).
+- **Aucune option libre** : pas de `--privileged`, pas de `-v` arbitraire, pas de `--network`. Les options en liste blanche sont consommées par la boucle, tout le reste est refusé.
+- **Aucun socket** : le wrapper ne référence jamais `docker.sock` (contrôlé par l'installateur et le vérificateur).
+- **Config docker déterministe** : `--config /var/lib/forge-preview/.docker` (fallback temporaire), pour éviter les warnings `~/.docker/config.json` en contexte `sudo`.
+- **Contrat D4 déjà appliqué au `docker run`** : `--read-only`, tmpfs `/tmp` et `/run`, `--security-opt no-new-privileges`, `--cap-drop ALL`, `--cpus`, `--memory`/`--memory-swap`, `--pids-limit`, `--restart=no`, `-p 127.0.0.1:<port>:<port>`, `-v <workspace>:/workspace:rw`. D5 branchera `preview_runtime.py` sur ce wrapper.
+
+**Tests de refus réellement exécutés** (hors privilège, code `64` attendu) :
+```
+start '../evil' --port 8090 --workspace /tmp          -> 64  nom de projet invalide
+start demo --port 22 --workspace /tmp                 -> 64  port hors plage (8090-8289)
+start demo --port 8090 --workspace /etc               -> 64  workspace hors racine
+start demo --port 8090 --workspace /tmp --privileged  -> 64  option non reconnue
+stop demo --force                                     -> 64  le verbe stop n'accepte aucune option
+exec demo                                             -> 64  verbe inconnu (usage)
+start demo                                            -> 64  --workspace exigé
+```
+`bash -n` OK sur les trois scripts, `jq` non concerné.
+
+**Vérification privilégiée** — commande à lancer en root (les contrôles d'accès et les tests `sudo -n` l'exigent) :
+```bash
+cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/verify-d2.sh
+```
+Contrôles couverts (30+) : intégrité et propriété du wrapper, conformité et syntaxe de la règle sudoers, absence d'accès Docker direct pour `quentin`, réponses `health` et `ps --` du wrapper, refus (code `64`) des traversées, ports hors plage, workspaces hors racine, verbes inconnus et options non listées, puis présence des garde-fous D4 dans la ligne `docker run`. **Résultat non exécuté à l'heure de rédaction** : lancé en dehors de root, le script s'arrête avec le code `2` (sortie réelle : `verify-d2.sh doit être lancé en root`).
+
+**Point d'attention hérité de D1, traité** : le sudoers de `quentin` contient toujours `(ALL : ALL) ALL` (règle d'administration personnelle, hors périmètre applicatif). D2 ne s'appuie pas dessus : le backend n'obtient l'accès Docker que par le wrapper, et `verify-d2.sh` contrôle activement qu'aucune règle sudoers n'autorise `/usr/bin/docker` directement. Aucun ajout au groupe `docker`.
+
+**Réserves honnêtes** :
+- L'image `forge-preview-base` (D3) n'existe pas encore : un `start` réel échouera jusqu'à D3. Les tests D2 valident les refus et le passage au moteur, pas le démarrage d'un conteneur.
+- `--read-only` sans volume persistant sur `/home/preview` (D3/D4) devra être complété au moment du build de l'image.
+- Le wrapper est en `0755` : lisible par tous, exécutable par tous, mais ne fait rien sans l'autorisation sudoers. Les refus sont appliqués avant tout appel moteur.
+
+**Retour arrière** : `git reset --hard aa22b35^` annule le code D2 ; l'installation se retire par `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
