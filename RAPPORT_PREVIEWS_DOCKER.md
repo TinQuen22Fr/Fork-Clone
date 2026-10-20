@@ -338,3 +338,76 @@ RÉSULTAT : D2 conforme.
 - Le wrapper est en `0755` : lisible par tous, exécutable par tous, mais ne fait rien sans l'autorisation sudoers. Les refus sont appliqués avant tout appel moteur.
 
 **Retour arrière** : `git reset --hard aa22b35^` annule l'intégralité de D2 (code + correction du vérificateur) ; pour ne retirer que la correction des faux négatifs, `git revert 20846d6`. Désinstallation système : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
+
+---
+
+## 8. Point de reprise — 2026-10-20 02:25 CEST
+
+Session arrêtée à la demande de l'utilisateur. Rien n'a été poussé sur le remote : la branche `claude-ai` est en avance de **11 commits** sur `origin/claude-ai`.
+
+### 8.1 Étapes terminées et vérifiées
+
+| Étape | Statut | Preuve |
+|---|---|---|
+| **D1** — Installation et durcissement Docker | **conforme** | `sudo bash deploy/docker/verify-d1.sh` → 19/19 OK, « RÉSULTAT : D1 conforme. » (2026-10-19 23:51 CEST) |
+| **D2** — Contrôle d'accès sans root pour le backend | **conforme** | `sudo bash deploy/docker/verify-d2.sh` → 30/30 OK, « RÉSULTAT : D2 conforme. » (2026-10-20 02:22 CEST) |
+
+### 8.2 État du système au moment de l'arrêt
+
+- Docker Engine `29.9.1` actif, `cgroup v2`, `overlay2`, `live-restore` actif, activé au boot.
+- `/etc/docker/daemon.json` présent et durci ; sysctl et modules noyau persistés (`deploy/docker/99-forge-docker.conf`, `deploy/docker/forge-docker-modules.conf`).
+- `/usr/local/bin/forge-preview` installé — `root:root`, mode `0755`, sha256 identique au dépôt.
+- `/etc/sudoers.d/forge-preview-docker` installé — `root:root`, mode `0440`, validé par `visudo`, **exactement 1 règle active** : `quentin ALL=(root) NOPASSWD: /usr/local/bin/forge-preview *`.
+- `quentin` **hors** du groupe `docker` ; `sudo -n docker` refusé ; aucune règle sudoers n'autorise `docker` directement.
+- Rappel d'exploitation : `quentin` conserve `(ALL : ALL) ALL` dans le sudoers principal. Ce n'est **pas** une faille du dispositif (le backend n'utilise pas sudo) mais cela signifie que l'isolation repose sur le code applicatif, pas sur une impossibilité technique. À traiter si l'on veut une garantie forte.
+
+### 8.3 Artefacts livrés
+
+| Fichier | Lignes | Étape |
+|---|---:|---|
+| `deploy/docker/install-d1.sh` | 119 | D1 |
+| `deploy/docker/verify-d1.sh` | 79 | D1 |
+| `deploy/docker/daemon.json` | 26 | D1 |
+| `deploy/docker/99-forge-docker.conf` | — | D1 |
+| `deploy/docker/forge-docker-modules.conf` | — | D1 |
+| `deploy/docker/forge-preview` | 217 | D2 |
+| `deploy/docker/forge-preview.sudoers` | 6 | D2 |
+| `deploy/docker/install-d2.sh` | 102 | D2 |
+| `deploy/docker/verify-d2.sh` | 165 | D2 |
+
+### 8.4 Commits locaux de référence
+
+```
+99bc98f  docs(previews/docker): D2 conforme — verification privilegiee 30/30 OK   ← suivi D2
+145bfb8  docs(previews/docker): section 7 — D2 installee, 3 faux negatifs corriges
+20846d6  fix(previews/docker): verify-d2 — 3 faux negatifs
+238d0ba  docs(previews/docker): section 7 — D2
+aa22b35  feat(previews/docker): D2 — wrapper forge-preview + sudoers dedie      ← code D2
+f8918fe  docs(previews/docker): D1 conforme — verification privilegiee 19/19 OK   ← suivi D1
+dc0ca8e  docs(previews/docker): section 7 — statut D1 exact
+43655cf  docs(previews/docker): section 7 — D1 executee et conforme
+c2e9424  fix(previews/docker): verify ne conclut plus KO sans privilege
+ba69b7c  feat(previews/docker): D1 — installation et durcissement                ← code D1
+```
+
+Points de retour arrière :
+- annuler tout D2 : `git reset --hard aa22b35^`
+- annuler tout D1 : `git reset --hard ba69b7c^`
+- ne retirer que la correction des faux négatifs D2 : `git revert 20846d6`
+- désinstallation système D2 : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`
+
+### 8.5 Ce qui reste à faire
+
+Ordre recommandé (section 5) : `D3 → D4 → D5 → D6 → D11 → D12` (socle fonctionnel) puis `D7 → D8 → D9 → D10` (durcissement, quotas, observabilité).
+
+**Prochaine étape : D3 — Image de base commune.**
+
+Points déjà identifiés comme devant être tranchés en D3 :
+- `--read-only` (contrat D4) impose de traiter `/home/preview` : volume dédié ou `tmpfs`, sinon npm/pip échouent au build ou à l'exécution.
+- L'UID fixe de l'utilisateur `preview` doit être réconcilié avec l'UID hôte de `quentin` (`1000`) pour les permissions du workspace monté en `rw`.
+- Aucun secret, aucun `.env` embarqué dans l'image.
+
+### 8.6 État du dépôt
+
+- Branche `claude-ai`, working tree propre **hors `.forge-context`** (fichier de contexte de l'agent, modifié et volontairement non commité — hors périmètre du rapport).
+- 11 commits locaux non poussés : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
