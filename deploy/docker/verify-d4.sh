@@ -114,7 +114,7 @@ else
     BINDS="$("$DOCKER" inspect -f '{{range .Mounts}}{{.Destination}}:{{.Mode}} {{end}}' "$CNAME")"
     printf '%s' "$BINDS" | grep -q '/workspace:rw' && ok "bind mount /workspace:rw" || ko "bind /workspace absent : $BINDS"
 
-    TMPFS="$("$DOCKER" inspect -f '{{range .Mounts}}{{if eq .Type "tmpfs"}}{{.Destination}} {{end}}{{end}}' "$CNAME")"
+    TMPFS="$("$DOCKER" inspect -f '{{range $k, $v := .HostConfig.Tmpfs}}{{$k}} {{end}}' "$CNAME")"
     printf '%s' "$TMPFS" | grep -q '/tmp' && printf '%s' "$TMPFS" | grep -q '/run' && ok "tmpfs /tmp + /run" || ko "tmpfs incomplet : $TMPFS"
 
     "$WRAPPER_DST" stop "$PROJ" >/dev/null 2>&1 && ok "stop $PROJ" || ko "stop échoué"

@@ -95,7 +95,11 @@ case "$VERB" in
 stop|rm)
   [ $# -eq 0 ] || die "le verbe $VERB n'accepte aucune option"
   RC=0
-  dk "$VERB" --time 10 "$NAME" >/dev/null 2>&1 || RC=$?
+  if [ "$VERB" = "rm" ]; then
+    dk rm -f "$NAME" >/dev/null 2>&1 || RC=$?
+  else
+    dk stop --time 10 "$NAME" >/dev/null 2>&1 || RC=$?
+  fi
   [ "$VERB" = "rm" ] && { rm -rf "$STATEDIR" 2>/dev/null || true; }
   printf '%s: %s %s (rc=%s)\n' "$PROG" "$VERB" "$NAME" "$RC" >&2
   exit "$RC"

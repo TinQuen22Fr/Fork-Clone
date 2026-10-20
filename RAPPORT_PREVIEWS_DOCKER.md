@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1, D2 et D3 conformes et vérifiées**, **D4 écrite et validée statiquement** (installation/exécution root à lancer, voir section 7) ; étapes D5 à D12 à venir
+**Statut** : en exécution — **D1, D2 et D3 conformes et vérifiées**, **D4 corrigée** (2 KO root traités : sonde tmpfs + `rm --time`) — revalidation root en attente ; étapes D5 à D12 à venir
 
 ---
 
@@ -562,8 +562,8 @@ RÉSULTAT : D3 conforme.
 
 ### Étape D4 — Contrat d'exécution imposé
 
-- **Date** : 2026-10-20 22:40 CEST
-- **Statut** : **artefacts écrits et validés statiquement — installation et exécution réelle non encore effectuées** (root requis, non déclarée conforme)
+- **Date** : 2026-10-20 22:48 CEST (corrigé) — exécution root : 2026-10-20 22:52 CEST
+- **Statut** : **corrigé après exécution root** — deux KO réels détectés et traités (tmpfs lu au mauvais champ + `rm --time` inexistant) ; relance d'installation/vérification requise pour clore
 - **Commits** : `a83e7d6` (point de départ D4), `ce47082` (code D4 : réseau dédié + `sleep infinity`, figeage de cette étape).
 
 **Objet** : D4 ne crée pas le contrat à partir de zéro — le wrapper `forge-preview` de D2 portait déjà les 8 garde-fous (`--read-only`, tmpfs `/tmp`+`/run`, `--cpus`, `--memory`/`--memory-swap`, `--pids-limit`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--restart=no`, `-v /workspace:rw`, publication sur `127.0.0.1`). Deux manques réels demeuraient, corrigés ici :
@@ -575,16 +575,18 @@ RÉSULTAT : D3 conforme.
 
 | Fichier | Lignes | Rôle |
 |---|---:|---|
-| `forge-preview` | 223 | wrapper modifié : réseau dédié + `sleep infinity` (les 8 garde-fous D2 inchangés) |
+| `forge-preview` | 227 | wrapper modifié : réseau dédié + `sleep infinity` + `rm` corrigé (`docker rm -f`, plus de `--time` invalide) |
 | `install-d4.sh` | 38 | création du réseau bridge dédié + réinstallation du wrapper |
 | `verify-d4.sh` | 136 | contrôles statiques (contrat) + exécution réelle root (Up, réseau, rootfs RO, cap-drop, restart, memory-swap, pids, cpus, port 127.0.0.1, bind rw, tmpfs) |
 
-**Vérifications effectuées sans privilège** :
-- `bash -n` OK sur les 3 fichiers.
-- `bash deploy/docker/verify-d4.sh` sans root : 18 contrôles statiques du contrat **OK** (dont « aucune publication 0.0.0.0 », « aucun --env-file », « aucun --privileged »), 1 `KO` attendu (« wrapper installé différent du dépôt » — normal, l'installation n'a pas encore été relancée), 1 `??` (exécution réelle, root requis).
-- Correction d'un bug d'invocation : `grep -qF '--env-file'` et `grep -qF '--privileged'` interprétaient le motif comme une option ; remplacés par `grep -qF -- '--env-file'` / `grep -qF -- '--privileged'`.
+**Vérifications effectuées (exécution root, 2026-10-20 22:52 CEST)** :
+- `sudo bash deploy/docker/install-d4.sh` : réseau `forge-preview-net` créé (bridge), wrapper réinstallé `root:root 0755`.
+- `sudo bash deploy/docker/verify-d4.sh` : 18 contrôles statiques **OK**, wrapper installé identique (sha256) **OK**, exécution réelle **29 OK / 2 KO**.
+- **KO #1 — `tmpfs incomplet :` (vide)** : la sonde lisait `{{range .Mounts}}{{if eq .Type "tmpfs"}}…`, or Docker stocke les tmpfs sous `HostConfig.Tmpfs`, pas dans `.Mounts`. Confirmation par `forge-preview inspect verifyd4` : `"Tmpfs": {"/run":"rw,size=64m,noexec,nosuid,nodev","/tmp":"rw,size=256m,noexec,nosuid,nodev"}` — le conteneur était sain, la sonde visait le mauvais champ. Corrigé en `{{range $k, $v := .HostConfig.Tmpfs}}{{$k}} {{end}}`.
+- **KO #2 — `rm échoué`** : le wrapper passait `docker rm --time 10`, or `rm` n'accepte pas `--time` (réservé à `stop`/`kill`) ; le `stop` réussissait mais le `rm` échouait systématiquement. Corrigé : `stop` → `docker stop --time 10`, `rm` → `docker rm -f`.
+- `bash -n` OK sur les 3 fichiers après correction.
 
-**À lancer pour clore D4** (root requis) :
+**À relancer pour clore D4** (root requis, après les deux corrections) :
 
 ```bash
 cd /var/www/forge/workspace/Fork-Clone \
@@ -592,9 +594,9 @@ cd /var/www/forge/workspace/Fork-Clone \
   && sudo bash deploy/docker/verify-d4.sh
 ```
 
-Attendu : réseau `forge-preview-net` créé (driver `bridge`), wrapper réinstallé identique au dépôt, conteneur de recette `forge-preview-verifyd4` **Up** après 2 s avec tous les garde-fous vérifiés par `docker inspect`, puis `RÉSULTAT : D4 conforme.`
+Attendu : réseau `forge-preview-net` créé (driver `bridge`), wrapper réinstallé identique au dépôt, conteneur de recette `forge-preview-verifyd4` **Up** après 2 s avec tous les garde-fous vérifiés par `docker inspect`, puis `RÉSULTAT : D4 conforme.` avec tmpfs et rm désormais OK.
 
-**Non vérifié à ce stade** : la création effective du réseau et le démarrage réel d'un conteneur sous le contrat D4 (aucun socket Docker accessible sans privilège dans cette session).
+**Non vérifié à ce stade** : la revalidation complète après correction (relance d'`install-d4.sh` puis `verify-d4.sh` — le wrapper système installé est encore l'ancienne version).
 
 **Retour arrière** :
 - `git reset --hard a83e7d6` annule D4 (fichiers retirés du suivi) — le wrapper système installé reste à recopier depuis D2 si besoin.
