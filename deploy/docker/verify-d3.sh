@@ -152,20 +152,41 @@ docker run --rm --network none --read-only \
 [ $? -eq 0 ] && ok "HOME/cache npm et pip inscriptibles sous --read-only" \
     || ko "HOME/cache npm ou pip non inscriptibles sous --read-only"
 
-# /workspace : present, possede par preview, et reellement inscriptible.
-# L ecriture d un fichier temoin prouve le droit (sans bind mount, donc sans
-# dependre du montage hote) ; verify-d4.sh revalidera avec le montage reel.
+# --- Controle 1/2 : /workspace existe et preview en est proprietaire ---
+# On ne teste PAS l ecriture ici : sans montage, /workspace appartient a la
+# couche image et --read-only la gele (EROFS). L ecriture y est impossible par
+# construction, ce n est pas un defaut de l image.
 WS_OUT="$(docker run --rm --network none --read-only \
     --security-opt no-new-privileges --cap-drop ALL \
     "$IMAGE" /bin/sh -c 'test -d /workspace || { echo NODIR; exit 1; }
-        stat -c "%U" /workspace
-        : > /workspace/.forge-write-test || { echo NOWRITE; exit 1; }
-        rm -f /workspace/.forge-write-test' 2>&1)"
+        printf "%s %s\n" "$(stat -c %U /workspace)" "$(stat -c %a /workspace)"
+        p=$(stat -c %a /workspace | cut -c1)
+        [ $(( p & 2 )) -ne 0 ] || { echo NOWRITEBIT; exit 1; }' 2>&1)"
 WS_RC=$?
-if [ "$WS_RC" -eq 0 ] && [ "$WS_OUT" = "preview" ]; then
-    ok "/workspace présent, propriétaire preview, inscriptible par preview"
+WS_OWN="$(printf '%s\n' "$WS_OUT" | sed -n '1p' | cut -d' ' -f1)"
+WS_PERM="$(printf '%s\n' "$WS_OUT" | sed -n '1p' | cut -d' ' -f2)"
+if [ "$WS_RC" -eq 0 ] && [ "$WS_OWN" = "preview" ]; then
+    ok "/workspace présent, propriétaire preview, bit d'écriture propriétaire (mode ${WS_PERM:-?})"
 else
-    ko "/workspace : présence/propriété/écriture en échec (rc=$WS_RC, sortie: ${WS_OUT:-vide})"
+    ko "/workspace : présence/propriété/bit d'écriture en échec (rc=$WS_RC, sortie: ${WS_OUT:-vide})"
+fi
+
+# --- Controle 2/2 : ecriture reelle dans /workspace monte en rw ---
+# Le contrat D4 monte /workspace:rw depuis le projet hote. On simule ce montage
+# par un tmpfs rw possede par preview : l ecriture prouve que l image, une fois
+# /workspace monté en rw, laisse bien l utilisateur preview ecrire.
+WS_RW_OUT="$(docker run --rm --network none --read-only \
+    --security-opt no-new-privileges --cap-drop ALL \
+    --tmpfs /workspace:rw,size=16m,uid=1000,gid=1000,mode=0755 \
+    "$IMAGE" /bin/sh -c 'mkdir -p /workspace/.forge-t && \
+        : > /workspace/.forge-write-test && \
+        rm -f /workspace/.forge-write-test && \
+        rmdir /workspace/.forge-t && echo WRITE_OK' 2>&1)"
+WS_RW_RC=$?
+if [ "$WS_RW_RC" -eq 0 ] && [ "$WS_RW_OUT" = "WRITE_OK" ]; then
+    ok "/workspace inscriptible par preview quand monté en rw (cas du contrat D4)"
+else
+    ko "/workspace non inscriptible avec montage rw (rc=$WS_RW_RC, sortie: ${WS_RW_OUT:-vide})"
 fi
 
 # Aucune capability effective, pas de new privileges.

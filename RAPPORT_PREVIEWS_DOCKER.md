@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1 et D2 conformes et vérifiées** ; **D3 écrite, relue et corrigée, build non exécuté** (non déclarée conforme, voir section 7) ; étapes D4 à D12 à venir
+**Statut** : en exécution — **D1 et D2 conformes et vérifiées** ; **D3 : image construite et contrôlée, 1 KO dû au vérificateur (corrigé), re-exécution requise** (non déclarée conforme, voir section 7) ; étapes D4 à D12 à venir
 
 ---
 
@@ -340,13 +340,13 @@ RÉSULTAT : D2 conforme.
 **Retour arrière** : `git reset --hard aa22b35^` annule l'intégralité de D2 (code + correction du vérificateur) ; pour ne retirer que la correction des faux négatifs, `git revert 20846d6`. Désinstallation système : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
 
 ### Étape D3 — Image de base commune
-- **Date** : 2026-10-20 21:54 CEST (révision finale ; première rédaction 21:50)
-- **Statut** : **artefacts écrits, relus et corrigés — build non exécuté**
+- **Date** : 2026-10-20 22:10 CEST (build réellement exécuté ; rédaction initiale 21:50)
+- **Statut** : **image construite et contrôlée — 1 seul KO, dû à un défaut du vérificateur, corrigé ; re-exécution requise pour conclure**
 
-  Ce qui est établi : les 3 fichiers existent, sont syntaxiquement valides, cohérents entre eux (même tag `forge-preview-base:local` dans `build-d3.sh`, `forge-preview` et `verify-d3.sh`), et le Dockerfile contient `USER preview` en dernière directive d'identité.
-  
-  Ce qui **n'est pas** établi : l'image n'a jamais été construite. Aucun contrôle d'exécution (`docker run`) n'a été observé. D3 n'est donc **pas déclarée conforme**.
-- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact)
+  Établi par exécution réelle (2026-10-20 22:07 CEST) : l'image `forge-preview-base:local` **se construit** (`sha256:54d89545…`, 632,6 Mo), démarre sous `--read-only`, tourne en uid/gid `1000`, et fournit node v26.12.0, npm 11.20.0, Python 3.11.2, git 2.39.5 sans capability effective (`CapEff=0`). **24 contrôles `OK`, 1 `KO`** (25 contrôles au total).
+
+  Ce qui **n'est pas** établi : la conformité finale. Le `KO` restant portait sur `/workspace` et ne venait **pas** de l'image mais du contrôle lui-même (voir « Défaut du vérificateur » ci-dessous). Le contrôle a été corrigé, mais `verify-d3.sh` n'a **pas été relancé** après correction. D3 n'est donc **pas** déclarée conforme à cette heure.
+- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact), `2de1fd5` (`verify-d3.sh` exécute ses contrôles statiques sans privilège), `d30af68` (correction du contrôle `/workspace` + section 7 avec le build réel)
 
 **Artefacts livrés** (383 lignes, `deploy/docker/`) :
 
@@ -354,7 +354,7 @@ RÉSULTAT : D2 conforme.
 |---|---:|---|
 | `preview-base.Dockerfile` | 138 | Image commune : Node LTS + Python 3 + git, `USER preview`, `WORKDIR /workspace` |
 | `build-d3.sh` | 60 | Build unique, tag `forge-preview-base:local`, UID/GID et version Node surchargeables |
-| `verify-d3.sh` | 185 | Contrôles de conformité D3 (lecture seule, root requis) |
+| `verify-d3.sh` | 205 | Contrôles D3 : 9 contrôles statiques exécutables sans privilège, contrôles image/conteneur réservés à root |
 
 **Points laissés ouverts en section 8.5, tranchés :**
 
@@ -394,7 +394,42 @@ RÉSULTAT : D2 conforme.
 - `ARG PYTHON_VERSION` déclaré mais jamais utilisé (donc mensonger sur l'épinglage) → supprimé ;
 - contrôle « template D4 dans le wrapper » retiré de `verify-d3.sh` : il testait `--read-only`, qui relève de D4, et gonflait le score de D3.
 
-**Résultat : build non exécuté à l'heure de rédaction.** Lancer :
+**Vérification indépendante et correction (2026-10-20 22:05 CEST, session de reprise)** :
+
+1. **Relise instruction par instruction** : les 4 blocs `RUN` extraits **avec la jointure Docker** (suppression `backslash` + retour à la ligne, continuation par un **espace**, jamais par un saut de ligne) puis passés à `bash -n` → **4/4 OK**. Le premier extracteur utilisé jointoyait par `
+` et produisait un **faux défaut** sur le bloc 1 (`;` isolé, ligne 20) : le Dockerfile était sain, l'outil de contrôle était fautif.
+2. **Structure du Dockerfile audité** : aucune ligne non-continuation hors instructions connues (`FROM`/`RUN`/`ENV`/`ARG`/`USER`/`WORKDIR`/`LABEL`/`CMD`), aucun espace parasite après un `\`, aucune ligne finissant par `&`, **0 directive `COPY`/`ADD`** — l'image ne peut donc contenir ni secret ni code projet.
+3. **Base vérifiée en ligne** : `node:26-bookworm-slim` publié et actif sur Docker Hub (digest `sha256:da33e249…`, 84 Mo amd64) — le build ne peut échouer sur un tag inexistant.
+4. **Cohérence de bout en bout** : le tag `forge-preview-base:local` est identique dans `build-d3.sh`, `verify-d3.sh` et le wrapper ; `PREVIEW_NODE_VERSION` → `--build-arg NODE_VERSION` → `ARG NODE_VERSION=26` est correctement câblé ; `build-d3.sh` quote ses `--build-arg` et le Dockerfile conduit chaque `RUN` sous `set -eux`, donc un UID mal formé échoue le build au lieu de le contourner.
+5. **Défaut corrigé (`2de1fd5`)** — `verify-d3.sh` sortait en code `2` **sans exécuter aucun contrôle**, y compris les 9 contrôles statiques du Dockerfile qui ne demandent **aucun** privilège. Il rend désormais ces 9 contrôles, place les contrôles image/conteneur en `??` (non exécutés) et conclut « partiellement vérifié » en code `0` : même comportement que `verify-d1.sh` et `verify-d2.sh`. Le message « `RÉSULTAT : D3 conforme` » reste **inatteignable sans root** (atteint uniquement en l’absence de tout `??`).
+
+Exécution réelle du correctif, **sans privilège** :
+
+```
+== D3 : Dockerfile ==
+  OK   Dockerfile présent : deploy/docker/preview-base.Dockerfile
+  OK   USER preview présent
+  OK   WORKDIR /workspace présent
+  OK   base Node présente
+  OK   python3 présent
+  OK   git présent
+  OK   dernier USER = preview
+  OK   aucun secret en variable ENV
+  OK   aucun COPY/ADD (aucun code projet dans l image)
+
+== D3 : image construite ==
+  ??   inspection de l'image non exécutable sans privilège (socket Docker)
+  ??   execution reelle non exécutable sans privilège (docker run)
+
+RÉSULTAT : D3 partiellement vérifié — contrôles dynamiques non exécutés (root requis).
+```
+
+`bash -n` OK, équilibre des blocs vérifié (profondeur 0, aucune fermeture orpheline).
+
+**Point ouvert relevé lors de cette relecture — à traiter en D4/D5, pas en D3** : le wrapper `forge-preview` termine ses arguments `docker run` sur le nom d'image (`RUN_ARGS+=("$IMAGE")` puis `dk run`) et ne transmet **aucune commande** au conteneur. Sans surcharge, c'est le `CMD ["/bin/bash", "-l"]` de l'image qui s'exécute : en détaché (`-d`) et sans stdin, `bash -l` lit un flux vide et quitte immédiatement, le conteneur passe donc en `exited` sans servir le projet. Le passeur de commande (lanceur `npm run dev` / `python main.py` déduit par `preview_runtime.py`) est la responsabilité de D5 ; D3 reste inchangé, l'image devant fournir un shell par défaut et les outils, pas un point d'entrée métier. Noté ici pour que D5 n'ait pas à le redécouvrir.
+
+
+**Build et vérification réels (2026-10-20 22:07 CEST)** — commande exécutée telle quelle :
 
 ```bash
 cd /var/www/forge/workspace/Fork-Clone \
@@ -402,10 +437,90 @@ cd /var/www/forge/workspace/Fork-Clone \
   && sudo bash deploy/docker/verify-d3.sh
 ```
 
-**Non vérifié, et pourquoi :**
-- L'image n'a **jamais été construite** dans cet environnement : `docker` n'est accessible qu'en root et le build exige le socket. Aucun résultat de `verify-d3.sh` n'est donc reporté ici.
-- Conséquences attendues, à confirmer au premier build : la version exacte de Python (issue de Debian bookworm, `apt` non épinglé — d'où la suppression de l'ARG trompeur) ; la taille de l'image ; le bon fonctionnement de `node`/`npm` sous `--read-only`.
-- `build-essential` + `-dev` ajoutent du poids à l'image : assumé, mais un second étage de build pourra alléger si nécessaire.
+Résultat du build, intégral :
+
+```
+[D3] construction de forge-preview-base:local
+[D3]   Dockerfile    : /var/www/forge/workspace/Fork-Clone/deploy/docker/preview-base.Dockerfile
+[D3]   contexte      : /var/www/forge/workspace/Fork-Clone/deploy/docker
+[D3]   PREVIEW_UID   : 1000
+[D3]   PREVIEW_GID   : 1000
+[D3]   NODE_VERSION  : 26
+[+] Building 3.0s (10/10) FINISHED
+ => [internal] load build definition from preview-base.Dockerfile                 0.3s
+ => [internal] load metadata for docker.io/library/node:26-bookworm-slim          1.0s
+ => [1/6] FROM docker.io/library/node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913
+ => CACHED [2/6] RUN apt-get update; apt-get install -y --no-install-recommends python3 python3-venv python3-pip ...
+ => CACHED [3/6] RUN ln -s /usr/bin/python3 /usr/local/bin/python; python --version; node --version
+ => CACHED [4/6] RUN cur_uid_name="$(getent passwd 1000 ...)"; ...
+ => CACHED [5/6] WORKDIR /workspace
+ => CACHED [6/6] RUN test "$(id -u)" = "1000"; test "$(id -u)" != "0"
+ => exporting to image
+ => => writing image sha256:54d89545040080f80115b3eddc363562944648259ebdc57eea4f2ad13e566990
+ => => naming to docker.io/library/forge-preview-base:local
+[D3] image construite
+ OK tag         : forge-preview-base:local
+ OK image id    : sha256:54d89545040080f80115b3eddc363562944648259ebdc57eea4f2ad13e566990
+ OK taille      : 632.6 Mo
+```
+
+Résultat de `verify-d3.sh`, intégral :
+
+```
+== D3 : Dockerfile ==
+  OK   Dockerfile présent : deploy/docker/preview-base.Dockerfile
+  OK   USER preview présent
+  OK   WORKDIR /workspace présent
+  OK   base Node présente
+  OK   python3 présent
+  OK   git présent
+  OK   dernier USER = preview
+  OK   aucun secret en variable ENV
+  OK   aucun COPY/ADD (aucun code projet dans l image)
+== D3 : image construite ==
+  OK   image présente : forge-preview-base:local
+  OK   Config.User = preview
+  OK   WorkingDir = /workspace
+== D3 : exécution réelle (identité, outils, read-only) ==
+  OK   conteneur démarre sous --read-only (code 0)
+  OK   uid d exécution = 1000
+  OK   gid d exécution = 1000
+  OK   l image ne tourne pas en root
+  OK   node répond : v26.12.0
+  OK   npm répond : 11.20.0
+  OK   python3 répond : Python 3.11.2
+  OK   git répond : git version 2.39.5
+  OK   HOME/cache npm et pip inscriptibles sous --read-only
+  KO   /workspace : présence/propriété/écriture en échec (rc=2, sortie: preview
+       /bin/sh: 3: cannot create /workspace/.forge-write-test: Read-only file system)
+  OK   aucune capability effective (CapEff=0)
+  OK   /workspace vide dans l image (aucun code embarqué)
+  OK   aucun .env dans l image
+
+RÉSULTAT : D3 NON conforme — 1 contrôle(s) KO.
+```
+
+**Défaut du vérificateur, pas de l'image (corrigé)** : le `KO` reprochait à l'image de ne pas écrire dans `/workspace` sous `--read-only` **sans aucun montage**. C'est une erreur de conception du contrôle : `/workspace` appartient à la couche image, donc `--read-only` la gèle et toute écriture renvoie `EROFS` — c'est le comportement **attendu et correct**. Le contrat D4 monte précisément `/workspace:rw` depuis le projet hôte. Le contrôle a été scindé en deux :
+
+1. **Propriété et droit** — `/workspace` existe, appartient à `preview`, et son mode porte le bit d'écriture propriétaire (`stat -c %a`, test `& 2` sur le chiffre de tête). Aucune écriture tentée : c'est le seul contrôle possible sans montage.
+2. **Écriture réelle sous montage rw** — un `--tmpfs /workspace:rw,uid=1000,gid=1000,mode=0755` simule le montage D4, puis `mkdir` + `: > fichier` + `rm` + `rmdir` prouvent que `preview` écrit effectivement dans `/workspace` quand il est monté en rw.
+
+La section « exécution réelle » passe ainsi de 13 à 14 contrôles, et le total de 25 à 26. `bash -n` OK après correction ; logique du bit d'écriture validée sur 5 modes (755/700/750/644 → inscriptible, 555 → non inscriptible).
+
+**Ce que le build réel confirme** (et qui n'était que supposé avant) :
+- Le tag `node:26-bookworm-slim` existe et se résout au digest `sha256:29899262…`.
+- Python embarqué = **3.11.2** (Debian bookworm, `apt` non épinglé) — l'ARG trompeur avait bien été retiré.
+- Taille de l'image = **632,6 Mo**. `build-essential` et les paquets `-dev` pèsent lourd ; un second étage de build pourra alléger en D4/D5 si la place disque devient un sujet.
+- `node`, `npm`, `python3`, `git` fonctionnent bien sous `--read-only`, avec `HOME`/caches en tmpfs.
+- L'image tourne en uid/gid `1000` = uid/gid de `quentin` sur l'hôte : les fichiers du workspace monté seront possédés par `preview` sans translation d'UID.
+
+**Reste à faire pour clore D3** — relancer, après la correction du vérificateur :
+
+```bash
+cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/verify-d3.sh
+```
+
+Attendu : **26 `OK`** (25 contrôles d'origine + 1 issu de la scission) et `RÉSULTAT : D3 conforme.` Si un `KO` subsiste, il sera alors imputable à l'image et non au contrôle.
 
 **Retour arrière** :
 - `git reset --hard 0c4d358^` annule l'intégralité de D3 (fichiers supprimés).
@@ -424,7 +539,7 @@ Session arrêtée à la demande de l'utilisateur. Rien n'a été poussé sur le 
 |---|---|---|
 | **D1** — Installation et durcissement Docker | **conforme** | `sudo bash deploy/docker/verify-d1.sh` → 19/19 OK, « RÉSULTAT : D1 conforme. » (2026-10-19 23:51 CEST) |
 | **D2** — Contrôle d'accès sans root pour le backend | **conforme** | `sudo bash deploy/docker/verify-d2.sh` → 30/30 OK, « RÉSULTAT : D2 conforme. » (2026-10-20 02:22 CEST) |
-| **D3** — Image de base commune | **écrite, validée statiquement** | build non exécuté : `sudo bash deploy/docker/build-d3.sh && sudo bash deploy/docker/verify-d3.sh` (section 7, 2026-10-20 21:50 CEST) |
+| **D3** — Image de base commune | **image construite, 24 OK / 1 KO (vérificateur corrigé), re-exécution requise** | `sudo bash deploy/docker/build-d3.sh && sudo bash deploy/docker/verify-d3.sh` → image `sha256:54d89545…`, 632,6 Mo, 1 KO sur `/workspace` dû au contrôle (section 7, 2026-10-20 22:07 CEST) |
 
 ### 8.2 État du système au moment de l'arrêt
 
@@ -474,12 +589,14 @@ Points de retour arrière :
 
 Ordre recommandé (section 5) : `D3 → D4 → D5 → D6 → D11 → D12` (socle fonctionnel) puis `D7 → D8 → D9 → D10` (durcissement, quotas, observabilité).
 
-**Prochaine étape : construire l'image D3 (`sudo bash deploy/docker/build-d3.sh`), puis D4.**
+**Prochaine étape : relancer `sudo bash deploy/docker/verify-d3.sh`** (contrôle `/workspace` corrigé, non re-exécuté) pour clore D3, puis attaquer **D4**.
 
-Points déjà identifiés comme devant être tranchés en D3 :
-- `--read-only` (contrat D4) impose de traiter `/home/preview` : volume dédié ou `tmpfs`, sinon npm/pip échouent au build ou à l'exécution.
-- L'UID fixe de l'utilisateur `preview` doit être réconcilié avec l'UID hôte de `quentin` (`1000`) pour les permissions du workspace monté en `rw`.
-- Aucun secret, aucun `.env` embarqué dans l'image.
+Les trois points que D3 devait trancher sont réglés, et vérifiés par exécution réelle :
+- **`/home/preview` sous `--read-only`** → traité par `HOME`/caches en `tmpfs` : contrôle « HOME/cache npm et pip inscriptibles sous `--read-only` » = `OK`. Aucun volume nommé nécessaire.
+- **UID fixe vs UID hôte `quentin`** → l'image tourne en uid/gid `1000`, identiques à ceux de `quentin` sur l'hôte. Les fichiers du workspace monté en `rw` sont donc possédés par `preview` sans translation d'UID ni `userns-remap`.
+- **Aucun secret, aucun `.env`** → contrôles `OK`, et l'absence totale de directive `COPY`/`ADD` rend l'embarquement de code projet structurellement impossible.
+
+Reste ouvert pour D4 : le wrapper `forge-preview` ne transmet aucune commande au conteneur (`RUN_ARGS+=("$IMAGE")` puis `dk run`), donc `CMD ["/bin/bash","-l"]` s'exécute et sort immédiatement en détaché. Le lanceur métier est la responsabilité de D5.
 
 ### 8.6 État du dépôt
 
