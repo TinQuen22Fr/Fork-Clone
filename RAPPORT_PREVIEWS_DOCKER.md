@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1 et D2 terminées et conformes** (voir section 7) ; étapes D3 à D12 à venir
+**Statut** : en exécution — **D1 conforme, D2 installée et opérationnelle** (voir section 7) ; étapes D3 à D12 à venir
 
 ---
 
@@ -225,9 +225,10 @@ Lancé sans privilège, le script affiche « partiellement vérifié » (les 5 c
 ---
 
 ### Étape D2 — Contrôle d'accès sans donner root au backend
-- **Date** : 2026-10-20 00:09 CEST
-- **Statut** : **artefacts écrits et testés hors privilège (refus) — installation et vérification privilégiée à lancer**
-- **Commits** : `aa22b35` (code D2 : wrapper, sudoers modèle, installateur, vérificateur)
+- **Date** : 2026-10-20 02:10 CEST
+- **Statut** : **installé et opérationnel** — wrapper et règle sudoers posés, `sudo -n forge-preview health` répond ; vérificateur corrigé de 3 faux négatifs (`20846d6`), re-vérification complète à relancer
+- **Commits** : `aa22b35` (code D2 : wrapper, sudoers modèle, installateur, vérificateur), `20846d6` (correction des 3 faux négatifs du vérificateur)
+- **Installé le** : 2026-10-20
 
 **Livrables** (`deploy/docker/`) :
 
@@ -236,7 +237,7 @@ Lancé sans privilège, le script affiche « partiellement vérifié » (les 5 c
 | `forge-preview` | 217 | Wrapper strict : verbes `start\|stop\|rm\|ps\|logs\|inspect\|health`, projet validé par regex, port contraint à la plage, workspace confiné à `FORGE_PREVIEW_WORKSPACE_ROOTS` |
 | `forge-preview.sudoers` | 6 | Modèle de règle sudoers (`quentin ALL=(root) NOPASSWD: /usr/local/bin/forge-preview *`) |
 | `install-d2.sh` | 102 | Installation idempotente : wrapper root:root 0755, répertoire d'état, règle sudoers validée par `visudo`, test `sudo -n` |
-| `verify-d2.sh` | 158 | 30+ contrôles conformité, à lancer en root |
+| `verify-d2.sh` | 165 | 30+ contrôles conformité, à lancer en root |
 
 **Conception du wrapper** — garanties appliquées :
 - **Verbes fermés** : tout verbe hors liste renvoie le code `64` (`usage`).
@@ -261,11 +262,34 @@ start demo                                            -> 64  --workspace exigé
 ```
 `bash -n` OK sur les trois scripts, `jq` non concerné.
 
-**Vérification privilégiée** — commande à lancer en root (les contrôles d'accès et les tests `sudo -n` l'exigent) :
-```bash
-cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/verify-d2.sh
+**Installation exécutée** — `sudo bash deploy/docker/install-d2.sh` (2026-10-20, lancée par l'utilisateur) :
 ```
-Contrôles couverts (30+) : intégrité et propriété du wrapper, conformité et syntaxe de la règle sudoers, absence d'accès Docker direct pour `quentin`, réponses `health` et `ps --` du wrapper, refus (code `64`) des traversées, ports hors plage, workspaces hors racine, verbes inconnus et options non listées, puis présence des garde-fous D4 dans la ligne `docker run`. **Résultat non exécuté à l'heure de rédaction** : lancé en dehors de root, le script s'arrête avec le code `2` (sortie réelle : `verify-d2.sh doit être lancé en root`).
+[D2] installation du wrapper /usr/local/bin/forge-preview
+[D2] écriture de la règle sudoers /etc/sudoers.d/forge-preview-docker
+/tmp/forge-preview-sudoers.i4gqy2: parsed OK
+[D2] règle sudoers installée et validée par visudo
+[D2] quentin hors du groupe docker (conforme).
+[D2] aucune règle sudoers n'autorise docker directement (conforme).
+[D2] sudo -n /usr/local/bin/forge-preview health : OK (29.9.1)
+[D2] D2 terminée. Wrapper : /usr/local/bin/forge-preview — Sudoers : /etc/sudoers.d/forge-preview-docker
+```
+
+**Première vérification privilégiée** — `sudo bash deploy/docker/verify-d2.sh` : **3 KO, tous faux négatifs du vérificateur**, aucune faille réelle :
+
+| Contrôle KO | Cause réelle | Nature |
+|---|---|---|
+| « une règle sudoers autorise docker directement » | le `grep` matchait le **commentaire** d'en-tête du fichier généré (« AUCUNE autre commande docker n'est autorisée ») | défaut du script |
+| « quentin accède à Docker sans privilège » | `docker info` imprime son bloc `Client: Docker Engine - Community` sur stdout **avant** d'échouer sur le socket ; le contrôle ne lisait que `head -n1` | défaut du script |
+| « sudo -n docker a répondu » | le refus réel s'écrit `interactive authentication is required`, motif absent de la liste attendue (`password is required` seulement) | défaut du script |
+
+Preuve que la configuration était déjà correcte : `sudo grep -rEn 'docker' /etc/sudoers /etc/sudoers.d/` ne renvoie **aucune ligne active**, et `sudo -n docker ps` échoue bien.
+
+**Correction appliquée** (`20846d6`, dans `verify-d2.sh` *et* `install-d2.sh`) :
+- le contrôle sudoers n'examine plus que les **lignes actives** (`grep -hvE '^[[:space:]]*(#|$)'`) ;
+- l'accès non privilégié est testé par `docker ps` (et non `docker info`), sur la **sortie complète** ;
+- les motifs de refus `sudo -n` couvrent `interactive authentication is required`, `a terminal is required`, `no tty present`, `askpass`, `not allowed`.
+
+**Vérification après correction** — les 3 contrôles rejoués sur les sorties réelles passent (`OK aucune règle docker directe`, `OK commentaire ignoré`, `OK refus détecté`), les 27 autres étaient déjà OK. Re-vérification complète à relancer par l'utilisateur : `sudo bash deploy/docker/verify-d2.sh`.
 
 **Point d'attention hérité de D1, traité** : le sudoers de `quentin` contient toujours `(ALL : ALL) ALL` (règle d'administration personnelle, hors périmètre applicatif). D2 ne s'appuie pas dessus : le backend n'obtient l'accès Docker que par le wrapper, et `verify-d2.sh` contrôle activement qu'aucune règle sudoers n'autorise `/usr/bin/docker` directement. Aucun ajout au groupe `docker`.
 
@@ -274,4 +298,4 @@ Contrôles couverts (30+) : intégrité et propriété du wrapper, conformité e
 - `--read-only` sans volume persistant sur `/home/preview` (D3/D4) devra être complété au moment du build de l'image.
 - Le wrapper est en `0755` : lisible par tous, exécutable par tous, mais ne fait rien sans l'autorisation sudoers. Les refus sont appliqués avant tout appel moteur.
 
-**Retour arrière** : `git reset --hard aa22b35^` annule le code D2 ; l'installation se retire par `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
+**Retour arrière** : `git reset --hard aa22b35^` annule l'intégralité de D2 (code + correction du vérificateur) ; pour ne retirer que la correction des faux négatifs, `git revert 20846d6`. Désinstallation système : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
