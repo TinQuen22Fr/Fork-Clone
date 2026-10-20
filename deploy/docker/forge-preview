@@ -11,7 +11,8 @@
 #
 # Verbes : start | stop | rm | ps | logs | inspect | health
 # Le projet est valide par regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$).
-# Toute autre commande est refusee. Aucun passage de commande arbitraire.
+# Toute commande arbitraire est refusee. Le conteneur est tenu en vie par
+# une commande de garde interne (sleep infinity) ; le lancement metier releve de D5.
 # Aucun montage du socket Docker, jamais.
 #
 set -u -o pipefail
@@ -24,6 +25,7 @@ PORT_MAX=${PREVIEW_PORT_MAX:-8189}
 # L'API d'un projet ecoute sur port+100 (preview_runtime.API_PORT_OFFSET).
 PORT_MAX=$(( PORT_MAX + 100 ))
 IMAGE=${FORGE_PREVIEW_IMAGE:-forge-preview-base:local}
+NETWORK=${FORGE_PREVIEW_NETWORK:-forge-preview-net}
 ROOTS=${FORGE_PREVIEW_WORKSPACE_ROOTS:-/var/www/forge/workspace}
 
 die() { printf '%s: %s\n' "$PROG" "$*" >&2; exit 64; }
@@ -177,6 +179,7 @@ start)
   done
   [ "$SEEN_WS" -eq 1 ] || die "start exige --workspace <dir>"
   [ "$SEEN_PORT" -eq 1 ] || die "start exige --port <p>"
+  dk network inspect "$NETWORK" >/dev/null 2>&1 || die "reseau $NETWORK absent (lancer install-d4.sh)"
 
   if dk inspect -f '{{.State.Running}}' "$NAME" >/dev/null 2>&1; then
     if [ "$(dk inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = "true" ]; then
@@ -190,6 +193,7 @@ start)
   RUN_ARGS=(-d
     --name "$NAME"
     --hostname "$PROJECT"
+    --network "$NETWORK"
     -p "${PREVIEW_HOST}:${PORT}:${PORT}"
     --cpus "$CPUS"
     --memory "$MEMORY" --memory-swap "$MEMORY"
@@ -208,7 +212,9 @@ start)
     --env "FORGE_PREVIEW_PROJECT=${PROJECT}")
   if [ ${#ENVS[@]} -gt 0 ]; then RUN_ARGS+=("${ENVS[@]}"); fi
   RUN_ARGS+=("$IMAGE")
-  dk run "${RUN_ARGS[@]}"
+  # D4 : garde en vie sans executer de code projet. La commande metier est
+  # lancee par D5 (preview_runtime) via le wrapper.
+  dk run "${RUN_ARGS[@]}" sleep infinity
   ;;
 
 *)

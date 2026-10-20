@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1, D2 et D3 conformes et vérifiées** (voir section 7) ; étapes D4 à D12 à venir
+**Statut** : en exécution — **D1, D2 et D3 conformes et vérifiées**, **D4 écrite et validée statiquement** (installation/exécution root à lancer, voir section 7) ; étapes D5 à D12 à venir
 
 ---
 
@@ -560,6 +560,49 @@ RÉSULTAT : D3 conforme.
 
 ---
 
+### Étape D4 — Contrat d'exécution imposé
+
+- **Date** : 2026-10-20 22:40 CEST
+- **Statut** : **artefacts écrits et validés statiquement — installation et exécution réelle non encore effectuées** (root requis, non déclarée conforme)
+- **Commits** : `a83e7d6` (point de départ D4), `0b81bf5` (code D4 : réseau dédié + `sleep infinity`, figeage de cette étape).
+
+**Objet** : D4 ne crée pas le contrat à partir de zéro — le wrapper `forge-preview` de D2 portait déjà les 8 garde-fous (`--read-only`, tmpfs `/tmp`+`/run`, `--cpus`, `--memory`/`--memory-swap`, `--pids-limit`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--restart=no`, `-v /workspace:rw`, publication sur `127.0.0.1`). Deux manques réels demeuraient, corrigés ici :
+
+1. **Réseau bridge dédié** : le wrapper publiait sur `127.0.0.1` mais sans réseau nommé, donc le conteneur tombait sur le bridge par défaut. Ajout de `NETWORK=${FORGE_PREVIEW_NETWORK:-forge-preview-net}` (ligne 28), création contrôlée dans `install-d4.sh`, garde `dk network inspect` avant `start`, et `--network "$NETWORK"` sur la ligne `docker run`.
+2. **Maintien en vie** : le wrapper terminait sur le nom d'image sans commande ; `CMD ["/bin/bash","-l"]` quittait immédiatement en détaché (point déjà relevé en D3). Ajout de `sleep infinity` en commande de garde — aucun code projet exécuté, le lancement métier (`npm run dev` / `python main.py`) reste la responsabilité de D5.
+
+**Artefacts livrés** (397 lignes, `deploy/docker/`) :
+
+| Fichier | Lignes | Rôle |
+|---|---:|---|
+| `forge-preview` | 223 | wrapper modifié : réseau dédié + `sleep infinity` (les 8 garde-fous D2 inchangés) |
+| `install-d4.sh` | 38 | création du réseau bridge dédié + réinstallation du wrapper |
+| `verify-d4.sh` | 136 | contrôles statiques (contrat) + exécution réelle root (Up, réseau, rootfs RO, cap-drop, restart, memory-swap, pids, cpus, port 127.0.0.1, bind rw, tmpfs) |
+
+**Vérifications effectuées sans privilège** :
+- `bash -n` OK sur les 3 fichiers.
+- `bash deploy/docker/verify-d4.sh` sans root : 18 contrôles statiques du contrat **OK** (dont « aucune publication 0.0.0.0 », « aucun --env-file », « aucun --privileged »), 1 `KO` attendu (« wrapper installé différent du dépôt » — normal, l'installation n'a pas encore été relancée), 1 `??` (exécution réelle, root requis).
+- Correction d'un bug d'invocation : `grep -qF '--env-file'` et `grep -qF '--privileged'` interprétaient le motif comme une option ; remplacés par `grep -qF -- '--env-file'` / `grep -qF -- '--privileged'`.
+
+**À lancer pour clore D4** (root requis) :
+
+```bash
+cd /var/www/forge/workspace/Fork-Clone \
+  && sudo bash deploy/docker/install-d4.sh \
+  && sudo bash deploy/docker/verify-d4.sh
+```
+
+Attendu : réseau `forge-preview-net` créé (driver `bridge`), wrapper réinstallé identique au dépôt, conteneur de recette `forge-preview-verifyd4` **Up** après 2 s avec tous les garde-fous vérifiés par `docker inspect`, puis `RÉSULTAT : D4 conforme.`
+
+**Non vérifié à ce stade** : la création effective du réseau et le démarrage réel d'un conteneur sous le contrat D4 (aucun socket Docker accessible sans privilège dans cette session).
+
+**Retour arrière** :
+- `git reset --hard a83e7d6` annule D4 (fichiers retirés du suivi) — le wrapper système installé reste à recopier depuis D2 si besoin.
+- Réseau et conteneurs de recette : `sudo docker network rm forge-preview-net ; sudo docker rm -f forge-preview-verifyd4`.
+
+
+---
+
 ## 8. Point de reprise — 2026-10-20 02:25 CEST
 
 Session arrêtée à la demande de l'utilisateur. Rien n'a été poussé sur le remote : la branche `claude-ai` est en avance de **11 commits** sur `origin/claude-ai`.
@@ -620,14 +663,14 @@ Points de retour arrière :
 
 Ordre recommandé (section 5) : `D3 → D4 → D5 → D6 → D11 → D12` (socle fonctionnel) puis `D7 → D8 → D9 → D10` (durcissement, quotas, observabilité).
 
-**D3 est close** (`26/26 OK`, `RÉSULTAT : D3 conforme.`). **Prochaine étape : D4 — contrat d'exécution imposé.**
+**D3 est close** (`26/26 OK`, `RÉSULTAT : D3 conforme.`). **D4 est écrite et validée statiquement** (réseau dédié + `sleep infinity`, 397 lignes) — installation et exécution réelle root à lancer : `sudo bash deploy/docker/install-d4.sh && sudo bash deploy/docker/verify-d4.sh`.
 
 Les trois points que D3 devait trancher sont réglés, et vérifiés par exécution réelle :
 - **`/home/preview` sous `--read-only`** → traité par `HOME`/caches en `tmpfs` : contrôle « HOME/cache npm et pip inscriptibles sous `--read-only` » = `OK`. Aucun volume nommé nécessaire.
 - **UID fixe vs UID hôte `quentin`** → l'image tourne en uid/gid `1000`, identiques à ceux de `quentin` sur l'hôte. Les fichiers du workspace monté en `rw` sont donc possédés par `preview` sans translation d'UID ni `userns-remap`.
 - **Aucun secret, aucun `.env`** → contrôles `OK`, et l'absence totale de directive `COPY`/`ADD` rend l'embarquement de code projet structurellement impossible.
 
-Reste ouvert pour D4 : le wrapper `forge-preview` ne transmet aucune commande au conteneur (`RUN_ARGS+=("$IMAGE")` puis `dk run`), donc `CMD ["/bin/bash","-l"]` s'exécute et sort immédiatement en détaché. Le lanceur métier est la responsabilité de D5.
+D4 a comblé la réserve : le wrapper transmet désormais `sleep infinity` en commande de garde (aucun code projet exécuté) et rejoint le réseau `forge-preview-net`. Le lanceur métier (`npm run dev` / `python main.py`) reste la responsabilité de D5.
 
 ### 8.6 État du dépôt
 
