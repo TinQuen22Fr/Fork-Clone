@@ -599,7 +599,7 @@ RÉSULTAT : D3 conforme.
 
 - **Date** : 2026-10-21 — 01:01 CEST (rédaction et contrôles statiques).
 - **Statut** : **écrite et validée statiquement (29 OK / 2 KO d'installation)** — exécution root requise pour clore : `sudo bash deploy/docker/install-d5.sh && sudo bash deploy/docker/verify-d5.sh`.
-- **Commits** : `21e25ea` (point de départ D5), voir section 7 pour le SHA de figeage reporté en fin d'étape.
+- **Commits** : `21e25ea` (point de départ D5), `81621a5` (code D5 : driver Docker, `exec` borné, `_bind()`, `logs` conteneur — figeage de cette étape).
 
 **Objet** : l'API publique (`start`, `stop`, `stop_all`, `status`, `logs`, `idle_projects`, `touch`) est **inchangée** — le frontend ne bouge pas. Seul le moteur change, sélectionné par `PREVIEW_DRIVER=docker|native` (défaut `native`, conformément à D12).
 
