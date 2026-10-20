@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1 et D2 conformes et vérifiées**, **D3 écrite et validée statiquement** (build à lancer, voir section 7) ; étapes D4 à D12 à venir
+**Statut** : en exécution — **D1 et D2 conformes et vérifiées** ; **D3 écrite, relue et corrigée, build non exécuté** (non déclarée conforme, voir section 7) ; étapes D4 à D12 à venir
 
 ---
 
@@ -340,17 +340,21 @@ RÉSULTAT : D2 conforme.
 **Retour arrière** : `git reset --hard aa22b35^` annule l'intégralité de D2 (code + correction du vérificateur) ; pour ne retirer que la correction des faux négatifs, `git revert 20846d6`. Désinstallation système : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
 
 ### Étape D3 — Image de base commune
-- **Date** : 2026-10-20 21:50 CEST
-- **Statut** : **artefacts écrits et validés statiquement — build non encore exécuté**
-- **Commits** : `0c4d358` (code D3 : Dockerfile, script de build, vérificateur)
+- **Date** : 2026-10-20 21:54 CEST (révision finale ; première rédaction 21:50)
+- **Statut** : **artefacts écrits, relus et corrigés — build non exécuté**
 
-**Artefacts livrés** (354 lignes, `deploy/docker/`) :
+  Ce qui est établi : les 3 fichiers existent, sont syntaxiquement valides, cohérents entre eux (même tag `forge-preview-base:local` dans `build-d3.sh`, `forge-preview` et `verify-d3.sh`), et le Dockerfile contient `USER preview` en dernière directive d'identité.
+  
+  Ce qui **n'est pas** établi : l'image n'a jamais été construite. Aucun contrôle d'exécution (`docker run`) n'a été observé. D3 n'est donc **pas déclarée conforme**.
+- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact)
+
+**Artefacts livrés** (383 lignes, `deploy/docker/`) :
 
 | Fichier | Lignes | Rôle |
 |---|---:|---|
-| `preview-base.Dockerfile` | 129 | Image commune : Node LTS + Python 3 + git, `USER preview`, `WORKDIR /workspace` |
-| `build-d3.sh` | 57 | Build unique, tag `forge-preview-base:local`, UID/GID surchargeables |
-| `verify-d3.sh` | 168 | Contrôles de conformité D3 (lecture seule, root requis) |
+| `preview-base.Dockerfile` | 138 | Image commune : Node LTS + Python 3 + git, `USER preview`, `WORKDIR /workspace` |
+| `build-d3.sh` | 60 | Build unique, tag `forge-preview-base:local`, UID/GID et version Node surchargeables |
+| `verify-d3.sh` | 185 | Contrôles de conformité D3 (lecture seule, root requis) |
 
 **Points laissés ouverts en section 8.5, tranchés :**
 
@@ -376,7 +380,15 @@ RÉSULTAT : D2 conforme.
 - Contrôles statiques du Dockerfile rejoués (`USER preview`, `WORKDIR /workspace`, base Node, `python3`, `git`, dernier `USER` = `preview`, aucun secret `ENV`, aucun `COPY`/`ADD`) : **8/8 OK**.
 - `grep` placeholders sur les 3 fichiers : **aucun**.
 
-**Défauts corrigés pendant la rédaction** (aucun n'a été observé en exécution, la relecture les a trouvés avant) :
+**Défauts corrigés en révision (`4c010c1`), après relecture :**
+
+1. **`HEALTHCHECK` toujours en échec** — `CMD test -w /workspace` : sous `--read-only`, `access(2)` renvoie `EROFS` sur `/workspace` avant même de consulter les droits du répertoire. Le conteneur aurait été marqué `unhealthy` **en permanence**, y compris en fonctionnement normal. Bloc supprimé et remplacé par un commentaire qui renvoie la vivacité à D10 (sonde HTTP sur le port publié), seule mesure pertinente.
+2. **Faux négatif « HOME/cache npm »** — le test montait `--tmpfs /tmp:size=64m` alors que le wrapper en monte `256m`, et se fiait à `test -w` sur un montage que le noyau peut refuser en écriture. Remplacé par une **écriture réelle** (`mkdir` + `touch`) sur `npm_config_cache` **et** `PIP_CACHE_DIR`, aux tailles du wrapper.
+3. **Faux négatif « /workspace présent »** — même cause (`test -w` sous `--read-only`). Remplacé par : existence + `stat -c %U` = `preview` + écriture d'un fichier témoin puis suppression.
+4. **Faux positif potentiel « COPY/ADD »** — `grep -Eq 'COPY|ADD'` non ancré matchait les commentaires du Dockerfile citant ces directives. Ancré sur `^[[:space:]]*(COPY|ADD)([[:space:]]|$)`.
+5. **Commentaire Node inexact** — affirmait « Node 26 Active LTS depuis le 28/10/2026 » et « Node 24 en maintenance le 20/10/2026 ». Reformulé exactement : Node 26 est *Current* au 2026-10-20 et devient Active LTS le 28/10/2026 ; Node 24 est encore Active LTS jusque-là. `NODE_VERSION` reste un `ARG` (défaut 26) et `PREVIEW_NODE_VERSION=24` permet d'exiger un LTS strict dès aujourd'hui.
+
+**Défauts corrigés pendant la rédaction initiale** (aucun n'a été observé en exécution, la relecture les a trouvés avant) :
 - commentaire annonçant `tini` absent alors que le paquet était installé → incohérence levée, `tini` retiré ;
 - `groupadd --gid 1000` / `useradd --uid 1000` auraient **échoué au build** (collision avec l'utilisateur `node` de l'image officielle) → renommage non destructif à la place ;
 - `ARG PYTHON_VERSION` déclaré mais jamais utilisé (donc mensonger sur l'épinglage) → supprimé ;
@@ -395,7 +407,10 @@ cd /var/www/forge/workspace/Fork-Clone \
 - Conséquences attendues, à confirmer au premier build : la version exacte de Python (issue de Debian bookworm, `apt` non épinglé — d'où la suppression de l'ARG trompeur) ; la taille de l'image ; le bon fonctionnement de `node`/`npm` sous `--read-only`.
 - `build-essential` + `-dev` ajoutent du poids à l'image : assumé, mais un second étage de build pourra alléger si nécessaire.
 
-**Retour arrière** : `git reset --hard 0c4d358^` annule D3. Côté système, rien n'est installé par D3 en dehors de l'image : `docker image rm forge-preview-base:local`.
+**Retour arrière** :
+- `git reset --hard 0c4d358^` annule l'intégralité de D3 (fichiers supprimés).
+- `git reset --hard 0c4d358` conserve le code D3 initial et retire la révision `4c010c1` (healthcheck et faux négatifs).
+- Côté système, D3 n'installe rien hors de l'image : `sudo docker image rm forge-preview-base:local`.
 
 ---
 
