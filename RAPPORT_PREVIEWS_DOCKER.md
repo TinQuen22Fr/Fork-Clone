@@ -348,13 +348,13 @@ RÉSULTAT : D2 conforme.
   Historique de cette clôture : le premier passage avait rendu **24 `OK` / 1 `KO`** (25 contrôles). Le `KO` ne venait **pas** de l'image mais du contrôle `/workspace`, qui exigeait une écriture dans un répertoire gelé par `--read-only` et sans montage (voir « Défaut du vérificateur » ci-dessous). Après scission du contrôle en deux (propriété / écriture sous montage rw), le passage final rend **26/26 `OK`**.
 - **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact), `2de1fd5` (`verify-d3.sh` exécute ses contrôles statiques sans privilège), `eebb88a` (correction du contrôle `/workspace` + section 7 avec le build réel), puis le commit de figeage de la conformité D3, qui replie la sortie `26/26 OK` dans cette section (son SHA est celui du commit qui contient ce bloc : `git log -1 -- RAPPORT_PREVIEWS_DOCKER.md`)
 
-**Artefacts livrés** (383 lignes, `deploy/docker/`) :
+**Artefacts livrés** (425 lignes, `deploy/docker/`) :
 
 | Fichier | Lignes | Rôle |
 |---|---:|---|
 | `preview-base.Dockerfile` | 138 | Image commune : Node LTS + Python 3 + git, `USER preview`, `WORKDIR /workspace` |
 | `build-d3.sh` | 60 | Build unique, tag `forge-preview-base:local`, UID/GID et version Node surchargeables |
-| `verify-d3.sh` | 205 | Contrôles D3 : 9 contrôles statiques exécutables sans privilège, contrôles image/conteneur réservés à root |
+| `verify-d3.sh` | 227 | Contrôles D3 : 9 contrôles statiques exécutables sans privilège, contrôles image/conteneur réservés à root |
 
 **Points laissés ouverts en section 8.5, tranchés :**
 
@@ -632,4 +632,4 @@ Reste ouvert pour D4 : le wrapper `forge-preview` ne transmet aucune commande au
 ### 8.6 État du dépôt
 
 - Branche `claude-ai`, working tree propre **hors `.forge-context`** (fichier de contexte de l'agent, modifié et volontairement non commité — hors périmètre du rapport).
-- **21 commits** locaux non poussés (`git rev-list --count origin/claude-ai..claude-ai` = 21, mesuré le 2026-10-20 22:26 CEST) : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
+- **22 commits** locaux non poussés (`git rev-list --count origin/claude-ai..claude-ai` = 22, mesuré le 2026-10-20 22:28 CEST) : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
