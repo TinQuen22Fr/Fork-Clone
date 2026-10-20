@@ -27,10 +27,13 @@ ok()    { printf ' \033[1;32mOK\033[0m   %s\n' "$*"; }
 ko()    { printf ' \033[1;31mKO\033[0m   %s\n' "$*"; fail=$((fail+1)); }
 skip()  { printf ' \033[1;33m??\033[0m   %s\n' "$*"; unverified=$((unverified+1)); }
 
+IS_ROOT=1
 if [ "$(id -u)" -ne 0 ]; then
-    printf '\033[1;33mverify-d3.sh doit être lancé en root : sudo bash deploy/docker/verify-d3.sh\033[0m\n' >&2
-    printf 'Les contrôles docker run et l inspection de l image exigent le socket.\n' >&2
-    exit 2
+    IS_ROOT=0
+    printf '\033[1;33mAvertissement : exécution sans privilège.\033[0m\n' >&2
+    printf 'Les contrôles statiques du Dockerfile sont exécutés ; les contrôles\n' >&2
+    printf 'd image et de conteneur (socket Docker) seront marqués non exécutés.\n' >&2
+    printf 'Vérification complète : sudo bash deploy/docker/verify-d3.sh\n' >&2
 fi
 
 export DOCKER_CONFIG="${DOCKER_CONFIG:-/tmp/forge-d3-dockercfg}"
@@ -70,6 +73,24 @@ if grep -Eq '^[[:space:]]*(COPY|ADD)([[:space:]]|$)' "$DOCKERFILE"; then
     ko "COPY/ADD présent : du code pourrait être embarqué dans l image"
 else
     ok "aucun COPY/ADD (aucun code projet dans l image)"
+fi
+
+
+# Sans privilège, on s'arrete ici : tout ce qui suit exige le socket Docker.
+# Le script ne conclut pas "conforme" et ne sort pas en erreur : il rend les
+# controles statiques executes, puis declare le reste non verifie.
+if [ "$IS_ROOT" -ne 1 ]; then
+    echo
+    echo "== D3 : image construite =="
+    skip "inspection de l'image non exécutable sans privilège (socket Docker)"
+    skip "execution reelle non exécutable sans privilège (docker run)"
+    echo
+    if [ "$fail" -gt 0 ]; then
+        printf '\033[1;31mRÉSULTAT : D3 NON conforme — %s contrôle(s) KO.\033[0m\n' "$fail"
+        exit 1
+    fi
+    printf '\033[1;33mRÉSULTAT : D3 partiellement vérifié — contrôles dynamiques non exécutés (root requis).\033[0m\n'
+    exit 0
 fi
 
 echo "== D3 : image construite =="
