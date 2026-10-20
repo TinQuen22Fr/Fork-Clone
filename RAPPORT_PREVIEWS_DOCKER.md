@@ -346,7 +346,7 @@ RÉSULTAT : D2 conforme.
   Établi par exécution réelle (2026-10-20 22:07 CEST) : l'image `forge-preview-base:local` **se construit** (`sha256:54d89545…`, 632,6 Mo), démarre sous `--read-only`, tourne en uid/gid `1000`, et fournit node v26.12.0, npm 11.20.0, Python 3.11.2, git 2.39.5 sans capability effective (`CapEff=0`). **24 contrôles `OK`, 1 `KO`** (25 contrôles au total).
 
   Ce qui **n'est pas** établi : la conformité finale. Le `KO` restant portait sur `/workspace` et ne venait **pas** de l'image mais du contrôle lui-même (voir « Défaut du vérificateur » ci-dessous). Le contrôle a été corrigé, mais `verify-d3.sh` n'a **pas été relancé** après correction. D3 n'est donc **pas** déclarée conforme à cette heure.
-- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact), `2de1fd5` (`verify-d3.sh` exécute ses contrôles statiques sans privilège), `d30af68` (correction du contrôle `/workspace` + section 7 avec le build réel)
+- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact), `2de1fd5` (`verify-d3.sh` exécute ses contrôles statiques sans privilège), `eebb88a` (correction du contrôle `/workspace` + section 7 avec le build réel ; ce bloc de suivi est figé par le commit qui le contient, voir `git log -- RAPPORT_PREVIEWS_DOCKER.md`)
 
 **Artefacts livrés** (383 lignes, `deploy/docker/`) :
 
