@@ -564,7 +564,7 @@ RÉSULTAT : D3 conforme.
 
 - **Date** : 2026-10-20 22:40 CEST
 - **Statut** : **artefacts écrits et validés statiquement — installation et exécution réelle non encore effectuées** (root requis, non déclarée conforme)
-- **Commits** : `a83e7d6` (point de départ D4), `0b81bf5` (code D4 : réseau dédié + `sleep infinity`, figeage de cette étape).
+- **Commits** : `a83e7d6` (point de départ D4), `ce47082` (code D4 : réseau dédié + `sleep infinity`, figeage de cette étape).
 
 **Objet** : D4 ne crée pas le contrat à partir de zéro — le wrapper `forge-preview` de D2 portait déjà les 8 garde-fous (`--read-only`, tmpfs `/tmp`+`/run`, `--cpus`, `--memory`/`--memory-swap`, `--pids-limit`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--restart=no`, `-v /workspace:rw`, publication sur `127.0.0.1`). Deux manques réels demeuraient, corrigés ici :
 
