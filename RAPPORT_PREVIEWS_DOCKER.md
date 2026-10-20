@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1 conforme, D2 installée et opérationnelle** (voir section 7) ; étapes D3 à D12 à venir
+**Statut** : en exécution — **D1 et D2 conformes et vérifiées** (voir section 7) ; étapes D3 à D12 à venir
 
 ---
 
@@ -225,9 +225,9 @@ Lancé sans privilège, le script affiche « partiellement vérifié » (les 5 c
 ---
 
 ### Étape D2 — Contrôle d'accès sans donner root au backend
-- **Date** : 2026-10-20 02:10 CEST
-- **Statut** : **installé et opérationnel** — wrapper et règle sudoers posés, `sudo -n forge-preview health` répond ; vérificateur corrigé de 3 faux négatifs (`20846d6`), re-vérification complète à relancer
-- **Commits** : `aa22b35` (code D2 : wrapper, sudoers modèle, installateur, vérificateur), `20846d6` (correction des 3 faux négatifs du vérificateur)
+- **Date** : 2026-10-20 02:10 CEST (vérification finale 02:22 CEST)
+- **Statut** : **conforme** — installation posée, vérification privilégiée 30/30 OK, `RÉSULTAT : D2 conforme.` (2026-10-20 02:22 CEST)
+- **Commits** : `aa22b35` (code D2 : wrapper, sudoers modèle, installateur, vérificateur), `20846d6` (correction des 3 faux négatifs du vérificateur) — ce bloc de suivi est figé par le commit qui le contient, voir `git log -- RAPPORT_PREVIEWS_DOCKER.md`
 - **Installé le** : 2026-10-20
 
 **Livrables** (`deploy/docker/`) :
@@ -289,7 +289,46 @@ Preuve que la configuration était déjà correcte : `sudo grep -rEn 'docker' /e
 - l'accès non privilégié est testé par `docker ps` (et non `docker info`), sur la **sortie complète** ;
 - les motifs de refus `sudo -n` couvrent `interactive authentication is required`, `a terminal is required`, `no tty present`, `askpass`, `not allowed`.
 
-**Vérification après correction** — les 3 contrôles rejoués sur les sorties réelles passent (`OK aucune règle docker directe`, `OK commentaire ignoré`, `OK refus détecté`), les 27 autres étaient déjà OK. Re-vérification complète à relancer par l'utilisateur : `sudo bash deploy/docker/verify-d2.sh`.
+**Vérification finale** — `sudo bash deploy/docker/verify-d2.sh` (2026-10-20 02:22 CEST) : **30/30 OK**, `RÉSULTAT : D2 conforme.`
+```
+== D2 : wrapper ==
+  OK   wrapper présent : /usr/local/bin/forge-preview
+  OK   propriétaire root:root
+  OK   mode 755 (non modifiable par le backend)
+  OK   wrapper identique au dépôt (sha256)
+  OK   le wrapper ne mentionne pas docker.sock
+== D2 : règle sudoers ==
+  OK   fichier présent : /etc/sudoers.d/forge-preview-docker
+  OK   propriétaire root:root
+  OK   mode 0440
+  OK   syntaxe validée par visudo
+  OK   exactement 1 règle active
+  OK   règle conforme pour quentin (wrapper seul, NOPASSWD)
+  OK   aucune règle sudoers n'autorise docker directement
+== D2 : isolation de l'accès ==
+  OK   quentin hors du groupe docker
+  OK   quentin n'accède pas au socket Docker sans privilège
+  OK   sudo -n docker refusé pour quentin (aucun accès direct)
+== D2 : fonctionnement du wrapper ==
+  OK   sudo -n forge-preview health : OK (moteur 29.9.1)
+  OK   refus attendu (projet avec traversée) : code 64
+  OK   refus attendu (port hors plage) : code 64
+  OK   refus attendu (workspace hors racine) : code 64
+  OK   refus attendu (verbe inconnu) : code 64
+  OK   refus attendu (option non listée) : code 64
+  OK   sudo -n forge-preview ps -- : le verbe atteint le moteur
+== D2 : contrat d'exécution (garde-fous présents dans le wrapper) ==
+  OK   garde-fou présent : security-opt no-new-privileges
+  OK   garde-fou présent : cap-drop ALL
+  OK   garde-fou présent : read-only
+  OK   garde-fou présent : pids-limit
+  OK   garde-fou présent : memory-swap
+  OK   garde-fou présent : restart=no
+  OK   garde-fou présent : /workspace:rw
+  OK   garde-fou présent : 127.0.0.1
+
+RÉSULTAT : D2 conforme.
+```
 
 **Point d'attention hérité de D1, traité** : le sudoers de `quentin` contient toujours `(ALL : ALL) ALL` (règle d'administration personnelle, hors périmètre applicatif). D2 ne s'appuie pas dessus : le backend n'obtient l'accès Docker que par le wrapper, et `verify-d2.sh` contrôle activement qu'aucune règle sudoers n'autorise `/usr/bin/docker` directement. Aucun ajout au groupe `docker`.
 
