@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1, D2, D3 et D4 conformes et vérifiées** ; étapes D5 à D12 à venir
+**Statut** : en exécution — **D1, D2, D3 et D4 conformes et vérifiées**, **D5 écrite et validée statiquement (29 OK / 2 KO d'installation, root requis pour clore)** ; étapes D6 à D12 à venir
 
 ---
 
@@ -593,3 +593,50 @@ RÉSULTAT : D3 conforme.
 
 **Non vérifié** : rien — D4 est conforme et vérifiée en exécution root.
 
+---
+
+### Étape D5 — Remplacement du driver dans `preview_runtime.py`
+
+- **Date** : 2026-10-21 — 01:01 CEST (rédaction et contrôles statiques).
+- **Statut** : **écrite et validée statiquement (29 OK / 2 KO d'installation)** — exécution root requise pour clore : `sudo bash deploy/docker/install-d5.sh && sudo bash deploy/docker/verify-d5.sh`.
+- **Commits** : `21e25ea` (point de départ D5), voir section 7 pour le SHA de figeage reporté en fin d'étape.
+
+**Objet** : l'API publique (`start`, `stop`, `stop_all`, `status`, `logs`, `idle_projects`, `touch`) est **inchangée** — le frontend ne bouge pas. Seul le moteur change, sélectionné par `PREVIEW_DRIVER=docker|native` (défaut `native`, conformément à D12).
+
+**Artefacts** (3 fichiers, 1193 lignes au total) :
+
+| Fichier | Lignes | Rôle |
+|---|---:|---|
+| `backend/preview_runtime.py` | 882 | driver `docker` : conteneur unique par projet, install et lancement bornés par le wrapper |
+| `deploy/docker/install-d5.sh` | 83 | wrapper à jour, règle sudoers pour l'utilisateur du service, drop-in `PREVIEW_DRIVER=docker` |
+| `deploy/docker/verify-d5.sh` | 228 | 29 contrôles statiques + bout-en-bout réel en root (conteneur, port, HTTP, logs, arrêt) |
+
+**Ce que fait le driver docker** :
+1. `_start_docker` : `docker run` unique par projet via le wrapper D4, avec **tous** les ports des cibles (`--port`, `--port2`).
+2. `_run_docker` : installation (`npm install`, `python3 -m venv` + `pip install`) puis lancement, tous deux exécutés **dans** le conteneur via le verbe borné `exec --script .forge-preview/<cible>.<étape>.sh`.
+3. `logs()` : `forge-preview logs <projet> --tail N` (docker logs), plus de lecture du fichier local.
+4. `stop()` / `stop_all()` / `_kill()` : `docker stop` — **jamais** `rm`, le workspace en bind mount reste intact (préparation D6).
+5. `_spawn_wait` : en mode docker, passe par `exec --script` (sans `--detach`) ; le `subprocess.Popen` hôte n'est plus atteint que par le driver `native`.
+
+**Deux défauts réels corrigés pendant l'étape** :
+- **Bind interne** : `plan()` figeait `127.0.0.1` dans les commandes. Un serveur lié à `127.0.0.1` **dans** un conteneur est injoignable à travers le port publié (le DNAT arrive sur `eth0`). Ajout de `_bind()` : `0.0.0.0` en docker, `127.0.0.1` en natif. La publication reste liée à `127.0.0.1` côté hôte (contrat D4 inchangé), seul le bind interne change.
+- **`_docker_cmd` cassait les chemins du venv** : la fonction remplaçait tout chemin absolu dont le basename était connu (`uvicorn`) par le basename seul. Le venv du projet (`.venv/bin/uvicorn`) était donc perdu. Correction : un chemin **sous** le workspace devient `/workspace/<rel>` ; un binaire système devient son nom ; un chemin hors workspace est laissé intact (il n'existera pas dans le conteneur, mais le masquer cacherait l'erreur).
+
+**Vérifications effectuées sans privilège** :
+- `python3 -m py_compile backend/preview_runtime.py` : OK.
+- `bash -n` sur `install-d5.sh`, `verify-d5.sh`, `forge-preview` : OK.
+- `bash deploy/docker/verify-d5.sh` : **29 OK**, 2 KO attendus (`drop-in absent`, `wrapper installé différent du dépôt`) — ils disparaissent après `install-d5.sh`.
+- Tests unitaires du driver : `_bind()` rend `0.0.0.0` en docker / `127.0.0.1` en natif ; `_docker_cmd` rend `['/workspace/.venv/bin/uvicorn', …]`, `['npm', 'run', 'dev']`, laisse `/opt/other/bin/tool` intact.
+- Plans générés : projet statique → `exec python3 -m http.server 8095 --bind 0.0.0.0 --directory /workspace/.` ; monorepo vite+fastapi → `cd frontend` / `cd backend` et binds `0.0.0.0`.
+- Non-régression D4 : les contrôles statiques D4 restent verts ; seul le contrôle d'installation signale le wrapper non réinstallé, ce que fait précisément `install-d5.sh`.
+
+**À lancer pour clore D5** :
+```bash
+cd /var/www/forge/workspace/Fork-Clone \
+  && sudo bash deploy/docker/install-d5.sh \
+  && sudo bash deploy/docker/verify-d5.sh
+```
+
+**Retour arrière** :
+- `git reset --hard 21e25ea` annule l'intégralité de D5 (fichiers supprimés, runtime restauré).
+- Côté système : `sudo rm -f /etc/systemd/system/forge-backend.service.d/50-forge-preview-driver.conf /etc/sudoers.d/forge-preview-<user> && sudo systemctl daemon-reload` — le driver repasse à `native` (défaut), les workspaces n'ayant jamais quitté l'hôte.

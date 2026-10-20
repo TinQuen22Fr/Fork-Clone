@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -81,6 +82,7 @@ class PreviewProcess:
         self.phase: str = PHASE_STOPPED
         self.message: str = ""
         self.started_at: float = 0.0
+        self.running: bool = False
         self.task: Optional[asyncio.Task] = None
 
 
@@ -93,6 +95,10 @@ class PreviewManager:
         self._procs: dict[str, dict[str, PreviewProcess]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._last_seen: dict[str, float] = {}
+        self.driver: str = os.environ.get("PREVIEW_DRIVER", "native").strip().lower()
+        self.wrapper: str = os.environ.get(
+            "FORGE_PREVIEW_WRAPPER", "/usr/local/bin/forge-preview"
+        )
 
     # -- inactivite -------------------------------------------------------
     def touch(self, project: str) -> None:
@@ -103,7 +109,7 @@ class PreviewManager:
         """Projets dont un process tourne et sans activite depuis max_idle s."""
         now, out = time.time(), []
         for project, targets in self._procs.items():
-            alive = any(t.proc and t.proc.poll() is None for t in targets.values())
+            alive = any(t.running for t in targets.values())
             if alive and now - self._last_seen.get(project, 0.0) > max_idle:
                 out.append(project)
         return out
@@ -122,6 +128,16 @@ class PreviewManager:
     def log_path(self, project: str, target: str) -> Path:
         return self.state_dir / f"{project}.{target}.log"
 
+    def _bind(self) -> str:
+        """Adresse d'ecoute des applications.
+
+        En mode natif, l'app tourne sur l'hote : 127.0.0.1 est le bon choix.
+        En mode docker, l'app tourne DANS le conteneur : elle doit ecouter sur
+        0.0.0.0 pour etre joignable a travers le port publie. La publication
+        reste liee a 127.0.0.1 cote hote (contrat D4), seul le bind interne
+        change."""
+        return "0.0.0.0" if self.driver == "docker" else "127.0.0.1"
+
     def _env(self, port: int, extra: Optional[dict] = None) -> dict:
         """Environnement des process enfants. HOME et caches dans le workspace
         (systemd ProtectHome=yes + PrivateTmp=yes rendent /root et /tmp
@@ -136,7 +152,7 @@ class PreviewManager:
                 "npm_config_fund": "false",
                 "npm_config_audit": "false",
                 "PORT": str(port),
-                "HOST": "127.0.0.1",
+                "HOST": self._bind(),
                 "BROWSER": "none",
                 "CI": "1",
                 "NODE_ENV": "development",
@@ -154,6 +170,88 @@ class PreviewManager:
             env.update({k: str(v) for k, v in extra.items()})
         return env
 
+
+    def _rel_script(self, target: str, name: str) -> str:
+        """Chemin relatif au workspace monte d'un script borne, ecrit sous
+        <projet>/.forge-preview/. Le wrapper n'autorise que ce prefixe."""
+        return f".forge-preview/{target}.{name}.sh"
+
+    def _write_script(self, project: str, target: str, name: str, body: str) -> str:
+        d = self.project_dir(project) / ".forge-preview"
+        d.mkdir(parents=True, exist_ok=True)
+        rel = self._rel_script(target, name)
+        p = d / f"{target}.{name}.sh"
+        p.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(p, 0o755)
+        return rel
+
+    def _rel_cwd(self, project: str, cwd: str) -> str:
+        try:
+            rel = Path(cwd).resolve().relative_to(self.project_dir(project).resolve())
+            return rel.as_posix() if rel.as_posix() != "." else ""
+        except ValueError:
+            return ""
+
+    def _docker_cmd(self, cmd: list[str], project: str) -> list[str]:
+        """Adapte une commande de l'hote au conteneur.
+
+        Deux transformations seulement :
+        1. un chemin absolu SOUS le workspace du projet (venv, binaire local)
+           devient /workspace/<rel> — le workspace est monte la ;
+        2. un binaire systeme de l'hote (npm, python3...) devient son nom,
+           resolu par le PATH de l'image.
+        Un chemin absolu hors workspace est laisse tel quel : il n'existera
+        pas dans le conteneur, et le faire disparaitre masquerait l'erreur."""
+        known = {"npm", "npx", "node", "python3", "python", "pip", "pip3",
+                 "uvicorn", "gunicorn"}
+        root = self.project_dir(project).resolve() if project else None
+        out: list[str] = []
+        for arg in cmd:
+            if root is not None and arg.startswith("/"):
+                try:
+                    rel = Path(arg).resolve().relative_to(root)
+                    out.append("/workspace/" + rel.as_posix())
+                    continue
+                except ValueError:
+                    pass
+            base = arg.rsplit("/", 1)[-1]
+            out.append(base if arg.startswith("/") and base in known else arg)
+        return out
+
+    def _script_cmd(self, st: PreviewProcess, cmd: list[str], cwd: str) -> str:
+        rel = self._rel_cwd(st.project, cwd)
+        head = [f"cd {shlex.quote(rel)}"] if rel else []
+        head.append(shlex.join(self._docker_cmd(cmd, st.project)))
+        return "\n".join(head)
+
+    def _script_run(self, st: PreviewProcess, cmd: list[str], cwd: str) -> str:
+        """Script de lancement. _bind() a deja place la bonne adresse dans la
+        commande ; on exporte HOST pour les serveurs qui le lisent."""
+        rel = self._rel_cwd(st.project, cwd)
+        head = [f"export HOST={self._bind()}", "export PORT=" + str(st.port)]
+        if rel:
+            head.append(f"cd {shlex.quote(rel)}")
+        head.append("exec " + shlex.join(self._docker_cmd(cmd, st.project)))
+        return "\n".join(head)
+
+    async def _container_running(self, project: str) -> bool:
+        code, out = await self._docker("inspect", project, timeout=30)
+        return code == 0 and '"Running": true' in out
+
+    async def _docker(self, *args: str, timeout: int = 120) -> tuple[int, str]:
+        cmd = ["sudo", "-n", self.wrapper, *args]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return 124, f"timeout ({timeout}s) : forge-preview {' '.join(args)}"
+        return proc.returncode, (out or b"").decode("utf-8", "replace")
     # -- detection --------------------------------------------------------
     def plan(self, project: str, port: int) -> dict:
         """Retourne {targets: [plan...], hint: str}. Un plan contient :
@@ -277,11 +375,11 @@ class PreviewManager:
             return {"kind": "", "hint": "package.json sans script `dev` ni `start`."}
 
         if is_vite:
-            cmd = [npm, "run", script, "--", "--host", "127.0.0.1",
+            cmd = [npm, "run", script, "--", "--host", self._bind(),
                    "--port", str(port), "--strictPort"]
             kind = "node-vite"
         elif is_next:
-            cmd = [npm, "run", script, "--", "-H", "127.0.0.1", "-p", str(port)]
+            cmd = [npm, "run", script, "--", "-H", self._bind(), "-p", str(port)]
             kind = "node-next"
         elif is_cra:
             cmd = [npm, "run", script]
@@ -308,7 +406,7 @@ class PreviewManager:
                 return {
                     "kind": "static",
                     "cmd": [_bin("python3") or "python3", "-m", "http.server", str(port),
-                            "--bind", "127.0.0.1", "--directory", str(target)],
+                            "--bind", self._bind(), "--directory", str(target)],
                     "install": None,
                     "cwd": str(d),
                     "hint": "",
@@ -352,7 +450,7 @@ class PreviewManager:
             asgi = "FastAPI(" in src
             uvicorn_bin = str(venv / "bin" / "uvicorn")
             if asgi:
-                cmd = [uvicorn_bin, f"{module}:app", "--host", "127.0.0.1", "--port", str(port)]
+                cmd = [uvicorn_bin, f"{module}:app", "--host", self._bind(), "--port", str(port)]
                 kind = "python-fastapi"
             else:
                 cmd = [str(vpy), entry]
@@ -364,6 +462,127 @@ class PreviewManager:
         return {"kind": kind, "cmd": cmd, "install": install, "cwd": str(d), "hint": ""}
 
     # -- cycle de vie -----------------------------------------------------
+    async def _start_docker(
+        self, project: str, port: int, plan: dict, restart: bool
+    ) -> dict:
+        """Un conteneur par projet (contrat D4), tous les ports publies,
+        puis un _run par cible (install + exec borne)."""
+        tracked = self._procs.setdefault(project, {})
+        targets = plan["targets"]
+        ports = sorted({t["port"] for t in targets})
+
+        running = await self._container_running(project)
+        if running and not restart:
+            for t in targets:
+                tport = t["port"]
+                st = tracked.get(t["target"]) or PreviewProcess(
+                    project, t["target"], tport, self.log_path(project, t["target"])
+                )
+                st.kind = t.get("kind", "")
+                st.cmd = " ".join(t.get("cmd", []))
+                st.running = True
+                st.phase = PHASE_RUNNING
+                st.message = ""
+                tracked[t["target"]] = st
+            return self.status(project, port)
+
+        if running and restart:
+            await self._docker("rm", project, timeout=60)
+            running = False
+
+        for st in list(tracked.values()):
+            st.running = False
+
+        args = [
+            "start", project,
+            "--workspace", str(self.project_dir(project)),
+            "--port", str(ports[0]),
+        ]
+        if len(ports) > 1:
+            args += ["--port2", str(ports[1])]
+        code, out = await self._docker(*args)
+        if code != 0:
+            for t in targets:
+                st = tracked.get(t["target"]) or PreviewProcess(
+                    project, t["target"], t["port"], self.log_path(project, t["target"])
+                )
+                st.phase = PHASE_ERROR
+                st.message = f"echec forge-preview start (code {code}) : {out[-200:]}"
+                tracked[t["target"]] = st
+            return self.status(project, port)
+
+        for t in targets:
+            st = PreviewProcess(
+                project, t["target"], t["port"], self.log_path(project, t["target"])
+            )
+            st.kind = t.get("kind", "")
+            st.cmd = " ".join(t.get("cmd", []))
+            st.running = True
+            st.phase = PHASE_INSTALLING if t.get("install") else PHASE_STARTING
+            tracked[t["target"]] = st
+            st.task = asyncio.create_task(self._run_docker(st, t))
+        return self.status(project, port)
+
+    async def _run_docker(self, st: PreviewProcess, plan: dict) -> None:
+        port = plan["port"]
+        project = st.project
+        target = st.target
+        st.running = True
+        st.started_at = time.time()
+
+        install = plan.get("install")
+        if install:
+            st.phase = PHASE_INSTALLING
+            if install == ["__venv__"]:
+                steps = [["python3", "-m", "venv", ".venv"]]
+                if (Path(plan["cwd"]) / "requirements.txt").is_file():
+                    steps.append([".venv/bin/python", "-m", "pip", "install",
+                                  "-r", "requirements.txt"])
+            else:
+                steps = [self._docker_cmd(install, project)]
+            for step in steps:
+                code = await self._spawn_wait(st, step, plan["cwd"], {}, st.log_path,
+                                              timeout=1800)
+                if code != 0:
+                    st.phase = PHASE_ERROR
+                    st.message = f"installation echouee (code {code}) — voir les logs"
+                    return
+            marker = Path(plan["cwd"]) / ".venv" / ".forge-installed"
+            if marker.parent.is_dir():
+                marker.write_text("ok\n", encoding="utf-8")
+            fresh = self.plan(
+                st.project,
+                st.port - (API_PORT_OFFSET if st.target == "api" else 0),
+            )
+            for t in fresh["targets"]:
+                if t["target"] == st.target and t.get("kind"):
+                    plan = t
+                    st.kind = t["kind"]
+                    st.cmd = " ".join(t["cmd"])
+                    break
+
+        st.phase = PHASE_STARTING
+        rel = self._write_script(
+            project, target, "run", self._script_run(st, plan["cmd"], plan["cwd"])
+        )
+        code, out = await self._docker("exec", project, "--script", rel, "--detach")
+        if code != 0:
+            st.phase = PHASE_ERROR
+            st.message = f"echec lancement (code {code}) : {out[-200:]}"
+            return
+        for _ in range(360):
+            if await asyncio.get_running_loop().run_in_executor(None, _port_open, port):
+                st.phase = PHASE_RUNNING
+                st.message = ""
+                logger.info(
+                    "Preview %s/%s en ligne sur 127.0.0.1:%s (docker)",
+                    project, target, port,
+                )
+                return
+            await asyncio.sleep(0.5)
+        st.phase = PHASE_ERROR
+        st.message = "port non ouvert apres 180s — voir les logs"
+
     async def start(self, project: str, port: int, restart: bool = False) -> dict:
         self.touch(project)
         async with self._lock(project):
@@ -379,10 +598,12 @@ class PreviewManager:
 
             self._dirs()
             tracked = self._procs.setdefault(project, {})
+            if self.driver == "docker":
+                return await self._start_docker(project, port, plan, restart)
             for tplan in plan["targets"]:
                 target, tport = tplan["target"], tplan["port"]
                 st = tracked.get(target)
-                if st and st.proc and st.proc.poll() is None:
+                if st and st.running:
                     if not restart:
                         continue
                     await self._kill(st)
@@ -409,6 +630,9 @@ class PreviewManager:
             return self.status(project, port)
 
     async def _run(self, st: PreviewProcess, plan: dict) -> None:
+        if self.driver == "docker":
+            await self._run_docker(st, plan)
+            return
         cwd, port = plan["cwd"], plan["port"]
         env = self._env(port, plan.get("env"))
         log = st.log_path
@@ -430,7 +654,7 @@ class PreviewManager:
                 else:
                     steps = [install]
                 for step in steps:
-                    code = await self._spawn_wait(step, cwd, env, log, timeout=1800)
+                    code = await self._spawn_wait(st, step, cwd, env, log, timeout=1800)
                     if code != 0:
                         st.phase = PHASE_ERROR
                         st.message = f"installation echouee (code {code}) — voir les logs"
@@ -488,8 +712,18 @@ class PreviewManager:
             logger.exception("Preview %s/%s : echec de demarrage", st.project, st.target)
 
     async def _spawn_wait(
-        self, cmd: list[str], cwd: str, env: dict, log: Path, timeout: int
+        self, st: PreviewProcess, cmd: list[str], cwd: str, env: dict, log: Path, timeout: int
     ) -> int:
+        if self.driver == "docker":
+            rel = self._write_script(
+                st.project, st.target, "install", self._script_cmd(st, cmd, cwd)
+            )
+            code, out = await self._docker(
+                "exec", st.project, "--script", rel, timeout=timeout
+            )
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(f"\n$ {' '.join(cmd)}\n{out}\n")
+            return code
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(f"\n$ {' '.join(cmd)}\n")
             fh.flush()
@@ -506,6 +740,11 @@ class PreviewManager:
     async def _kill(self, st: PreviewProcess) -> None:
         if st.task and not st.task.done():
             st.task.cancel()
+        if self.driver == "docker":
+            st.running = False
+            st.phase = PHASE_STOPPED
+            st.message = ""
+            return
         proc = st.proc
         if proc and proc.poll() is None:
             try:
@@ -522,19 +761,34 @@ class PreviewManager:
                 except Exception:
                     proc.kill()
         st.proc = None
+        st.running = False
         st.phase = PHASE_STOPPED
         st.message = ""
 
     async def stop(self, project: str, port: int) -> dict:
         async with self._lock(project):
+            if self.driver == "docker":
+                await self._docker("stop", project, timeout=60)
+                for st in self._procs.get(project, {}).values():
+                    st.running = False
+                    st.phase = PHASE_STOPPED
+                    st.message = ""
+                return self.status(project, port)
             for st in list(self._procs.get(project, {}).values()):
                 await self._kill(st)
             return self.status(project, port)
 
     async def stop_all(self) -> None:
         for project in list(self._procs):
-            for st in list(self._procs[project].values()):
-                await self._kill(st)
+            if self.driver == "docker":
+                await self._docker("stop", project, timeout=60)
+                for st in self._procs[project].values():
+                    st.running = False
+                    st.phase = PHASE_STOPPED
+                    st.message = ""
+            else:
+                for st in list(self._procs[project].values()):
+                    await self._kill(st)
 
     # -- lecture ----------------------------------------------------------
     def status(self, project: str, port: int) -> dict:
@@ -547,7 +801,7 @@ class PreviewManager:
             tplan = planned.get(name, {})
             st = tracked.get(name)
             tport = tplan.get("port") or (st.port if st else port)
-            alive = bool(st and st.proc and st.proc.poll() is None)
+            alive = bool(st and st.running)
             open_ = _port_open(tport)
             phase = st.phase if st else PHASE_STOPPED
             if phase == PHASE_RUNNING and not (alive or open_):
@@ -564,7 +818,7 @@ class PreviewManager:
                     "message": (st.message if st else tplan.get("hint", "")),
                     "kind": (st.kind if st and st.kind else tplan.get("kind", "")),
                     "command": (st.cmd if st and st.cmd else " ".join(tplan.get("cmd", []))),
-                    "pid": (st.proc.pid if alive else None),
+                    "pid": (st.proc.pid if (alive and st.proc) else None),
                     "uptime": int(time.time() - st.started_at) if (st and alive and st.started_at) else 0,
                     "port_open": open_,
                 }
@@ -603,6 +857,16 @@ class PreviewManager:
         }
 
     def logs(self, project: str, target: str = "", max_bytes: int = LOG_TAIL_BYTES) -> str:
+        if self.driver == "docker":
+            n = min(5000, max(50, max_bytes // 100))
+            try:
+                out = subprocess.run(
+                    ["sudo", "-n", self.wrapper, "logs", project, "--tail", str(n)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                return out.stdout or ""
+            except Exception:
+                return ""
         candidates = (
             [self.log_path(project, target)]
             if target

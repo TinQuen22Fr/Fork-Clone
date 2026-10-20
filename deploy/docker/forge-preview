@@ -9,10 +9,11 @@
 #
 #   forge-preview <verbe> <projet> [options bornees]
 #
-# Verbes : start | stop | rm | ps | logs | inspect | health
+# Verbes : start | stop | rm | ps | logs | inspect | exec | health
 # Le projet est valide par regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$).
 # Toute commande arbitraire est refusee. Le conteneur est tenu en vie par
-# une commande de garde interne (sleep infinity) ; le lancement metier releve de D5.
+# une commande de garde interne (sleep infinity) ; le lancement metier (install/run)
+# est fait par D5 via le verbe borne exec (aucune commande arbitraire).
 # Aucun montage du socket Docker, jamais.
 #
 set -u -o pipefail
@@ -40,6 +41,7 @@ Usage : $PROG <start|stop|rm|ps|logs|inspect|health> <projet> [options]
   ps      <projet|-->
   logs    <projet> [--tail N]
   inspect <projet>
+  exec    <projet> --script <rel .forge-preview/*.sh> [--detach]
   health  <projet>
 USAGE
   exit 64
@@ -79,7 +81,7 @@ fi
 VERB=$1; PROJECT=$2; shift 2
 
 case "$VERB" in
-  start|stop|rm|logs|inspect) valid_project "$PROJECT" || die "nom de projet invalide" ;;
+  start|stop|rm|logs|inspect|exec) valid_project "$PROJECT" || die "nom de projet invalide" ;;
   ps)
     if [ "$PROJECT" != "--" ]; then
       valid_project "$PROJECT" || die "nom de projet invalide"
@@ -133,9 +135,30 @@ inspect)
   dk inspect "$NAME"
   ;;
 
+exec)
+  SCRIPT=""; DETACH=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --script)
+        [ $# -ge 2 ] || die "--script attend un chemin relatif"
+        case "$2" in .forge-preview/*.sh) ;; *) die "--script doit etre .forge-preview/<fichier>.sh" ;; esac
+        case "$2" in */*/*|*..*) die "--script contient un chemin interdit" ;; esac
+        SCRIPT=$2; shift 2 ;;
+      --detach) DETACH=1; shift ;;
+      *) die "option non reconnue pour exec : $1" ;;
+    esac
+  done
+  [ -n "$SCRIPT" ] || die "exec exige --script <rel>"
+  if [ "$DETACH" -eq 1 ]; then
+    dk exec -d "$NAME" /bin/bash -lc "/workspace/$SCRIPT"
+  else
+    dk exec "$NAME" /bin/bash -lc "/workspace/$SCRIPT"
+  fi
+  ;;
+
 start)
-  PORT=""; WORKSPACE=""; CPUS=1.0; MEMORY=1g; PIDSLIMIT=256
-  ENVS=(); SEEN_PORT=0; SEEN_WS=0
+  PORT=""; PORT2=""; WORKSPACE=""; CPUS=1.0; MEMORY=1g; PIDSLIMIT=256
+  ENVS=(); SEEN_PORT=0; SEEN_PORT2=0; SEEN_WS=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --port)
@@ -145,6 +168,13 @@ start)
         [ "$2" -ge "$PORT_BASE" ] && [ "$2" -le "$PORT_MAX" ] \
           || die "port $2 hors plage autorisee ($PORT_BASE-$PORT_MAX)"
         PORT=$2; SEEN_PORT=1; shift 2 ;;
+      --port2)
+        [ $# -ge 2 ] || die "--port2 attend une valeur"
+        no_dash_value "$2"
+        valid_int "$2" || die "--port2 attend un entier"
+        [ "$2" -ge "$PORT_BASE" ] && [ "$2" -le "$PORT_MAX" ] \
+          || die "port2 $2 hors plage autorisee ($PORT_BASE-$PORT_MAX)"
+        PORT2=$2; SEEN_PORT2=1; shift 2 ;;
       --workspace)
         [ $# -ge 2 ] || die "--workspace attend un chemin"
         no_dash_value "$2"
@@ -215,6 +245,7 @@ start)
     --env "FORGE_PREVIEW=1"
     --env "FORGE_PREVIEW_PROJECT=${PROJECT}")
   if [ ${#ENVS[@]} -gt 0 ]; then RUN_ARGS+=("${ENVS[@]}"); fi
+  if [ "$SEEN_PORT2" -eq 1 ]; then RUN_ARGS+=( -p "${PREVIEW_HOST}:${PORT2}:${PORT2}" ); fi
   RUN_ARGS+=("$IMAGE")
   # D4 : garde en vie sans executer de code projet. La commande metier est
   # lancee par D5 (preview_runtime) via le wrapper.
