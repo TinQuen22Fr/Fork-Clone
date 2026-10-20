@@ -64,7 +64,9 @@ if grep -Eq 'ENV[[:space:]]+.*(SECRET|TOKEN|PASSWORD|API_KEY|PRIVATE_KEY)' "$DOC
 else
     ok "aucun secret en variable ENV"
 fi
-if grep -Eq 'COPY|ADD' "$DOCKERFILE"; then
+# Ancrage en debut de ligne : un simple `grep COPY|ADD` matcherait les
+# commentaires du Dockerfile qui citent ces directives (faux positif).
+if grep -Eq '^[[:space:]]*(COPY|ADD)([[:space:]]|$)' "$DOCKERFILE"; then
     ko "COPY/ADD présent : du code pourrait être embarqué dans l image"
 else
     ok "aucun COPY/ADD (aucun code projet dans l image)"
@@ -116,19 +118,34 @@ printf '%s\n' "$RUN_ID" | grep -Eq '^git version' && ok "git répond : $(printf 
     || ko "git ne répond pas"
 
 # HOME inscriptible sous --read-only (npm/pip en ont besoin).
+# On ecrit reellement (mkdir + touch) au lieu de tester `test -w` : le
+# tmpfs 256m du wrapper est le montage reel, et l ecriture prouve le droit
+# sans dependre de l interpretation de access(2) sur un montage ro.
 docker run --rm --network none --read-only \
-    --tmpfs /tmp:rw,size=64m,noexec,nosuid,nodev \
+    --tmpfs /tmp:rw,size=256m,noexec,nosuid,nodev \
+    --tmpfs /run:rw,size=64m,noexec,nosuid,nodev \
     --security-opt no-new-privileges --cap-drop ALL \
-    -e HOME=/tmp -e npm_config_cache=/tmp/.npm \
-    "$IMAGE" /bin/sh -c 'mkdir -p "$npm_config_cache" && test -w "$npm_config_cache"' >/dev/null 2>&1
-[ $? -eq 0 ] && ok "HOME/cache npm inscriptibles sous --read-only" \
-    || ko "HOME/cache npm non inscriptibles sous --read-only"
+    -e HOME=/tmp -e npm_config_cache=/tmp/.npm -e PIP_CACHE_DIR=/tmp/.pip \
+    "$IMAGE" /bin/sh -c 'mkdir -p "$npm_config_cache" "$PIP_CACHE_DIR" \
+        && : > "$npm_config_cache/.w" && : > "$PIP_CACHE_DIR/.w"' >/dev/null 2>&1
+[ $? -eq 0 ] && ok "HOME/cache npm et pip inscriptibles sous --read-only" \
+    || ko "HOME/cache npm ou pip non inscriptibles sous --read-only"
 
-# /workspace est bien present et appartenable a preview.
-docker run --rm --network none --read-only \
+# /workspace : present, possede par preview, et reellement inscriptible.
+# L ecriture d un fichier temoin prouve le droit (sans bind mount, donc sans
+# dependre du montage hote) ; verify-d4.sh revalidera avec le montage reel.
+WS_OUT="$(docker run --rm --network none --read-only \
     --security-opt no-new-privileges --cap-drop ALL \
-    "$IMAGE" /bin/sh -c '[ -d /workspace ] && [ -w /workspace ]' >/dev/null 2>&1
-[ $? -eq 0 ] && ok "/workspace présent" || ko "/workspace absent ou non inscriptible"
+    "$IMAGE" /bin/sh -c 'test -d /workspace || { echo NODIR; exit 1; }
+        stat -c "%U" /workspace
+        : > /workspace/.forge-write-test || { echo NOWRITE; exit 1; }
+        rm -f /workspace/.forge-write-test' 2>&1)"
+WS_RC=$?
+if [ "$WS_RC" -eq 0 ] && [ "$WS_OUT" = "preview" ]; then
+    ok "/workspace présent, propriétaire preview, inscriptible par preview"
+else
+    ko "/workspace : présence/propriété/écriture en échec (rc=$WS_RC, sortie: ${WS_OUT:-vide})"
+fi
 
 # Aucune capability effective, pas de new privileges.
 docker run --rm --network none --read-only \

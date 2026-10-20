@@ -28,9 +28,14 @@
 #     pids-limit=256 suffit a contenir les forks, un init intermediaire
 #     compliquerait l'arret (le wrapper fait docker stop, pas docker kill).
 
-# Node 26 : Active LTS depuis le 28/10/2026 (Node 24 passe en maintenance le
-# 20/10/2026, Node 22 en fin de vie). Aligne sur le host (v26.10.0) pour que
-# les modules natifs compiles dans la preview et sur l hote restent compatibles.
+# Node 26 = version "Current" a la date de redaction (2026-10-20) ; elle
+# passe Active LTS le 28/10/2026. Node 24 est encore Active LTS jusqu a cette
+# date. Choix assume : on aligne l image sur le host (v26.10.0) pour que les
+# modules natifs compiles dans la preview et sur l hote restent compatibles.
+# Pour exiger strictement "LTS" des aujourd hui, construire avec :
+#   PREVIEW_NODE_VERSION=24 sudo bash deploy/docker/build-d3.sh
+# (build-d3.sh transmet l ARG via --build-arg NODE_VERSION si fourni).
+# Defaut 26 ; build-d3.sh transmet PREVIEW_NODE_VERSION en --build-arg.
 ARG NODE_VERSION=26
 FROM node:${NODE_VERSION}-bookworm-slim
 
@@ -125,5 +130,9 @@ RUN set -eux; \
 
 CMD ["/bin/bash", "-l"]
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=2 \
-    CMD ["/bin/sh", "-c", "test -w /workspace || exit 1"]
+# Pas de HEALTHCHECK ici, volontairement.
+# Sous --read-only, access(2) echoue en EROFS sur /workspace avant meme de
+# consulter les droits du repertoire : un `test -w /workspace` renverrait
+# TOUJOURS 1 et le conteneur serait marque unhealthy en permanence. Le
+# signal de vivacite reel est le port applicatif, sonde par D10 (HTTP sur
+# le port publie) — pas une propriete du systeme de fichiers de l image.

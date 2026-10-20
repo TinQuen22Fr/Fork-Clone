@@ -18,6 +18,7 @@ DOCKERFILE="$DOCKER_DIR/preview-base.Dockerfile"
 IMAGE="${FORGE_PREVIEW_IMAGE:-forge-preview-base:local}"
 PREVIEW_UID="${PREVIEW_UID:-1000}"
 PREVIEW_GID="${PREVIEW_GID:-1000}"
+NODE_VERSION="${PREVIEW_NODE_VERSION:-26}"
 
 log()  { printf '\033[1;34m[D3]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m OK\033[0m %s\n' "$*"; }
@@ -37,11 +38,13 @@ log "  Dockerfile    : $DOCKERFILE"
 log "  contexte      : $DOCKER_DIR"
 log "  PREVIEW_UID   : $PREVIEW_UID"
 log "  PREVIEW_GID   : $PREVIEW_GID"
+log "  NODE_VERSION  : $NODE_VERSION"
 
 docker build \
     --file "$DOCKERFILE" \
     --build-arg "PREVIEW_UID=$PREVIEW_UID" \
     --build-arg "PREVIEW_GID=$PREVIEW_GID" \
+    --build-arg "NODE_VERSION=$NODE_VERSION" \
     --label "forge.step=D3" \
     --tag "$IMAGE" \
     "$DOCKER_DIR"
