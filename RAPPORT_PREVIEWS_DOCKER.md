@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1 et D2 conformes et vérifiées** ; **D3 : image construite et contrôlée, 1 KO dû au vérificateur (corrigé), re-exécution requise** (non déclarée conforme, voir section 7) ; étapes D4 à D12 à venir
+**Statut** : en exécution — **D1, D2 et D3 conformes et vérifiées** (voir section 7) ; étapes D4 à D12 à venir
 
 ---
 
@@ -333,20 +333,20 @@ RÉSULTAT : D2 conforme.
 **Point d'attention hérité de D1, traité** : le sudoers de `quentin` contient toujours `(ALL : ALL) ALL` (règle d'administration personnelle, hors périmètre applicatif). D2 ne s'appuie pas dessus : le backend n'obtient l'accès Docker que par le wrapper, et `verify-d2.sh` contrôle activement qu'aucune règle sudoers n'autorise `/usr/bin/docker` directement. Aucun ajout au groupe `docker`.
 
 **Réserves honnêtes** :
-- L'image `forge-preview-base` (D3) n'existe pas encore : un `start` réel échouera jusqu'à D3. Les tests D2 valident les refus et le passage au moteur, pas le démarrage d'un conteneur.
-- `--read-only` sans volume persistant sur `/home/preview` (D3/D4) devra être complété au moment du build de l'image.
+- L'image `forge-preview-base` (D3) **existe désormais** (`forge-preview-base:local`, `sha256:54d89545…`) : la réserve levée par D3. Les tests D2 valident les refus et le passage au moteur, pas encore le démarrage d'un conteneur via le wrapper (couvert par D4/D5).
+- `--read-only` et `/home/preview` : **réglé en D3** par `HOME` et caches npm/pip en `tmpfs`, vérifié par exécution réelle sous `--read-only`. Aucun volume nommé nécessaire.
 - Le wrapper est en `0755` : lisible par tous, exécutable par tous, mais ne fait rien sans l'autorisation sudoers. Les refus sont appliqués avant tout appel moteur.
 
 **Retour arrière** : `git reset --hard aa22b35^` annule l'intégralité de D2 (code + correction du vérificateur) ; pour ne retirer que la correction des faux négatifs, `git revert 20846d6`. Désinstallation système : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`.
 
 ### Étape D3 — Image de base commune
-- **Date** : 2026-10-20 22:10 CEST (build réellement exécuté ; rédaction initiale 21:50)
-- **Statut** : **image construite et contrôlée — 1 seul KO, dû à un défaut du vérificateur, corrigé ; re-exécution requise pour conclure**
+- **Date** : 2026-10-20 22:22 CEST (vérification finale conforme ; première rédaction 21:50)
+- **Statut** : **conforme** — `sudo bash deploy/docker/verify-d3.sh` : **26/26 `OK`**, `RÉSULTAT : D3 conforme.`
 
-  Établi par exécution réelle (2026-10-20 22:07 CEST) : l'image `forge-preview-base:local` **se construit** (`sha256:54d89545…`, 632,6 Mo), démarre sous `--read-only`, tourne en uid/gid `1000`, et fournit node v26.12.0, npm 11.20.0, Python 3.11.2, git 2.39.5 sans capability effective (`CapEff=0`). **24 contrôles `OK`, 1 `KO`** (25 contrôles au total).
+  Établi par exécution réelle (build 22:07 CEST, vérification 22:22 CEST) : l'image `forge-preview-base:local` **se construit** (`sha256:54d89545…`, 632,6 Mo), démarre sous `--read-only`, tourne en uid/gid `1000`, et fournit node v26.12.0, npm 11.20.0, Python 3.11.2, git 2.39.5 sans capability effective (`CapEff=0`).
 
-  Ce qui **n'est pas** établi : la conformité finale. Le `KO` restant portait sur `/workspace` et ne venait **pas** de l'image mais du contrôle lui-même (voir « Défaut du vérificateur » ci-dessous). Le contrôle a été corrigé, mais `verify-d3.sh` n'a **pas été relancé** après correction. D3 n'est donc **pas** déclarée conforme à cette heure.
-- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact), `2de1fd5` (`verify-d3.sh` exécute ses contrôles statiques sans privilège), `eebb88a` (correction du contrôle `/workspace` + section 7 avec le build réel ; ce bloc de suivi est figé par le commit qui le contient, voir `git log -- RAPPORT_PREVIEWS_DOCKER.md`)
+  Historique de cette clôture : le premier passage avait rendu **24 `OK` / 1 `KO`** (25 contrôles). Le `KO` ne venait **pas** de l'image mais du contrôle `/workspace`, qui exigeait une écriture dans un répertoire gelé par `--read-only` et sans montage (voir « Défaut du vérificateur » ci-dessous). Après scission du contrôle en deux (propriété / écriture sous montage rw), le passage final rend **26/26 `OK`**.
+- **Commits** : `0c4d358` (code D3 initial), `4c010c1` (révision : healthcheck invalide, 2 faux négatifs du vérificateur, commentaire Node exact), `2de1fd5` (`verify-d3.sh` exécute ses contrôles statiques sans privilège), `eebb88a` (correction du contrôle `/workspace` + section 7 avec le build réel), `5ec5acd` (figeage de la conformité D3 : sortie `26/26 OK` repliée dans cette section ; ce bloc de suivi est figé par le commit qui le contient, voir `git log -- RAPPORT_PREVIEWS_DOCKER.md`)
 
 **Artefacts livrés** (383 lignes, `deploy/docker/`) :
 
@@ -500,7 +500,7 @@ Résultat de `verify-d3.sh`, intégral :
 RÉSULTAT : D3 NON conforme — 1 contrôle(s) KO.
 ```
 
-**Défaut du vérificateur, pas de l'image (corrigé)** : le `KO` reprochait à l'image de ne pas écrire dans `/workspace` sous `--read-only` **sans aucun montage**. C'est une erreur de conception du contrôle : `/workspace` appartient à la couche image, donc `--read-only` la gèle et toute écriture renvoie `EROFS` — c'est le comportement **attendu et correct**. Le contrat D4 monte précisément `/workspace:rw` depuis le projet hôte. Le contrôle a été scindé en deux :
+**Défaut du vérificateur, pas de l'image (corrigé et re-vérifié le 2026-10-20 22:22 CEST)** : le `KO` reprochait à l'image de ne pas écrire dans `/workspace` sous `--read-only` **sans aucun montage**. C'est une erreur de conception du contrôle : `/workspace` appartient à la couche image, donc `--read-only` la gèle et toute écriture renvoie `EROFS` — c'est le comportement **attendu et correct**. Le contrat D4 monte précisément `/workspace:rw` depuis le projet hôte. Le contrôle a été scindé en deux :
 
 1. **Propriété et droit** — `/workspace` existe, appartient à `preview`, et son mode porte le bit d'écriture propriétaire (`stat -c %a`, test `& 2` sur le chiffre de tête). Aucune écriture tentée : c'est le seul contrôle possible sans montage.
 2. **Écriture réelle sous montage rw** — un `--tmpfs /workspace:rw,uid=1000,gid=1000,mode=0755` simule le montage D4, puis `mkdir` + `: > fichier` + `rm` + `rmdir` prouvent que `preview` écrit effectivement dans `/workspace` quand il est monté en rw.
@@ -514,13 +514,44 @@ La section « exécution réelle » passe ainsi de 13 à 14 contrôles, et le to
 - `node`, `npm`, `python3`, `git` fonctionnent bien sous `--read-only`, avec `HOME`/caches en tmpfs.
 - L'image tourne en uid/gid `1000` = uid/gid de `quentin` sur l'hôte : les fichiers du workspace monté seront possédés par `preview` sans translation d'UID.
 
-**Reste à faire pour clore D3** — relancer, après la correction du vérificateur :
+**Vérification finale — D3 conforme** (2026-10-20 22:22 CEST) :
 
-```bash
-cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/verify-d3.sh
+```
+$ cd /var/www/forge/workspace/Fork-Clone && sudo bash deploy/docker/verify-d3.sh
+== D3 : Dockerfile ==
+ OK   Dockerfile présent : deploy/docker/preview-base.Dockerfile
+ OK   USER preview présent
+ OK   WORKDIR /workspace présent
+ OK   base Node présente
+ OK   python3 présent
+ OK   git présent
+ OK   dernier USER = preview
+ OK   aucun secret en variable ENV
+ OK   aucun COPY/ADD (aucun code projet dans l image)
+== D3 : image construite ==
+ OK   image présente : forge-preview-base:local
+ OK   Config.User = preview
+ OK   WorkingDir = /workspace
+== D3 : exécution réelle (identité, outils, read-only) ==
+ OK   conteneur démarre sous --read-only (code 0)
+ OK   uid d exécution = 1000
+ OK   gid d exécution = 1000
+ OK   l image ne tourne pas en root
+ OK   node répond : v26.12.0
+ OK   npm répond : 11.20.0
+ OK   python3 répond : Python 3.11.2
+ OK   git répond : git version 2.39.5
+ OK   HOME/cache npm et pip inscriptibles sous --read-only
+ OK   /workspace présent, propriétaire preview, bit d'écriture propriétaire (mode 755)
+ OK   /workspace inscriptible par preview quand monté en rw (cas du contrat D4)
+ OK   aucune capability effective (CapEff=0)
+ OK   /workspace vide dans l image (aucun code embarqué)
+ OK   aucun .env dans l image
+
+RÉSULTAT : D3 conforme.
 ```
 
-Attendu : **26 `OK`** (25 contrôles d'origine + 1 issu de la scission) et `RÉSULTAT : D3 conforme.` Si un `KO` subsiste, il sera alors imputable à l'image et non au contrôle.
+`26/26 OK`. Les deux contrôles issus de la scission rendent bien ce qui était attendu : `/workspace` appartient à `preview` avec le bit d'écriture propriétaire (mode 755), et l'écriture **réelle** réussit lorsque le répertoire est monté en `rw` — exactement la configuration que D4 imposera.
 
 **Retour arrière** :
 - `git reset --hard 0c4d358^` annule l'intégralité de D3 (fichiers supprimés).
@@ -539,7 +570,7 @@ Session arrêtée à la demande de l'utilisateur. Rien n'a été poussé sur le 
 |---|---|---|
 | **D1** — Installation et durcissement Docker | **conforme** | `sudo bash deploy/docker/verify-d1.sh` → 19/19 OK, « RÉSULTAT : D1 conforme. » (2026-10-19 23:51 CEST) |
 | **D2** — Contrôle d'accès sans root pour le backend | **conforme** | `sudo bash deploy/docker/verify-d2.sh` → 30/30 OK, « RÉSULTAT : D2 conforme. » (2026-10-20 02:22 CEST) |
-| **D3** — Image de base commune | **image construite, 24 OK / 1 KO (vérificateur corrigé), re-exécution requise** | `sudo bash deploy/docker/build-d3.sh && sudo bash deploy/docker/verify-d3.sh` → image `sha256:54d89545…`, 632,6 Mo, 1 KO sur `/workspace` dû au contrôle (section 7, 2026-10-20 22:07 CEST) |
+| **D3** — Image de base commune | **conforme — 26/26 OK** | `sudo bash deploy/docker/verify-d3.sh` → `RÉSULTAT : D3 conforme.` Image `sha256:54d89545…`, 632,6 Mo, uid/gid 1000, node 26.12.0, python 3.11.2 (section 7, 2026-10-20 22:22 CEST) |
 
 ### 8.2 État du système au moment de l'arrêt
 
@@ -589,7 +620,7 @@ Points de retour arrière :
 
 Ordre recommandé (section 5) : `D3 → D4 → D5 → D6 → D11 → D12` (socle fonctionnel) puis `D7 → D8 → D9 → D10` (durcissement, quotas, observabilité).
 
-**Prochaine étape : relancer `sudo bash deploy/docker/verify-d3.sh`** (contrôle `/workspace` corrigé, non re-exécuté) pour clore D3, puis attaquer **D4**.
+**D3 est close** (`26/26 OK`, `RÉSULTAT : D3 conforme.`). **Prochaine étape : D4 — contrat d'exécution imposé.**
 
 Les trois points que D3 devait trancher sont réglés, et vérifiés par exécution réelle :
 - **`/home/preview` sous `--read-only`** → traité par `HOME`/caches en `tmpfs` : contrôle « HOME/cache npm et pip inscriptibles sous `--read-only` » = `OK`. Aucun volume nommé nécessaire.
@@ -601,4 +632,4 @@ Reste ouvert pour D4 : le wrapper `forge-preview` ne transmet aucune commande au
 ### 8.6 État du dépôt
 
 - Branche `claude-ai`, working tree propre **hors `.forge-context`** (fichier de contexte de l'agent, modifié et volontairement non commité — hors périmètre du rapport).
-- 11 commits locaux non poussés : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
+- **20 commits** locaux non poussés (`git rev-list --count origin/claude-ai..claude-ai` = 19 avant le commit de figeage D3, 20 après) : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
