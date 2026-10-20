@@ -78,7 +78,10 @@ else
 fi
 
 # Aucune règle sudoers ne doit autoriser docker directement.
-if grep -rEsq '(^|[[:space:]])(/usr/bin/)?docker([[:space:]]|\*|$)' /etc/sudoers /etc/sudoers.d/ 2>/dev/null; then
+# Seules les lignes ACTIVES sont examinées : le fichier généré cite le mot
+# « docker » dans ses commentaires d'en-tête sans rien autoriser.
+SUDO_ACTIVE="$(grep -rhvE '^[[:space:]]*(#|$)' /etc/sudoers /etc/sudoers.d/ 2>/dev/null || true)"
+if printf '%s\n' "$SUDO_ACTIVE" | grep -Eq '(^|[[:space:]])(/usr/bin/|/bin/)?docker([[:space:]]|$)'; then
   ko "une règle sudoers autorise docker directement (interdit)"
 else
   ok "aucune règle sudoers n'autorise docker directement"
@@ -90,17 +93,21 @@ if id -nG "$SERVICE_USER" 2>/dev/null | grep -qw docker; then
 else
   ok "$SERVICE_USER hors du groupe docker"
 fi
-AS_USER_DOCKER="$(as_user docker info 2>&1 | head -n1)"
-case "$AS_USER_DOCKER" in
-  *"permission denied"*|*"not found"*|"") ok "$SERVICE_USER n'accède pas au socket Docker sans privilège" ;;
-  *) ko "$SERVICE_USER accède à Docker sans privilège : $AS_USER_DOCKER" ;;
-esac
+# `docker info` imprime son bloc « Client » sur stdout AVANT d'échouer sur le
+# démon : on examine la sortie complète, jamais la seule première ligne.
+AS_USER_DOCKER="$(as_user docker ps 2>&1)"
+if [ -z "$AS_USER_DOCKER" ] \
+   || printf '%s' "$AS_USER_DOCKER" | grep -Eqi 'permission denied|cannot connect|connection refused|not found|no such file'; then
+  ok "$SERVICE_USER n'accède pas au socket Docker sans privilège"
+else
+  ko "$SERVICE_USER accède à Docker sans privilège : $(printf '%s' "$AS_USER_DOCKER" | head -n1)"
+fi
 SUDO_DOCKER="$(sudo_n_as_user /usr/bin/docker ps 2>&1)"
-case "$SUDO_DOCKER" in
-  *"password is required"*|*"a password is required"*|*"not allowed"*)
-    ok "sudo -n docker refusé pour $SERVICE_USER (aucun accès direct)" ;;
-  *) ko "sudo -n docker a répondu : $(printf '%s' "$SUDO_DOCKER" | head -n1)" ;;
-esac
+if printf '%s' "$SUDO_DOCKER" | grep -Eqi 'password is required|interactive authentication is required|a terminal is required|not allowed|may not run sudo|no tty present|askpass'; then
+  ok "sudo -n docker refusé pour $SERVICE_USER (aucun accès direct)"
+else
+  ko "sudo -n docker a répondu : $(printf '%s' "$SUDO_DOCKER" | head -n1)"
+fi
 
 echo "== D2 : fonctionnement du wrapper =="
 HEALTH="$(sudo_n_as_user "$WRAPPER_DST" health 2>&1)"

@@ -81,7 +81,10 @@ else
 fi
 
 # Détection de toute règle sudoers donnant accès à docker directement.
-if grep -rEsq '(^|[[:space:]])/usr/bin/docker([[:space:]]|\*|$)' /etc/sudoers /etc/sudoers.d/ 2>/dev/null; then
+# Seules les lignes actives sont examinées (les commentaires du fichier généré
+# citent le mot « docker » sans rien autoriser).
+SUDO_ACTIVE_LINES="$(grep -rhvE '^[[:space:]]*(#|$)' /etc/sudoers /etc/sudoers.d/ 2>/dev/null || true)"
+if printf '%s\n' "$SUDO_ACTIVE_LINES" | grep -Eq '(^|[[:space:]])(/usr/bin/|/bin/)?docker([[:space:]]|$)'; then
   warn "une règle sudoers autorise /usr/bin/docker directement — à retirer manuellement."
 else
   log "aucune règle sudoers n'autorise docker directement (conforme)."
