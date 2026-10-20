@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1, D2 et D3 conformes et vérifiées**, **D4 corrigée** (2 KO root traités : sonde tmpfs + `rm --time`) — revalidation root en attente ; étapes D5 à D12 à venir
+**Statut** : en exécution — **D1, D2, D3 et D4 conformes et vérifiées** ; étapes D5 à D12 à venir
 
 ---
 
@@ -562,8 +562,8 @@ RÉSULTAT : D3 conforme.
 
 ### Étape D4 — Contrat d'exécution imposé
 
-- **Date** : 2026-10-20 22:48 CEST (corrigé) — exécution root : 2026-10-20 22:52 CEST
-- **Statut** : **corrigé après exécution root** — deux KO réels détectés et traités (tmpfs lu au mauvais champ + `rm --time` inexistant) ; relance d'installation/vérification requise pour clore
+- **Date** : 2026-10-20 — exécution root : 2026-10-20 22:52 CEST (1er passage) ; revalidation conforme consignée 2026-10-20 23:46 CEST
+- **Statut** : **conforme et vérifiée** — 35 OK / 0 KO en exécution root ; les deux KO antérieurs (sonde tmpfs + `rm --time`) sont clos
 - **Commits** : `a83e7d6` (point de départ D4), `ce47082` (code D4 : réseau dédié + `sleep infinity`), `c58e042` (fix D4 : sonde tmpfs + `rm` sans `--time` — figeage de cette étape).
 
 **Objet** : D4 ne crée pas le contrat à partir de zéro — le wrapper `forge-preview` de D2 portait déjà les 8 garde-fous (`--read-only`, tmpfs `/tmp`+`/run`, `--cpus`, `--memory`/`--memory-swap`, `--pids-limit`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--restart=no`, `-v /workspace:rw`, publication sur `127.0.0.1`). Deux manques réels demeuraient, corrigés ici :
@@ -586,95 +586,10 @@ RÉSULTAT : D3 conforme.
 - **KO #2 — `rm échoué`** : le wrapper passait `docker rm --time 10`, or `rm` n'accepte pas `--time` (réservé à `stop`/`kill`) ; le `stop` réussissait mais le `rm` échouait systématiquement. Corrigé : `stop` → `docker stop --time 10`, `rm` → `docker rm -f`.
 - `bash -n` OK sur les 3 fichiers après correction.
 
-**À relancer pour clore D4** (root requis, après les deux corrections) :
+**Vérifications de clôture (exécution root, sortie fournie par l'utilisateur)** :
+- `sudo bash deploy/docker/install-d4.sh` : réseau `forge-preview-net` déjà présent (bridge), wrapper réinstallé `root:root 0755`.
+- `sudo bash deploy/docker/verify-d4.sh` : **35 OK / 0 KO — `RÉSULTAT : D4 conforme.`**
+- Les deux KO antérieurs sont clos : `OK tmpfs /tmp + /run` (sonde sur `HostConfig.Tmpfs`) et `OK rm verifyd4` (`docker rm -f`, plus de `--time` invalide).
 
-```bash
-cd /var/www/forge/workspace/Fork-Clone \
-  && sudo bash deploy/docker/install-d4.sh \
-  && sudo bash deploy/docker/verify-d4.sh
-```
+**Non vérifié** : rien — D4 est conforme et vérifiée en exécution root.
 
-Attendu : réseau `forge-preview-net` créé (driver `bridge`), wrapper réinstallé identique au dépôt, conteneur de recette `forge-preview-verifyd4` **Up** après 2 s avec tous les garde-fous vérifiés par `docker inspect`, puis `RÉSULTAT : D4 conforme.` avec tmpfs et rm désormais OK.
-
-**Non vérifié à ce stade** : la revalidation complète après correction (relance d'`install-d4.sh` puis `verify-d4.sh` — le wrapper système installé est encore l'ancienne version).
-
-**Retour arrière** :
-- `git reset --hard a83e7d6` annule D4 (fichiers retirés du suivi) — le wrapper système installé reste à recopier depuis D2 si besoin.
-- Réseau et conteneurs de recette : `sudo docker network rm forge-preview-net ; sudo docker rm -f forge-preview-verifyd4`.
-
-
----
-
-## 8. Point de reprise — 2026-10-20 02:25 CEST
-
-Session arrêtée à la demande de l'utilisateur. Rien n'a été poussé sur le remote : la branche `claude-ai` est en avance de **11 commits** sur `origin/claude-ai`.
-
-### 8.1 Étapes terminées et vérifiées
-
-| Étape | Statut | Preuve |
-|---|---|---|
-| **D1** — Installation et durcissement Docker | **conforme** | `sudo bash deploy/docker/verify-d1.sh` → 19/19 OK, « RÉSULTAT : D1 conforme. » (2026-10-19 23:51 CEST) |
-| **D2** — Contrôle d'accès sans root pour le backend | **conforme** | `sudo bash deploy/docker/verify-d2.sh` → 30/30 OK, « RÉSULTAT : D2 conforme. » (2026-10-20 02:22 CEST) |
-| **D3** — Image de base commune | **conforme — 26/26 OK** | `sudo bash deploy/docker/verify-d3.sh` → `RÉSULTAT : D3 conforme.` Image `sha256:54d89545…`, 632,6 Mo, uid/gid 1000, node 26.12.0, python 3.11.2 (section 7, 2026-10-20 22:22 CEST) |
-
-### 8.2 État du système au moment de l'arrêt
-
-- Docker Engine `29.9.1` actif, `cgroup v2`, `overlay2`, `live-restore` actif, activé au boot.
-- `/etc/docker/daemon.json` présent et durci ; sysctl et modules noyau persistés (`deploy/docker/99-forge-docker.conf`, `deploy/docker/forge-docker-modules.conf`).
-- `/usr/local/bin/forge-preview` installé — `root:root`, mode `0755`, sha256 identique au dépôt.
-- `/etc/sudoers.d/forge-preview-docker` installé — `root:root`, mode `0440`, validé par `visudo`, **exactement 1 règle active** : `quentin ALL=(root) NOPASSWD: /usr/local/bin/forge-preview *`.
-- `quentin` **hors** du groupe `docker` ; `sudo -n docker` refusé ; aucune règle sudoers n'autorise `docker` directement.
-- Rappel d'exploitation : `quentin` conserve `(ALL : ALL) ALL` dans le sudoers principal. Ce n'est **pas** une faille du dispositif (le backend n'utilise pas sudo) mais cela signifie que l'isolation repose sur le code applicatif, pas sur une impossibilité technique. À traiter si l'on veut une garantie forte.
-
-### 8.3 Artefacts livrés
-
-| Fichier | Lignes | Étape |
-|---|---:|---|
-| `deploy/docker/install-d1.sh` | 119 | D1 |
-| `deploy/docker/verify-d1.sh` | 79 | D1 |
-| `deploy/docker/daemon.json` | 26 | D1 |
-| `deploy/docker/99-forge-docker.conf` | — | D1 |
-| `deploy/docker/forge-docker-modules.conf` | — | D1 |
-| `deploy/docker/forge-preview` | 217 | D2 |
-| `deploy/docker/forge-preview.sudoers` | 6 | D2 |
-| `deploy/docker/install-d2.sh` | 102 | D2 |
-| `deploy/docker/verify-d2.sh` | 165 | D2 |
-
-### 8.4 Commits locaux de référence
-
-```
-99bc98f  docs(previews/docker): D2 conforme — verification privilegiee 30/30 OK   ← suivi D2
-145bfb8  docs(previews/docker): section 7 — D2 installee, 3 faux negatifs corriges
-20846d6  fix(previews/docker): verify-d2 — 3 faux negatifs
-238d0ba  docs(previews/docker): section 7 — D2
-aa22b35  feat(previews/docker): D2 — wrapper forge-preview + sudoers dedie      ← code D2
-f8918fe  docs(previews/docker): D1 conforme — verification privilegiee 19/19 OK   ← suivi D1
-dc0ca8e  docs(previews/docker): section 7 — statut D1 exact
-43655cf  docs(previews/docker): section 7 — D1 executee et conforme
-c2e9424  fix(previews/docker): verify ne conclut plus KO sans privilege
-ba69b7c  feat(previews/docker): D1 — installation et durcissement                ← code D1
-```
-
-Points de retour arrière :
-- annuler tout D2 : `git reset --hard aa22b35^`
-- annuler tout D1 : `git reset --hard ba69b7c^`
-- ne retirer que la correction des faux négatifs D2 : `git revert 20846d6`
-- désinstallation système D2 : `sudo rm -f /usr/local/bin/forge-preview /etc/sudoers.d/forge-preview-docker`
-
-### 8.5 Ce qui reste à faire
-
-Ordre recommandé (section 5) : `D3 → D4 → D5 → D6 → D11 → D12` (socle fonctionnel) puis `D7 → D8 → D9 → D10` (durcissement, quotas, observabilité).
-
-**D3 est close** (`26/26 OK`, `RÉSULTAT : D3 conforme.`). **D4 est écrite et validée statiquement** (réseau dédié + `sleep infinity`, 397 lignes) — installation et exécution réelle root à lancer : `sudo bash deploy/docker/install-d4.sh && sudo bash deploy/docker/verify-d4.sh`.
-
-Les trois points que D3 devait trancher sont réglés, et vérifiés par exécution réelle :
-- **`/home/preview` sous `--read-only`** → traité par `HOME`/caches en `tmpfs` : contrôle « HOME/cache npm et pip inscriptibles sous `--read-only` » = `OK`. Aucun volume nommé nécessaire.
-- **UID fixe vs UID hôte `quentin`** → l'image tourne en uid/gid `1000`, identiques à ceux de `quentin` sur l'hôte. Les fichiers du workspace monté en `rw` sont donc possédés par `preview` sans translation d'UID ni `userns-remap`.
-- **Aucun secret, aucun `.env`** → contrôles `OK`, et l'absence totale de directive `COPY`/`ADD` rend l'embarquement de code projet structurellement impossible.
-
-D4 a comblé la réserve : le wrapper transmet désormais `sleep infinity` en commande de garde (aucun code projet exécuté) et rejoint le réseau `forge-preview-net`. Le lanceur métier (`npm run dev` / `python main.py`) reste la responsabilité de D5.
-
-### 8.6 État du dépôt
-
-- Branche `claude-ai`, working tree propre **hors `.forge-context`** (fichier de contexte de l'agent, modifié et volontairement non commité — hors périmètre du rapport).
-- **22 commits** locaux non poussés (`git rev-list --count origin/claude-ai..claude-ai` = 22, mesuré le 2026-10-20 22:28 CEST) : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
