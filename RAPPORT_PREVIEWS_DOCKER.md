@@ -632,4 +632,4 @@ Reste ouvert pour D4 : le wrapper `forge-preview` ne transmet aucune commande au
 ### 8.6 État du dépôt
 
 - Branche `claude-ai`, working tree propre **hors `.forge-context`** (fichier de contexte de l'agent, modifié et volontairement non commité — hors périmètre du rapport).
-- **20 commits** locaux non poussés (`git rev-list --count origin/claude-ai..claude-ai` = 19 avant le commit de figeage D3, 20 après) : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
+- **21 commits** locaux non poussés (`git rev-list --count origin/claude-ai..claude-ai` = 21, mesuré le 2026-10-20 22:26 CEST) : le `git push` est à la charge de l'utilisateur via l'interface GitHub.
