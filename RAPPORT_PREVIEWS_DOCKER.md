@@ -640,3 +640,35 @@ cd /var/www/forge/workspace/Fork-Clone \
 **Retour arrière** :
 - `git reset --hard 21e25ea` annule l'intégralité de D5 (fichiers supprimés, runtime restauré).
 - Côté système : `sudo rm -f /etc/systemd/system/forge-backend.service.d/50-forge-preview-driver.conf /etc/sudoers.d/forge-preview-<user> && sudo systemctl daemon-reload` — le driver repasse à `native` (défaut), les workspaces n'ayant jamais quitté l'hôte.
+
+---
+
+### Correctif transverse — `upgrade.sh` (déploiement effectif du code)
+
+- **Date** : 2026-10-21 — 23:11 CEST.
+- **Commit local** : `7bc517d` (`fix(upgrade): compilation des 2 modules, stash sans -u, controle de la version servie`) — non poussé.
+- **Commits liés** : `95154ae` (B2, `_SafeGZip` par sous-chaîne).
+
+**Constat de départ** : `/var/www/forge` est un clone git de ce dépôt (branche `claude-ai`, HEAD `ab981f7`, 31 commits de retard) et **nginx sert `/var/www/forge/frontend/build`**. Le déploiement ne passe donc pas par une copie manuelle de fichiers : il passe entièrement par `sudo bash upgrade.sh` (pull ff-only + deps + build + restart). Toute procédure de déploiement concurrente est inutile et dangereuse.
+
+**Preuves de l'écart prod ↔ dépôt** :
+- `sha256(prod/backend/server.py) = 09cde6c9…ba92c` ≡ `sha256(git show ab981f7:backend/server.py)` : la prod sert exactement `ab981f7`, soit le code **d'avant** les briques A (reprise SSE) et D5.
+- `git merge-base --is-ancestor ab981f7 HEAD` → vrai ; `ab981f7` est un ancêtre de `95154ae`, donc un `upgrade.sh` suffit à tout aligner.
+- `.env` prod : aucune clé `PREVIEW_DRIVER` (le drop-in D5 est le seul à la poser).
+
+**Trois défauts corrigés dans `upgrade.sh`** :
+
+| # | Ligne d'origine | Défaut | Correctif |
+|---|---|---|---|
+| A | 72 | `git stash push -u` — `workspace/` est **untracked** dans l'installation et contient les projets des previews, dont un clone du dépôt. `-u` l'aspirait entièrement. | `git stash push` sans `-u`. |
+| B | 222 | `ast.parse('backend/server.py')` seul — `preview_runtime.py` est importé au démarrage et n'était jamais vérifié. | Boucle `py_compile` sur `server.py` **et** `preview_runtime.py`, avec `die` explicite. |
+| C | 331 | Le script s'arrêtait à `/api/health` : un 200 ne prouve rien sur les fonctionnalités. C'est exactement ce qui a laissé passer un code plus ancien que le dépôt. | Contrôle « version réellement servie » : marqueurs `chat/stream/{conversation_id}`, `_sse_from_event`, `_STREAM_MARKERS` dans `server.py` déployé ; `resumeSSE` et `after_seq` dans le bundle publié. |
+
+**Vérifications effectuées** :
+- `bash -n upgrade.sh` : **OK**.
+- Défaut A reproduit puis corrigé en dépôt jetable : `git stash push -u` → `workspace/` **absent** (perte) ; `git stash push` → `workspace/` **préservé**.
+- Boucle `py_compile` exécutée avec le venv de prod, sur les 2 modules : **OK**.
+- Bloc C exécuté sur l'installation réelle : prod → `WARN server.py sans : chat/stream/{conversation_id} _sse_from_event _STREAM_MARKERS` + `bundle resumeSSE=0 after_seq=0` (diagnostic conforme) ; dépôt → `OK server.py complet`.
+- Bug trouvé **dans mon propre correctif** avant livraison : sous `set -euo pipefail`, `grep | wc -l` renvoyait 1 quand `grep` ne trouvait rien, ce qui **tuait le script** au lieu d'afficher l'avertissement. Corrigé par `{ grep … || true; } | wc -l`. Bloc rejoué : plus d'avortement (`exit=0` dans les deux cas).
+
+**Non vérifié** : aucune exécution de `upgrade.sh` complet — il pull et redémarre le service, l'utilisateur s'en charge.
