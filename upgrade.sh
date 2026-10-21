@@ -69,7 +69,10 @@ if [ "$DO_PULL" -eq 1 ] && [ -d .git ]; then
   TARGET="${BRANCH:-$CUR_BRANCH}"
   if [ -n "$(git -c safe.directory=* status --porcelain --untracked-files=no)" ]; then
     c_warn "modifications locales detectees, mises de cote (git stash)"
-    git -c safe.directory=* stash push -u -m "upgrade-$STAMP" >/dev/null
+    # Pas de -u : workspace/ n'est pas suivi par git dans l'installation et
+    # contient les projets des previews (dont un clone de ce depot). Un
+    # stash -u l'aspirerait entierement et laisserait l'arbre sans workspace.
+    git -c safe.directory=* stash push -m "upgrade-$STAMP" >/dev/null
     STASHED=1
   fi
   git -c safe.directory=* fetch --prune origin
@@ -219,9 +222,15 @@ PYCHROME
     fi
   fi
 
-  "$VENV_DIR/bin/python" -c "import ast,sys;ast.parse(open('backend/server.py').read())" \
-    || die "backend/server.py ne compile pas — mise a jour interrompue"
-  c_ok "server.py compile"
+  # Tous les modules importes au demarrage, pas seulement server.py :
+  # preview_runtime.py est charge au boot, une erreur de syntaxe y donnerait
+  # un service qui meurt apres le pull, sans rien avoir signale avant.
+  for _mod in backend/server.py backend/preview_runtime.py; do
+    [ -f "$_mod" ] || die "$_mod absent du depot"
+    "$VENV_DIR/bin/python" -m py_compile "$_mod" \
+      || die "$_mod ne compile pas — mise a jour interrompue"
+  done
+  c_ok "backend compile (server.py, preview_runtime.py)"
 
   # -------------------------------------------------------------------------
   # Proxy LiteLLM (opt-in) : mise a jour du venv dedie.
@@ -332,6 +341,35 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     c_ok "API /api/health repond 200"
   else
     c_warn "API /api/health repond $CODE — inspecte : journalctl -u $SERVICE -n 50"
+  fi
+
+  #--------------------------------------------------------------------------
+  # Version reellement servie : /api/health a 200 ne prouve rien sur les
+  # fonctionnalites. On verifie les marqueurs du code deploye et du bundle.
+  # C'est le seul controle qui aurait detecte un code plus ancien que le depot.
+  c_step "Controle de la version reellement servie"
+  _srv="$APP_DIR/backend/server.py"
+  _absent=""
+  for _m in 'chat/stream/{conversation_id}' '_sse_from_event' '_STREAM_MARKERS'; do
+    grep -qF "$_m" "$_srv" 2>/dev/null || _absent="$_absent $_m"
+  done
+  if [ -n "$_absent" ]; then
+    c_warn "server.py deploye sans :$_absent"
+    echo "      -> reprise SSE inactive. Commit attendu : git -C $APP_DIR log --oneline -1"
+  else
+    c_ok "server.py : route de reprise, _sse_from_event et filtre de flux presents"
+  fi
+  if [ -d "$APP_DIR/frontend/build/assets" ]; then
+    # || true : sous pipefail, un grep sans resultat ferait echouer le script
+    # au lieu d'afficher l'avertissement.
+    _rs="$( { grep -ho 'resumeSSE' "$APP_DIR"/frontend/build/assets/*.js 2>/dev/null || true; } | wc -l)"
+    _as="$( { grep -ho 'after_seq' "$APP_DIR"/frontend/build/assets/*.js 2>/dev/null || true; } | wc -l)"
+    if [ "$_rs" -ge 1 ] && [ "$_as" -ge 1 ]; then
+      c_ok "bundle frontend : resumeSSE et after_seq presents"
+    else
+      c_warn "bundle frontend sans reprise (resumeSSE=$_rs, after_seq=$_as)"
+      echo "      -> builds perimes ? ls -la $APP_DIR/frontend/build/assets"
+    fi
   fi
 
   #--------------------------------------------------------------------------
