@@ -7988,14 +7988,15 @@ class _SafeGZip:
     cher en CPU pour un gain negligeable).
     """
 
-    _SKIP_SUFFIXES = ("/chat/stream", "/preview/logs", "/tts")
+    _STREAM_MARKERS = ("/chat/stream", "/preview/logs", "/tts")
 
     def __init__(self, app):
         self.app = app
         self.gzip = _StarletteGZip(app, minimum_size=1024, compresslevel=5)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope.get("path", "").endswith(self._SKIP_SUFFIXES):
+        path = scope.get("path", "")
+        if scope["type"] == "http" and any(m in path for m in self._STREAM_MARKERS):
             await self.app(scope, receive, send)
             return
         await self.gzip(scope, receive, send)
