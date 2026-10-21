@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-19 (CEST)
 **Périmètre** : `backend/preview_runtime.py`, `backend/server.py`, `deploy/`, unité systemd `forge-backend`
-**Statut** : en exécution — **D1, D2, D3 et D4 conformes et vérifiées**, **D5 écrite et validée statiquement (29 OK / 2 KO d'installation, root requis pour clore)** ; étapes D6 à D12 à venir
+**Statut** : en exécution — **D1, D2, D3 et D4 conformes et vérifiées**, **D5 : code et scripts restaurés, contrôles statiques verts (30 OK / 2 KO d'installation / 1 non vérifié), exécution root requise pour clore** ; étapes D6 à D12 à venir
 
 ---
 
@@ -597,19 +597,20 @@ RÉSULTAT : D3 conforme.
 
 ### Étape D5 — Remplacement du driver dans `preview_runtime.py`
 
-- **Date** : 2026-10-21 — 01:01 CEST (rédaction et contrôles statiques).
-- **Statut** : **écrite et validée statiquement (29 OK / 2 KO d'installation)** — exécution root requise pour clore : `sudo bash deploy/docker/install-d5.sh && sudo bash deploy/docker/verify-d5.sh`.
-- **Commits** : `21e25ea` (point de départ D5), `81621a5` (code D5 : driver Docker, `exec` borné, `_bind()`, `logs` conteneur — figeage de cette étape).
+- **Date** : 2026-10-21 — 01:01 CEST (rédaction et contrôles statiques) ; reprise des scripts le 2026-10-21 (voir « Ré-exécution » ci-dessous).
+- **Statut** : **code conforme, contrôles statiques verts (30 OK / 2 KO d'installation / 1 non vérifié sans root)** — exécution root requise pour clore : `sudo bash deploy/docker/install-d5.sh && sudo bash deploy/docker/verify-d5.sh`.
+- **Commits** : `21e25ea` (point de départ D5), `81621a5` (code D5 : driver Docker, `exec` borné, `_bind()`, `logs` conteneur — figeage de cette étape) ; ce bloc de suivi est figé par le commit qui le contient, voir `git log -1 -- RAPPORT_PREVIEWS_DOCKER.md`.
 
 **Objet** : l'API publique (`start`, `stop`, `stop_all`, `status`, `logs`, `idle_projects`, `touch`) est **inchangée** — le frontend ne bouge pas. Seul le moteur change, sélectionné par `PREVIEW_DRIVER=docker|native` (défaut `native`, conformément à D12).
 
-**Artefacts** (3 fichiers, 1193 lignes au total) :
+**Artefacts** :
 
 | Fichier | Lignes | Rôle |
 |---|---:|---|
 | `backend/preview_runtime.py` | 882 | driver `docker` : conteneur unique par projet, install et lancement bornés par le wrapper |
 | `deploy/docker/install-d5.sh` | 83 | wrapper à jour, règle sudoers pour l'utilisateur du service, drop-in `PREVIEW_DRIVER=docker` |
 | `deploy/docker/verify-d5.sh` | 228 | 29 contrôles statiques + bout-en-bout réel en root (conteneur, port, HTTP, logs, arrêt) |
+| `deploy/docker/forge-preview` | 258 | wrapper : verbes `exec` (borné à `.forge-preview/*.sh`) et `--port2` (monorepos) |
 
 **Ce que fait le driver docker** :
 1. `_start_docker` : `docker run` unique par projet via le wrapper D4, avec **tous** les ports des cibles (`--port`, `--port2`).
@@ -622,13 +623,19 @@ RÉSULTAT : D3 conforme.
 - **Bind interne** : `plan()` figeait `127.0.0.1` dans les commandes. Un serveur lié à `127.0.0.1` **dans** un conteneur est injoignable à travers le port publié (le DNAT arrive sur `eth0`). Ajout de `_bind()` : `0.0.0.0` en docker, `127.0.0.1` en natif. La publication reste liée à `127.0.0.1` côté hôte (contrat D4 inchangé), seul le bind interne change.
 - **`_docker_cmd` cassait les chemins du venv** : la fonction remplaçait tout chemin absolu dont le basename était connu (`uvicorn`) par le basename seul. Le venv du projet (`.venv/bin/uvicorn`) était donc perdu. Correction : un chemin **sous** le workspace devient `/workspace/<rel>` ; un binaire système devient son nom ; un chemin hors workspace est laissé intact (il n'existera pas dans le conteneur, mais le masquer cacherait l'erreur).
 
+**Ré-exécution et correctif de reprise (2026-10-21)** :
+
+Le contenu de `deploy/docker/install-d5.sh` et `deploy/docker/verify-d5.sh` avait été réduit à 53 et 117 lignes par un commit postérieur à `81621a5` ; la commande de clôture ne contenait donc plus ni l'installation du drop-in, ni le bout-en-bout réel. Les deux fichiers ont été **restaurés depuis `81621a5`** (`git checkout 81621a5 -- deploy/docker/install-d5.sh deploy/docker/verify-d5.sh`), ramenant 83 et 228 lignes. `backend/preview_runtime.py` est resté **identique à `81621a5`** (`git diff 81621a5 HEAD -- backend/preview_runtime.py` : aucune différence).
+
+Un défaut réel a été corrigé dans `verify-d5.sh` lors de la reprise : le workspace de test était créé par `mktemp -d /tmp/forge-d5-verify.XXXXXX`. Or le wrapper n'accepte un `--workspace` que sous `FORGE_PREVIEW_WORKSPACE_ROOTS` (défaut `/var/www/forge/workspace`, `forge-preview` l. 30/186/190), et `sudo -n` réinitialise l'environnement : le bout-en-bout échouait systématiquement sur `--workspace hors racine autorisee`. Le workspace de test est désormais créé **sous cette racine** (`mktemp -d "$WSROOT/.verify-d5.XXXXXX"`), puis supprimé par le `cleanup` (trap `EXIT`).
+
 **Vérifications effectuées sans privilège** :
 - `python3 -m py_compile backend/preview_runtime.py` : OK.
 - `bash -n` sur `install-d5.sh`, `verify-d5.sh`, `forge-preview` : OK.
-- `bash deploy/docker/verify-d5.sh` : **29 OK**, 2 KO attendus (`drop-in absent`, `wrapper installé différent du dépôt`) — ils disparaissent après `install-d5.sh`.
-- Tests unitaires du driver : `_bind()` rend `0.0.0.0` en docker / `127.0.0.1` en natif ; `_docker_cmd` rend `['/workspace/.venv/bin/uvicorn', …]`, `['npm', 'run', 'dev']`, laisse `/opt/other/bin/tool` intact.
-- Plans générés : projet statique → `exec python3 -m http.server 8095 --bind 0.0.0.0 --directory /workspace/.` ; monorepo vite+fastapi → `cd frontend` / `cd backend` et binds `0.0.0.0`.
-- Non-régression D4 : les contrôles statiques D4 restent verts ; seul le contrôle d'installation signale le wrapper non réinstallé, ce que fait précisément `install-d5.sh`.
+- `bash deploy/docker/verify-d5.sh` : **30 OK**, 2 KO attendus (`drop-in absent`, `wrapper installé différent du dépôt` — le wrapper de production est `root:root` non réécrit ici), 1 non vérifié (`exécution réelle : root requis`).
+- API publique vérifiée inchangée : les 7 signatures (`start`, `stop`, `stop_all`, `status`, `logs`, `idle_projects`, `touch`) sont présentes à l'identique.
+- Lancement borné : `await self._docker("exec"`, `"--detach"`, `sudo", "-n"`, `"logs", project, "--tail"` présents ; `_bind()` rend `0.0.0.0` en docker / `127.0.0.1` en natif.
+- Wrapper : `exec)`, `--script`, `--detach`, `.forge-preview/*.sh`, `--port2`, `dk exec` présents ; **aucune** occurrence de `0.0.0.0` (la publication reste sur `127.0.0.1`).
 
 **À lancer pour clore D5** :
 ```bash
@@ -636,12 +643,20 @@ cd /var/www/forge/workspace/Fork-Clone \
   && sudo bash deploy/docker/install-d5.sh \
   && sudo bash deploy/docker/verify-d5.sh
 ```
+`install-d5.sh` installe le drop-in `50-forge-preview-driver.conf` (`PREVIEW_DRIVER=docker`) et la règle sudoers nominative, puis **affiche** la commande de redémarrage — il ne redémarre pas le service. `verify-d5.sh` exécute le bout-en-bout réel (conteneur, port publié, HTTP, logs, arrêt) sur un projet jetable `verifyd5`, indépendant de la production.
+
+**Activation en production** (à faire uniquement après un bout-en-bout vert) :
+```bash
+sudo systemctl restart forge-backend.service
+```
+Le service tourne sous l'utilisateur `quentin` (`/etc/systemd/system/forge-backend.service`, `User=quentin`) ; le drop-in ajoute `Environment=PREVIEW_DRIVER=docker`. Sans ce redémarrage, le driver reste `native`.
 
 **Retour arrière** :
 - `git reset --hard 21e25ea` annule l'intégralité de D5 (fichiers supprimés, runtime restauré).
-- Côté système : `sudo rm -f /etc/systemd/system/forge-backend.service.d/50-forge-preview-driver.conf /etc/sudoers.d/forge-preview-<user> && sudo systemctl daemon-reload` — le driver repasse à `native` (défaut), les workspaces n'ayant jamais quitté l'hôte.
+- Côté système : `sudo rm -f /etc/systemd/system/forge-backend.service.d/50-forge-preview-driver.conf /etc/sudoers.d/forge-preview-quentin && sudo systemctl daemon-reload` — le driver repasse à `native` (défaut), les workspaces n'ayant jamais quitté l'hôte.
+- Les scripts de reprise restent réversibles : `git checkout HEAD -- deploy/docker/install-d5.sh deploy/docker/verify-d5.sh` revient aux versions réduites si elles étaient voulues.
 
----
+**Non vérifié** : l'exécution root (drop-in, sudoers, conteneur, port, HTTP, logs, arrêt) — nécessite `sudo` interactif, non disponible depuis ce shell.
 
 ### Correctif transverse — `upgrade.sh` (déploiement effectif du code)
 
