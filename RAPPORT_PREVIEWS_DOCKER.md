@@ -672,3 +672,49 @@ cd /var/www/forge/workspace/Fork-Clone \
 - Bug trouvé **dans mon propre correctif** avant livraison : sous `set -euo pipefail`, `grep | wc -l` renvoyait 1 quand `grep` ne trouvait rien, ce qui **tuait le script** au lieu d'afficher l'avertissement. Corrigé par `{ grep … || true; } | wc -l`. Bloc rejoué : plus d'avortement (`exit=0` dans les deux cas).
 
 **Non vérifié** : aucune exécution de `upgrade.sh` complet — il pull et redémarre le service, l'utilisateur s'en charge.
+
+### Correctif transverse — `upgrade.sh` : D1 et D2 clos (exécution réelle en production)
+
+- **Date** : 2026-10-22 — 00:14 CEST (sauvegarde `.env` : `backend/.env.bak-2026-10-22-001437`).
+- **Commit déployé** : `26870b2` (`fix(upgrade): D1 litellm source==cible, D2 marqueur SSE non minifié`), identique dans `/var/www/forge` et dans `workspace/Fork-Clone`.
+- **Commit local antérieur** : `7df3cb0` — même contenu, rejoué sous un nouveau SHA après enregistrement GitHub.
+
+**D1 — `install` avec source == cible** (`upgrade.sh:387`)
+
+Source et cible de `litellm_config.yaml` sont le même fichier lorsque `APP_DIR == /var/www/forge`. `install` renvoyait alors 1, et `set -e` tuait le script **avant** `==> Mise a jour terminee`, donc avant l'impression du rappel de rollback et du chemin du journal. Correctif : comparaison des chemins résolus par `readlink -f`, `install` sauté si identiques.
+
+**D2 — marqueur de bundle minifié** (`upgrade.sh:369`)
+
+`resumeSSE` est le nom d'une fonction locale de `frontend/src/lib/api.js`, supprimé par la minification Vite : `grep -c 'resumeSSE'` sur le bundle publié valait structurellement 0, d'où un faux `c_warn` à chaque exécution. Correctif : recherche de `chat/stream/`, littéral d'URL qui survit à la minification.
+
+**Sortie réelle du second passage — les deux points clos** :
+
+```
+==> Controle de la version reellement servie
+  ok server.py : route de reprise, _sse_from_event et filtre de flux presents
+  ok bundle frontend : reprise SSE servie (chat/stream/ + after_seq)
+  ok litellm_config.yaml deja en place (source == cible, rien a copier)
+==> Mise a jour terminee
+```
+
+`==> Mise a jour terminee` est atteint : D1 est clos. L'avertissement de bundle a disparu : D2 est clos.
+
+**Nouvelle contrainte de procédure mémorisée** — auto-remplacement de `upgrade.sh`
+
+`upgrade.sh` commite le code qu'il va lui-même exécuter. Le `git pull` interne remplace le fichier **pendant** son exécution : le shell a déjà lu et mis en tampon les premières lignes, et continue d'exécuter l'**ancienne** version du script tandis que le fichier sur disque devient la nouvelle. Conséquence observée : premier lancement → `upgrade.sh` corrigé bien récupéré dans `/var/www/forge`, mais exécution avec l'**ancien** code, donc échec identique à celui d'avant ; second lancement → `Already up to date` puis comportement correct attendu.
+
+Procédure retenue, à appliquer avant tout lancement d'une version modifiée de `upgrade.sh` ou `install.sh` :
+
+```bash
+cp workspace/Fork-Clone/upgrade.sh /var/www/forge/upgrade.sh
+sudo ./upgrade.sh
+```
+
+Le `cp` rend le fichier sur disque identique à ce que le shell doit exécuter ; le `git pull` interne devient alors un no-op sur ce fichier et l'exécution correspond au code livré.
+
+**Vérifications effectuées après l'exécution** :
+- `git log -1` dans `/var/www/forge` : `26870b2`.
+- `diff -q upgrade.sh workspace/Fork-Clone/upgrade.sh` : **identiques**.
+- `sha256(backend/server.py)` = `1e8adddbed106995…` dans la prod **et** dans le dépôt.
+- `forge-backend.service` : `active` ; `/api/health` : `200`.
+- Bundle publié : `index-CgDXEvVK.js` (inchangé — aucune modification frontend dans ce lot).
