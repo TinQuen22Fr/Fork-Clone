@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-21T22:09:45.628414+00:00
+# Dernière mise à jour : 2026-10-21T22:29:51.616435+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 7df3cb0 fix(upgrade): D1 source==cible pour litellm_config, D2 marqueur non minifie pour la reprise SSE.
+- Git : branche claude-ai, dernier commit 26870b2 fix(upgrade): D1 litellm source==cible, D2 marqueur SSE non minifié.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -81,6 +81,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Petite subtilité à mémoriser : Quzand tu modifie install.sh ou upgrade.sh, meme en enregistrant ces fichiers sur mon github, avant de les lancer il faut que je les rapatries dans /var/www/forge (commande cp dans /var/www/forge/workspace/Fork-Clone (nom de la forge dans le workspace/sandbox atelier)) car si je lance celui-ci sans les modifs il les récupére bien de github et les enregistre dans /var
   [regle] si emergent arrive lui à ne pas avoir ça c'est que c'est possible chez moi
   [regle] pour après ne pas continuer jusqu'au bout...
   [regle] 103-2. Workspace en bind mount → push GitHub toujours possible après arrêt.
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] de plus c'est pas pour rien qu'il y a une icone supprimer si j'estime qu'il y a quelque chose qu'il faut pas et qui ne dois pas rester !
   [regle] - "\n\nREGLES DE SECURITE NON NEGOCIABLES :\n"
   [regle] tu ne fonctionne pas chez toi mais chez moi crétin !
-  [regle] et présentement je veux virrer cette consigne à la con qui me penalise !
