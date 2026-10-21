@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-19T21:04:29.043750+00:00
+# Dernière mise à jour : 2026-10-21T21:07:07.123412+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 102bec2 docs(rapport): annexe 8 — étude de faisabilité bascule des previews en conteneurs Docker isolés.
+- Git : branche claude-ai, dernier commit 95154ae fix(stream): _SafeGZip exclut les routes de flux par sous-chaine (B2).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -45,29 +45,35 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/server.py
   backend/test_rollback.txt
   deploy/
+  deploy/docker/
+  deploy/docker/99-forge-docker.conf
+  deploy/docker/build-d3.sh
+  deploy/docker/daemon.json
+  deploy/docker/forge-docker-modules.conf
+  deploy/docker/forge-preview
+  deploy/docker/forge-preview.sudoers
+  deploy/docker/install-d1.sh
+  deploy/docker/install-d2.sh
+  deploy/docker/install-d4.sh
+  deploy/docker/install-d5.sh
+  deploy/docker/preview-base.Dockerfile
+  deploy/docker/verify-d1.sh
+  deploy/docker/verify-d2.sh
+  deploy/docker/verify-d3.sh
+  deploy/docker/verify-d4.sh
+  deploy/docker/verify-d5.sh
   deploy/KNOWN_ISSUE_preview_map_readonly.md
   deploy/ensure-rwpaths.sh
   deploy/fix-previews.sh
   deploy/forge-backend.service
-  deploy/install-kokoro.sh
-  deploy/install-playwright.sh
-  deploy/nginx-forge-preview.conf
-  deploy/nginx-forge.conf
-  deploy/setup-preview-domain.sh
-  deploy/setup-preview.sh
-  deploy/upgrade-preview.sh
-  frontend/
-  frontend/public/
-  frontend/public/apple-touch-icon.png
-  frontend/public/favicon-32.png
-  frontend/public/icon-192.png
-  frontend/public/icon-512.png
-  frontend/public/logo-64.png
-  frontend/public/manifest.webmanifest
-  frontend/public/maskable-192.png
-  frontend/public/maskable-512.png
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
+  [regle] 2. Workspace en bind mount → push GitHub toujours possible après arrêt.
+  [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
+  [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
+  [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
+  [regle] OK l image ne tourne pas en root
+  [regle] OK le wrapper ne mentionne pas docker.sock == D2 : règle sudoers ==
   [regle] **Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
   [regle] Dès que tu dois inspecter, lire un fichier ou exécuter une commande bash : 1.
   [regle] Consigne directe : 1.
@@ -75,11 +81,18 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] si emergent arrive lui à ne pas avoir ça c'est que c'est possible chez moi
+  [regle] pour après ne pas continuer jusqu'au bout...
+  [regle] 103-2. Workspace en bind mount → push GitHub toujours possible après arrêt.
+  [regle] Consigne bien tout où en est.
+  [regle] 5:# Ne pas editer a la main : relancer install-d2.sh.
+  [regle] 82: ko "une règle sudoers autorise docker directement (interdit)"
+  [regle] KO une règle sudoers autorise docker directement (interdit) == D2 : isolation de l'accès ==
+  [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 applique D2 désormais.
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] consigne la chose dans "RAPPORT_INTEGRATION_FORGE_CORE.md", indique le point traitée et coder en rajoutant une instruction dans le fichier rapport avec la date et l'heure.
   [regle] 74-**Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
   [regle] - **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
-  [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
   [regle] ff72b7c docs: consigne l'étape 2 (écriture du rapport d'intégration forge-core)
   [regle] 161-- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
   [regle] ok feux vert pour l'étape 3 dans les mêmes conditions et consignes que pour l'étape 1 et 2
@@ -94,16 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] - "\n\nREGLES DE SECURITE NON NEGOCIABLES :\n"
   [regle] tu ne fonctionne pas chez toi mais chez moi crétin !
   [regle] et présentement je veux virrer cette consigne à la con qui me penalise !
-  [regle] consigne strict faire ce que je te demande et bien que ça contient ça tu le fait .
-  [regle] 56:# 2. Backend — .env (ne JAMAIS écraser un .env existant)
-  [regle] Ce que tu dois faire : 1.
-  [regle] Ne pas toucher à la production directement : applique les changements uniquement sur les fichiers du dépôt local.
-  [regle] 277: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
-  [regle] +- Si HEAD ne touche que des fichiers exclus ou de métadonnées, remonter l'historique récent (`git log`) sur les fichiers applicatifs (`backend/`, `frontend/`, `agents/`, `deploy/`) et auditer le travail réel de la branche. Ne jamais conclure sur un diff vide ou exclu.
-  [regle] backend/server.py:277: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
-  [regle] Constat : Les profils `agents/vibe-planner.md` et `agents/vibe-reviewer.md` existent, mais le frontend `frontend/src/pages/Chat.jsx` utilise toujours une liste codée en dur ["", "vibe-coder"].
-  [regle] https://github.com/funny-vibes/agent-vibes Consignes d'exécution : 1.
-  [regle] Anti-rationalisation stricte : Interdiction formelle d'argumenter sur la nécessité d'une demande, de dire "ce n'est pas nécessaire" ou "le projet a déjà ce qu'il faut".
-  [regle] Crée un dossier /agents à la racine avec un premier fichier vibe-coder.md contenant des règles de dev strictes (pas de bavardage, édition chirurgicale, respect des consignes).
-  [regle] Ce n'est pas ton comportement de réponse que tu dois changer, c'est le composant d'affichage dans le frontend : 1.
-  [regle] revoir les captures des projets qui ne fonctionne pas à 100%.
