@@ -360,14 +360,18 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     c_ok "server.py : route de reprise, _sse_from_event et filtre de flux presents"
   fi
   if [ -d "$APP_DIR/frontend/build/assets" ]; then
+    # On cherche des litteraux qui SURVIVENT a la minification de Vite.
+    # "resumeSSE" est un nom de fonction locale : il disparait du bundle, donc
+    # le chercher produisait un faux negatif. L'URL "chat/stream/" et le nom de
+    # parametre "after_seq" sont, eux, preserves.
     # || true : sous pipefail, un grep sans resultat ferait echouer le script
     # au lieu d'afficher l'avertissement.
-    _rs="$( { grep -ho 'resumeSSE' "$APP_DIR"/frontend/build/assets/*.js 2>/dev/null || true; } | wc -l)"
+    _rs="$( { grep -ho 'chat/stream/' "$APP_DIR"/frontend/build/assets/*.js 2>/dev/null || true; } | wc -l)"
     _as="$( { grep -ho 'after_seq' "$APP_DIR"/frontend/build/assets/*.js 2>/dev/null || true; } | wc -l)"
     if [ "$_rs" -ge 1 ] && [ "$_as" -ge 1 ]; then
-      c_ok "bundle frontend : resumeSSE et after_seq presents"
+      c_ok "bundle frontend : reprise SSE servie (chat/stream/ + after_seq)"
     else
-      c_warn "bundle frontend sans reprise (resumeSSE=$_rs, after_seq=$_as)"
+      c_warn "bundle frontend sans reprise (chat/stream/=$_rs, after_seq=$_as)"
       echo "      -> builds perimes ? ls -la $APP_DIR/frontend/build/assets"
     fi
   fi
@@ -377,8 +381,15 @@ if [ "$DO_BACKEND" -eq 1 ]; then
   LITELLM_SRC_CONFIG="$APP_DIR/litellm_config.yaml"
   LITELLM_CONFIG="${LITELLM_CONFIG:-/var/www/forge/litellm_config.yaml}"
   if [ -f "$LITELLM_SRC_CONFIG" ]; then
-    install -m 0644 "$LITELLM_SRC_CONFIG" "$LITELLM_CONFIG"
-    c_ok "litellm_config.yaml mis a jour dans $LITELLM_CONFIG"
+    # Quant APP_DIR == /var/www/forge, source et cible sont le MEME fichier et
+    # install renvoie 1 ("are the same file") : sous set -e, le script mourrait
+    # avant d'afficher la fin de mise a jour et la procedure de rollback.
+    if [ "$(readlink -f "$LITELLM_SRC_CONFIG")" = "$(readlink -f "$LITELLM_CONFIG")" ]; then
+      c_ok "litellm_config.yaml deja en place (source == cible, rien a copier)"
+    else
+      install -m 0644 "$LITELLM_SRC_CONFIG" "$LITELLM_CONFIG"
+      c_ok "litellm_config.yaml mis a jour dans $LITELLM_CONFIG"
+    fi
   else
     c_warn "litellm_config.yaml absent du depot — config LiteLLM non synchronisee"
   fi
