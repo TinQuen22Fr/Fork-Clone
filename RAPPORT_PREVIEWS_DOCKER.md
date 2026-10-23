@@ -733,3 +733,169 @@ Le `cp` rend le fichier sur disque identique à ce que le shell doit exécuter ;
 - `sha256(backend/server.py)` = `1e8adddbed106995…` dans la prod **et** dans le dépôt.
 - `forge-backend.service` : `active` ; `/api/health` : `200`.
 - Bundle publié : `index-CgDXEvVK.js` (inchangé — aucune modification frontend dans ce lot).
+
+
+### Étape D6 — Veille et conservation du workspace
+
+- **Date** : 2026-10-22 05:36 CEST (rédaction et contrôles statiques) ; clôture consignée 2026-10-23 10:05 CEST.
+- **Statut** : **conforme et vérifiée** — `sudo bash deploy/docker/verify-d6.sh` : **9 contrôles statiques `OK` / 0 `KO`** + **9 contrôles bout-en-bout `OK` / 0 `KO`** (`RÉSULTAT : D6 conforme.`).
+- **HEAD au moment de l'exécution** : `7feaa5f` (non poussé). Fichiers D6 (`deploy/docker/verify-d6.sh` ajouté, `RAPPORT_PREVIEWS_DOCKER.md` mis à jour) en attente de commit par l'utilisateur.
+
+**Constat statique** (`bash deploy/docker/verify-d6.sh`, 2026-10-23 10:05 CEST) :
+```
+== D6 : veille et conservation du workspace (statique) ==
+  OK  server.py présent
+  OK  preview_runtime.py présent
+  OK  reaper appelle mgr.stop()
+  OK  aucun docker rm dans preview_runtime.py
+  OK  stop() docker => wrapper stop (pas rm)
+  OK  workspace en bind mount rw
+  OK  docker --restart=no (pas de relance)
+  OK  garde en vie sleep infinity (aucune execution projet)
+  OK  PREVIEW_AUTOSTART defaut OFF
+```
+
+**Constat bout-en-bout réel (root)** (`sudo bash deploy/docker/verify-d6.sh`, 2026-10-23) :
+```
+== D6 : bout-en-bout réel (root requis) ==
+  OK  utilisateur service peut appeler le wrapper sans mot de passe
+  OK  workspace de test créé
+  OK  workspace initialisé git (push possible)
+  OK  conteneur démarré
+  OK  stop() via wrapper (équivalent reaper)
+  OK  conteneur arrêté (exited)
+  OK  conteneur conservé (non supprimé par stop)
+  OK  fichiers workspace intacts
+  OK  dépôt git du workspace utilisable après arrêt
+
+RÉSULTAT : D6 conforme.
+```
+
+**Écart `PREVIEW_AUTOSTART` tranché** : `PREVIEW_AUTOSTART` ramené à `0` en production (`.env:220`, sauvegarde `.env.bak-d6autostart-*`). Conformément au point 3 de D6, **aucune reprise automatique au démarrage** : pas de chargement systématique des projets, pas de consommation mémoire/disque inutile, pas de relance de code potentiellement erroné. Chaque preview est relancée **uniquement** sur action explicite de l'utilisateur.
+
+**Prochaine étape** : D11 (tests et recette), conformément à l'ordre de la section 5 (`D6 → D11 → D12`).
+
+**Dernière exécution** : 2026-10-23 10:05:00 CEST — D6 clos et vérifié : `sudo bash deploy/docker/verify-d6.sh` rend **9/9 statiques `OK` + 9/9 bout-en-bout `OK`** (`RÉSULTAT : D6 conforme.`). `PREVIEW_AUTOSTART` ramené à `0` en production, rapport D6 point 3 conforme (aucune reprise automatique). SHA du commit actuel : `7feaa5f`.
+
+
+### Étape D11 — Tests et recette
+
+- **Date** : 2026-10-23 20:15 CEST (rédaction et contrôles statiques) ; clôture consignée 2026-10-23 20:15 CEST.
+- **Statut** : **conforme et vérifiée** — `sudo bash deploy/docker/verify-d11.sh` : **20 contrôles statiques `OK` / 0 `KO`** + **19 contrôles bout-en-bout `OK` / 0 `KO`** (`RÉSULTAT : D11 conforme.`).
+- **HEAD au moment de l'exécution** : `7feaa5f` (non poussé). Fichier D11 (`deploy/docker/verify-d11.sh` ajouté) en attente de commit par l'utilisateur.
+
+**Constat statique** (`bash deploy/docker/verify-d11.sh`, 2026-10-23 20:15 CEST) :
+```
+== D11 : tests et recette (statique) ==
+  OK  server.py présent
+  OK  preview_runtime.py présent
+  OK  wrapper présent
+  OK  limite CPU (--cpus)
+  OK  limite mémoire + swap borné (pas de débordement)
+  OK  limite de processus (--pids-limit)
+  OK  bind hôte 127.0.0.1 (pas 0.0.0.0)
+  OK  aucun socket docker monté
+  OK  rootfs en lecture seule (--read-only)
+  OK  no-new-privileges
+  OK  capabilités toutes retirées (--cap-drop ALL)
+  OK  pas de redémarrage auto (--restart=no)
+  OK  garde en vie sans exécuter de code projet
+  OK  route /workspace/projects/{name}/preview/start présente
+  OK  route /workspace/projects/{name}/preview/restart présente
+  OK  route /workspace/projects/{name}/preview/stop présente
+  OK  route /workspace/projects/{name}/preview/status présente
+  OK  route /workspace/projects/{name}/preview/logs présente
+  OK  reaper (arrêt par inactivité) appelle mgr.stop()
+  OK  tâche _reap_idle_previews enregistrée
+```
+
+**Constat bout-en-bout réel (root)** (`sudo bash deploy/docker/verify-d11.sh`, 2026-10-23 20:15 CEST) :
+```
+== D11 : bout-en-bout réel (root requis) ==
+  OK  utilisateur service peut appeler le wrapper sans mot de passe
+  OK  workspace de test créé
+  OK  workspace initialisé git (push possible)
+  OK  conteneur démarré
+  OK  conteneur identifié
+  OK  CPU plafonné réellement (NanoCpus=1000000000)
+  OK  mémoire plafonnée, swap borné (mem=swap=1073741824)
+  OK  pids plafonnés (PidsLimit=256)
+  OK  port publié (pas de 0.0.0.0)
+  OK  aucun socket docker monté
+  OK  rootfs en lecture seule appliqué
+  OK  restart=no appliqué
+  OK  CPU réellement plafonné (usage moyen=1.004 cœur(s), limite=1.0)
+  OK  hôte réactif pendant la charge
+  OK  arrêt par inactivité (équivalent reaper) via wrapper stop
+  OK  conteneur arrêté (exited)
+  OK  workspace intact après arrêt
+  OK  redémarrage manuel possible
+  OK  conteneur relancé (running)
+
+RÉSULTAT : D11 conforme.
+```
+
+**Points couverts par la recette** (conformité aux 4 points de D11, section 4) :
+1. **Unitaire** : ligne `docker run` contrôlée (limites CPU/mémoire/swap/pids, `--read-only`, `--no-new-privileges`, `--cap-drop ALL`, `--restart=no`, bind `127.0.0.1`, aucun socket monté).
+2. **Intégration** : démarrage, arrêt par inactivité (wrapper `stop`, équivalent reaper), workspace intact, redémarrage manuel possible — tous verts.
+3. **Charge** : boucle CPU infinie dans le conteneur → usage moyen mesuré **1.004 cœur** pour une limite `--cpus=1.0`, hôte réactif pendant la charge.
+4. **Non-régression** : les 5 routes preview (`start/restart/stop/status/logs`) toujours présentes.
+
+**Note de mesure CPU** : le contrôle d'origine via `docker stats CPUPerc` a été remplacé par une lecture de `cpu.stat` (`usage_usec`) sur un intervalle fixe de 3 s, cgroup localisé dynamiquement via le PID du conteneur. `docker stats` étant normalisé sur le total des cœurs de l'hôte (2 cœurs, cgroup v2) et faussé à la première lecture, il produisait un faux négatif (~127 % au lieu du plafond réel). La mesure retenue donne **1.004 cœur ≤ 1.15 cœur** (tolérance de burst) : limite réellement appliquée.
+
+**Prochaine étape** : D12 (bascule et retour arrière), conformément à l'ordre de la section 5 (`D6 → D11 → D12`).
+
+**Dernière exécution** : 2026-10-23 20:15:18 CEST — D11 clos et vérifié : `sudo bash deploy/docker/verify-d11.sh` rend **20/20 statiques `OK` + 19/19 bout-en-bout `OK`** (`RÉSULTAT : D11 conforme.`). SHA du commit actuel : `7feaa5f`.
+
+### Étape D12 — Bascule et retour arrière
+- **Date** : 2026-10-23 (rédaction et contrôles statiques) ; clôture consignée 2026-10-23 21:14 CEST.
+- **Statut** : **conforme et vérifiée** — `sudo bash deploy/docker/verify-d12.sh` rend **8/8 statiques `OK` + 16/16 bout-en-bout `OK`** (`RÉSULTAT : D12 conforme.`).
+- **Livré** : `deploy/docker/verify-d12.sh` (recette de bascule du feature flag `PREVIEW_DRIVER` native ↔ docker, avec retour arrière sans perte).
+
+**Contrôles statiques (sans privilège)** :
+```
+== D12 : bascule et retour arrière (statique) ==
+  OK  preview_runtime.py présent
+  OK  défaut PREVIEW_DRIVER=native (point 1)
+  OK  bind interne natif 127.0.0.1
+  OK  PREVIEW_DRIVER=docker pris en compte
+  OK  bind interne docker 0.0.0.0
+  OK  PREVIEW_DRIVER=native explicite
+  OK  bind interne native explicite 127.0.0.1
+  OK  chemin du projet identique quel que soit le driver (pas de copie)
+```
+
+**Constat bout-en-bout réel (root)** (`sudo bash deploy/docker/verify-d12.sh`, 2026-10-23 21:14 CEST) :
+```
+== D12 : bout-en-bout réel (root requis) ==
+  OK  workspace de test créé
+  OK  projet pilote initialisé git (push possible)
+  OK  port libre sélectionné (8090)
+  OK  pilote natif : start running
+  OK  pilote natif : aucun conteneur créé
+  OK  pilote natif : port ouvert sur l'hôte (127.0.0.1)
+  OK  pilote natif : workspace intact
+  OK  pilote natif : stop libère le port
+  OK  bascule docker : start running
+  OK  bascule docker : conteneur forge-preview-* créé
+  OK  bascule docker : stop arrête le conteneur
+  OK  retour natif : start running
+  OK  retour natif : plus de conteneur (hôte uniquement)
+  OK  retour natif : workspace intact (jamais quitté l'hôte)
+  OK  retour natif : port ouvert sur l'hôte
+  OK  retour natif : stop libère le port
+
+RÉSULTAT : D12 conforme.
+```
+
+**Points couverts par la recette** (conformité aux 3 points de D12, section 4) :
+1. **Feature flag** : `PREVIEW_DRIVER` lu dans `preview_runtime.py` avec défaut `native` ; `native` et `docker` explicites tous deux reconnus, bind interne correct (`127.0.0.1` en natif, `0.0.0.0` en docker — le bind hôte restant `127.0.0.1`, contrat D4).
+2. **Bascule progressive** : projet pilote démarré en natif puis en docker, sans intervention sur le workspace ni copie — le chemin du projet est identique quel que soit le driver.
+3. **Retour arrière immédiat** : repasse en `native` → phase `running`, plus aucun conteneur, workspace intact (jamais quitté l'hôte), port rouvert sur `127.0.0.1`, arrêt propre.
+
+**Note de mesure** : un faux négatif de détection (`conteneur non créé`) est apparu à la première exécution — la fonction `dk_ps` combinait `-q` (alias de `--format "{{.ID}}"`) avec `--format "{{.Names}}"`, ce qui faisait renvoyer des IDs et échouer le filtre par nom (`Ignoring custom format, because both --format and --quiet are set.`). Corrigé en retirant `-q` : le conteneur était bien créé (`start running`), seul le filtre de détection était fautif.
+
+**Prochaine étape** : D7 (nettoyage et quotas), conformément à l'ordre de la section 5 (socle fonctionnel `D1 → D2 → D3 → D4 → D5 → D6 → D11 → D12` clos ; suite `D7 → D8 → D9 → D10`).
+
+**Dernière exécution** : 2026-10-23 21:14:49 CEST — D12 clos et vérifié. SHA du commit actuel : `7feaa5f`.
+

@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-21T23:13:53.260025+00:00
+# Dernière mise à jour : 2026-10-23T19:36:43.170453+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 8683a42 docs(rapport): D1 et D2 clos apres execution reelle.
+- Git : branche claude-ai, dernier commit 7feaa5f fix(previews/docker): D5 — restauration des scripts install/verify et bout-en-bout reel.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -58,20 +58,22 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/docker/install-d5.sh
   deploy/docker/preview-base.Dockerfile
   deploy/docker/verify-d1.sh
+  deploy/docker/verify-d11.sh
+  deploy/docker/verify-d12.sh
   deploy/docker/verify-d2.sh
   deploy/docker/verify-d3.sh
   deploy/docker/verify-d4.sh
   deploy/docker/verify-d5.sh
+  deploy/docker/verify-d6.sh
   deploy/KNOWN_ISSUE_preview_map_readonly.md
-  deploy/ensure-rwpaths.sh
-  deploy/fix-previews.sh
-  deploy/forge-backend.service
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] 2. Workspace en bind mount → push GitHub toujours possible après arrêt.
+  [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
   [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
   [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
+  [regle] en même temps je n'ai jamais rien demander de la sorte pour RAPPORT_PREVIEWS_DOCKER.md la dernière version en date sur mon GitHub où tout jusqu'à maintenant est à consigner est la version commit 1fb9980 Repartir de celle-là, la completer en conséquence sans reécrire celui-ci de bout en bout !
   [regle] OK l image ne tourne pas en root
   [regle] OK le wrapper ne mentionne pas docker.sock == D2 : règle sudoers ==
   [regle] **Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
@@ -81,6 +83,13 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] modification demandé avant le push fait, confirme ton rapport ou pas avant le push Attention dans le comit il faut indiqué que toutes les étapes D1 → D2 → D3 → D4 → D5 → D6 → D11 → D12 concerne ce push
+  [regle] Avant de pousser sur mon GitHub avec le bouton de ma forge et de lancer en suivant le script upgrade.sh pour mise à jour, je souhaite que tu fasse une review des choses faite dans ces étapes.
+  [regle] OK continue avec D12 dans les même conditions que le reste niveau consignes
+  [regle] fait ce qu'il faut et on finalise pour consigner la clôture de D11 dans RAPPORT_PREVIEWS_DOCKER.md :
+  [regle] Une fois arriver au bout tu consigne dans RAPPORT_PREVIEWS_DOCKER.md depuis le début nous procédons ainsi alors pourquoi chercher à executer quoi que ce soit de ton coté.
+  [regle] ok mais bon si la consigne était bonne je ne veux pas que ça redémarre automatiquement, que quand je le choisit mois.
+  [regle] ce que tu n'as toujours pas compris c'est que pour l'instant tu travail sur ta sandbox/workspace et après j'upgraderais la prod en une seule et unique fois pas en 10 000 morceaux...
   [regle] Consigne les chose dans la même config que D1 à D4, dans la section 7.
   [regle] Petite subtilité à mémoriser : Quzand tu modifie install.sh ou upgrade.sh, meme en enregistrant ces fichiers sur mon github, avant de les lancer il faut que je les rapatries dans /var/www/forge (commande cp dans /var/www/forge/workspace/Fork-Clone (nom de la forge dans le workspace/sandbox atelier)) car si je lance celui-ci sans les modifs il les récupére bien de github et les enregistre dans /var
   [regle] si emergent arrive lui à ne pas avoir ça c'est que c'est possible chez moi
@@ -91,19 +100,10 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] 82: ko "une règle sudoers autorise docker directement (interdit)"
   [regle] KO une règle sudoers autorise docker directement (interdit) == D2 : isolation de l'accès ==
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 applique D2 désormais.
-  [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] consigne la chose dans "RAPPORT_INTEGRATION_FORGE_CORE.md", indique le point traitée et coder en rajoutant une instruction dans le fichier rapport avec la date et l'heure.
   [regle] 74-**Application** : un `update_one` gardé par statut garantit qu'un tour finit toujours `done`/`error`, même si le client a disparu → fin des tours « bloqués en cours » fantômes.
   [regle] - **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
   [regle] ff72b7c docs: consigne l'étape 2 (écriture du rapport d'intégration forge-core)
   [regle] 161-- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
   [regle] ok feux vert pour l'étape 3 dans les mêmes conditions et consignes que pour l'étape 1 et 2
-  [regle] ok feux vert pour l'étape 2 dans les mêmes conditions et consignes que pour l'étape 1
-  [regle] # Sauvegardes de refactoring (ne pas committer)
-  [regle] Bon on dirait que ça ne fonctionne pas pour le nombre d'outils...
-  [regle] ok pour etape 2 mais avec cette consigne et recherche avec grep et edite avec sed pour ne pas lire tout les fichiers et tout les contenues.
-  [regle] backend/env.example:140:# toujours sur /zen/go/v1 (seule la console a demenage sur console.opencode.ai).
-  [regle] Pour l'instant le script upgrade.sh contient une sécurité permettant de restaurer un ancien commit si jamais le dernier ne fonctionne pas ce que j'ai fait pour récupérer les choses.
-  [regle] input-otp: PREEXISTANT (ne pas toucher)
-  [regle] de plus c'est pas pour rien qu'il y a une icone supprimer si j'estime qu'il y a quelque chose qu'il faut pas et qui ne dois pas rester !
-  [regle] - "\n\nREGLES DE SECURITE NON NEGOCIABLES :\n"
+  [regle] ok feux vert pour l'étape 2 dans les mêmes conditions et consignes 

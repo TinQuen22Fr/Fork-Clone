@@ -165,22 +165,25 @@ from preview_runtime import PreviewManager
 
 async def main():
     m = PreviewManager(sys.argv[1])
+    print("DRIVER", m.driver)
     assert m.driver == "docker", f"driver={m.driver}"
     st = await m.start(sys.argv[2], 8095)
+    for _ in range(30):
+        if st.get("phase") in ("running", "error"):
+            break
+        await asyncio.sleep(0.5)
+        st = m.status(sys.argv[2], 8095)
     print("START", json.dumps({k: st.get(k) for k in ("phase", "message", "port")}))
     lo = m.logs(sys.argv[2])
     print("LOGS", "oui" if lo is not None else "non")
     st2 = m.status(sys.argv[2], 8095)
     print("STATUS", json.dumps({k: st2.get(k) for k in ("phase", "message", "port")}))
-    await m.stop(sys.argv[2], 8095)
-    st3 = m.status(sys.argv[2], 8095)
-    print("STOP", json.dumps({k: st3.get(k) for k in ("phase", "message")}))
 
 asyncio.run(main())
 PY
 ) || true
 
-printf '%s\n' "$OUT" | grep -q 'driver=docker' \
+printf '%s\n' "$OUT" | grep -q '^DRIVER docker$' \
   && ok "PREVIEW_DRIVER=docker pris en compte" || ko "driver docker non pris en compte"
 printf '%s\n' "$OUT" | grep -q 'AssertionError' \
   && ko "assertion échouée : $(printf '%s\n' "$OUT" | grep -m1 AssertionError)"
@@ -212,7 +215,23 @@ fi
 printf '%s\n' "$OUT" | grep -q '^LOGS oui' && ok "logs() répond via docker logs" \
   || ko "logs() vide ou en erreur"
 
-SPHASE=$(printf '%s\n' "$OUT" | sed -n 's/^STOP .*"phase": "\([^"]*\)".*/\1/p')
+STOP_OUT=$(PREVIEW_DRIVER=docker FORGE_PREVIEW_WRAPPER="$WRAPPER_DST" \
+  python3 - "$VROOT" "$PROJECT" <<'PY' 2>&1
+import asyncio, json, sys
+import os; sys.path.insert(0, os.environ["D5_BACKEND"])
+from preview_runtime import PreviewManager
+
+async def main():
+    m = PreviewManager(sys.argv[1])
+    await m.stop(sys.argv[2], 8095)
+    st = m.status(sys.argv[2], 8095)
+    print("STOP", json.dumps({k: st.get(k) for k in ("phase", "message")}))
+
+asyncio.run(main())
+PY
+) || true
+
+SPHASE=$(printf '%s\n' "$STOP_OUT" | sed -n 's/^STOP .*"phase": "\([^"]*\)".*/\1/p')
 [ "$SPHASE" = "stopped" ] && ok "stop() : phase stopped" \
   || ko "stop() : phase $SPHASE (attendu stopped)"
 
