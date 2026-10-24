@@ -147,7 +147,7 @@ esac
 
 [ -x "$DOCKER" ] || die "docker introuvable ($DOCKER)"
 NAME="forge-preview-$PROJECT"
-STATEDIR="/var/lib/forge-preview/$PROJECT"
+STATEDIR="${FORGE_PREVIEW_STATE_ROOT:-/var/lib/forge-preview}/$PROJECT"
 
 case "$VERB" in
 stop|rm)
@@ -285,6 +285,12 @@ start)
   fi
 
   mkdir -p "$STATEDIR" 2>/dev/null || true
+  # D14 : le venv conteneur vit HORS du workspace versionne, dans l'etat du
+  # projet. On aligne la propriete du dossier d'etat sur celle du workspace
+  # (UID/GID du user preview) pour que le venv y soit inscriptible.
+  _ws_uid=$(stat -c '%u' "$WORKSPACE" 2>/dev/null || echo 1000)
+  _ws_gid=$(stat -c '%g' "$WORKSPACE" 2>/dev/null || echo 1000)
+  chown "${_ws_uid}:${_ws_gid}" "$STATEDIR" 2>/dev/null || true
 
   RUN_ARGS=(-d
     --name "$NAME"
@@ -301,6 +307,7 @@ start)
     --cap-drop ALL
     --restart=no
     -v "${WORKSPACE}:/workspace:rw"
+    -v "${STATEDIR}:/forge-state:rw"
     -w /workspace
     --env "PORT=${PORT}"
     --env "HOST=127.0.0.1"

@@ -18,7 +18,7 @@ Deux formes de projet sont gerees :
       package.json (vite / next / react-scripts / script dev|start)
       index.html, dist/, build/, public/  -> serveur statique Python
       app.py / main.py / requirements.txt -> venv + uvicorn ou python
-        (mode docker : venv dedie .venv-docker, jamais le .venv hote)
+        (mode docker : venv dans /forge-state, hors du workspace versionne)
 """
 
 from __future__ import annotations
@@ -171,6 +171,9 @@ class PreviewManager:
     def __init__(self, workspace_root: str):
         self.workspace_root = Path(workspace_root)
         self.state_dir = self.workspace_root / ".forge-preview"
+        self.state_root = Path(
+            os.environ.get("FORGE_PREVIEW_STATE_ROOT", "/var/lib/forge-preview")
+        )
         self._procs: dict[str, dict[str, PreviewProcess]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._last_seen: dict[str, float] = {}
@@ -278,11 +281,19 @@ class PreviewManager:
     def _venv_dir(self, d: Path) -> Path:
         """Venv propre au mode d'execution.
 
-        En mode docker, le venv est cree DANS le conteneur (chemins /workspace/...)
-        et ne doit jamais polluer le .venv de l'hote, qui est l'atelier de
-        developpement destine a etre committe. On utilise donc .venv-docker,
-        totalement independant et non versionne."""
-        return d / (".venv-docker" if self.driver == "docker" else ".venv")
+        En natif : .venv dans le dossier du projet (atelier de developpement).
+        En docker : venv HORS du workspace versionne, dans l'etat du projet
+        (/var/lib/forge-preview/<projet>, monte sur /forge-state dans le
+        conteneur). Le workspace reste strictement l'atelier de dev : la
+        preview ne le pollue jamais, donc Git ne voit aucun venv conteneur."""
+        if self.driver != "docker":
+            return d / ".venv"
+        try:
+            rel = d.resolve().relative_to(self.workspace_root.resolve())
+            project = rel.parts[0] if rel.parts else d.name
+        except (ValueError, IndexError, OSError):
+            project = d.name
+        return self.state_root / project / "venv"
 
     def _env(self, port: int, extra: Optional[dict] = None) -> dict:
         """Environnement des process enfants. HOME et caches dans le workspace
@@ -370,27 +381,45 @@ class PreviewManager:
     def _docker_cmd(self, cmd: list[str], project: str) -> list[str]:
         """Adapte une commande de l'hote au conteneur.
 
-        Deux transformations seulement :
-        1. un chemin absolu SOUS le workspace du projet (venv, binaire local)
-           devient /workspace/<rel> — le workspace est monte la ;
-        2. un binaire systeme de l'hote (npm, python3...) devient son nom,
+        Transformations bornees :
+        1. un chemin deja conteneur (/workspace/..., /forge-state/...) est
+           laisse intact ;
+        2. un chemin absolu de l'etat du projet (venv conteneur) devient
+           /forge-state/<rel> ;
+        3. un chemin absolu SOUS le workspace du projet devient
+           /workspace/<rel> (le workspace est monte la) ;
+        4. un binaire systeme de l'hote (npm, python3...) devient son nom,
            resolu par le PATH de l'image.
-        Un chemin absolu hors workspace est laisse tel quel : il n'existera
+        Un chemin absolu hors de ces espaces est laisse tel quel : il n'existera
         pas dans le conteneur, et le faire disparaitre masquerait l'erreur."""
         known = {"npm", "npx", "node", "python3", "python", "pip", "pip3",
                  "uvicorn", "gunicorn"}
         root = self.project_dir(project).resolve() if project else None
+        state_proj = (self.state_root / project).resolve() if project else None
         out: list[str] = []
         for arg in cmd:
-            if root is not None and arg.startswith("/"):
+            if not isinstance(arg, str) or not arg.startswith("/"):
+                out.append(arg)
+                continue
+            if arg.startswith(("/workspace/", "/forge-state/")):
+                out.append(arg)
+                continue
+            if state_proj is not None:
+                try:
+                    rel = Path(arg).resolve().relative_to(state_proj)
+                    out.append("/forge-state/" + rel.as_posix())
+                    continue
+                except (ValueError, OSError):
+                    pass
+            if root is not None:
                 try:
                     rel = Path(arg).resolve().relative_to(root)
                     out.append("/workspace/" + rel.as_posix())
                     continue
-                except ValueError:
+                except (ValueError, OSError):
                     pass
             base = arg.rsplit("/", 1)[-1]
-            out.append(base if arg.startswith("/") and base in known else arg)
+            out.append(base if base in known else arg)
         return out
 
     def _script_cmd(self, st: PreviewProcess, cmd: list[str], cwd: str) -> str:
@@ -741,10 +770,10 @@ class PreviewManager:
         if install:
             st.phase = PHASE_INSTALLING
             if install == ["__venv__"]:
-                steps = [["python3", "-m", "venv", "--clear", ".venv-docker"]]
+                steps = [["python3", "-m", "venv", "--clear", "/forge-state/venv"]]
                 if (Path(plan["cwd"]) / "requirements.txt").is_file():
-                    steps.append([".venv-docker/bin/python", "-m", "pip", "install",
-                                  "-r", "requirements.txt"])
+                    steps.append(["/forge-state/venv/bin/python", "-m", "pip",
+                                  "install", "-r", "requirements.txt"])
             else:
                 steps = [self._docker_cmd(install, project)]
             for step in steps:
@@ -753,7 +782,7 @@ class PreviewManager:
                 if code != 0:
                     self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
                     return
-            marker = Path(plan["cwd"]) / ".venv-docker" / ".forge-installed"
+            marker = self._venv_dir(Path(plan["cwd"])) / ".forge-installed"
             if marker.parent.is_dir():
                 marker.write_text("ok\n", encoding="utf-8")
             fresh = self.plan(

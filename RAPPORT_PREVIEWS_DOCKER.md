@@ -1258,3 +1258,27 @@ Deux blocs D8 coexistent : un premier « 20 OK (15 statiques + 5 bout-en-bout) �
   sudo docker exec "$CTR" cat /workspace/.forge-preview/api.run.sh
   ```
   Attendu : shebang `/workspace/…`, uvicorn exécutable dans le conteneur, `8191 => 200`, `api.run.sh` référençant `.venv-docker`, plus de 502.
+
+
+---
+
+**Correctif D14 (v2) — venv conteneur hors du workspace versionné**
+
+- **Constat** : la v1 plaçait le venv conteneur dans `/workspace/<projet>/backend/.venv-docker`. Or `/workspace` est le montage direct du dossier projet de l'atelier : c'est **l'arbre versionné** destiné à être commité. Le venv d'exécution n'a pas à y figurer, et exiger une règle `.gitignore` par projet serait fragile.
+- **Décision** : le venv conteneur vit désormais **hors du workspace**, dans l'état du projet `/var/lib/forge-preview/<projet>` (même racine que l'état déjà géré par le wrapper), monté dans le conteneur sur `/forge-state`. Le workspace reste strictement l'atelier de développement : la preview ne le pollue jamais, donc Git ne voit aucun venv conteneur et **aucune règle `.gitignore` n'est requise**.
+- **Cibles** : `backend/preview_runtime.py` + `deploy/docker/forge-preview`.
+  - Runtime : `_venv_dir(d)` renvoie `.venv` en natif, et `state_root/<projet>/venv` en docker (`state_root` pilotable par `FORGE_PREVIEW_STATE_ROOT`, défaut `/var/lib/forge-preview`).
+  - `_docker_cmd` : conversion explicite des chemins d'état hôte → `/forge-state/<rel>`, en plus de `/workspace/<rel>` ; les chemins déjà conteneur sont laissés intacts.
+  - `_run_docker` : `python3 -m venv --clear /forge-state/venv`, pip via `/forge-state/venv/bin/python`, marqueur posé via `_venv_dir(...)/.forge-installed`.
+  - Wrapper : `STATEDIR="${FORGE_PREVIEW_STATE_ROOT:-/var/lib/forge-preview}/$PROJECT"`, alignement de la propriété du dossier d'état sur l'UID/GID du workspace, et montage `-v "${STATEDIR}:/forge-state:rw"`.
+- **Non-régression** : mode natif inchangé (`.venv` dans le dossier projet).
+- **Recette** : `deploy/docker/verify-d14.sh` mis à jour (statique + unitaire, sans privilège ni conteneur).
+- **Résultat local** : recette verte (exit 0) ; `python3 -m py_compile` et `bash -n` OK.
+- **Recette fonctionnelle (à confirmer en prod après déploiement)** :
+  ```bash
+  sudo docker exec "$CTR" head -1 /forge-state/venv/bin/uvicorn
+  sudo docker exec "$CTR" /forge-state/venv/bin/uvicorn --version
+  curl -sS -o /dev/null -w 'api 8191 => %{http_code}\n' http://127.0.0.1:8191/
+  sudo docker exec "$CTR" cat /workspace/.forge-preview/api.run.sh
+  ```
+  Attendu : shebang `/forge-state/…`, uvicorn exécutable dans le conteneur, `8191 => 200`, `api.run.sh` référençant `/forge-state/venv`, plus de 502, et **aucun `.venv-docker` dans le projet**.
