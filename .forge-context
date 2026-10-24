@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-24T14:44:19.220764+00:00
+# Dernière mise à jour : 2026-10-24T19:04:24.008869+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 2da7df1 feat(previews): D7-D10 — quotas/nettoyage, masquage secrets, interdiction exec hôte, observabilité anti-boucle + recettes verify + audit/correctif documentaire.
+- Git : branche claude-ai, dernier commit ab2a0b6 feat(previews): D13 — healthcheck HTTP Vite, câblage logs interface, timeout sondage + recettes verify-d13a/b/c.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -84,6 +84,10 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] valide la decision et donne le feux vert pour passer par l'agent vibe-coder au travail !
+  [regle] Exemple actuellement le projet storm monitor 20km with forge tourne en préview mais certaines fonctionnalité ne fonctionne pas (erreur 502) ce qui prouve qu'il n'y a pas de navigation vers l'extérieur, idem l'API open meteo qui est utiliser ne reourne rien car il n'y a pas de navigation vers l'extérieur.
+  [regle] il faut que le conteneur docker qui charge la preview puisse communiquer vers l'extérieur sur le net et reçevoir en conséquence.
+  [regle] Seul une erreur est visible : si les API est développer avec la forge, il faut que si ils y a des services, des requêtes API autre que local;
   [regle] rédige les recettes de vérification associées (nouveau verify-d13*.sh en append au rapport) mais procéde par étapes (plusieurs parties) pour ne pas figer la chose
   [regle] bon visiblement le systeme de preview ne fonctionne pas.
   [regle] test avec un projet de celle-ci voici ce que je constate et qui me semble ne pas fonctionner (voir capture) et à ajuster pour régler le pb :
@@ -101,8 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Une fois arriver au bout tu consigne dans RAPPORT_PREVIEWS_DOCKER.md depuis le début nous procédons ainsi alors pourquoi chercher à executer quoi que ce soit de ton coté.
   [regle] ok mais bon si la consigne était bonne je ne veux pas que ça redémarre automatiquement, que quand je le choisit mois.
   [regle] ce que tu n'as toujours pas compris c'est que pour l'instant tu travail sur ta sandbox/workspace et après j'upgraderais la prod en une seule et unique fois pas en 10 000 morceaux...
-  [regle] Consigne les chose dans la même config que D1 à D4, dans la section 7.
-  [regle] Petite subtilité à mémoriser : Quzand tu modifie install.sh ou upgrade.sh, meme en enregistrant ces fichiers sur mon github, avant de les lancer il faut que je les rapatries dans /var/www/forge (commande cp dans /var/www/forge/workspace/Fork-Clone (nom de la forge dans le workspace/sandbox atelier)) car si je lance celui-ci sans les modifs il les récupére bien de github et les enregistre dans /var
-  [regle] si emergent arrive lui à ne pas avoir ça c'est que c'est possible chez moi
-  [regle] pour après ne pas continuer jusqu'au bout...
-  [regle] 103-2. Workspace en bind mount →
+  [regle] Consig

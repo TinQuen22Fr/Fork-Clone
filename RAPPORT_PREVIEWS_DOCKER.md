@@ -1230,3 +1230,31 @@ Deux blocs D8 coexistent : un premier « 20 OK (15 statiques + 5 bout-en-bout) �
   - Statique : redirection de sortie dans `_script_run`, journal sous `.forge-preview`, lecture du journal local prioritaire sur `docker logs` dans `logs()`, repli `docker logs` conservé, troncature bornée (`seek`/`tail`/`max_bytes`).
   - Unitaire : `logs()` relit le journal local en mode docker, masquage des secrets conservé, gros journal tronqué à `max_bytes`.
 - **Résultat local** : recette posée en « red-green » ; elle échoue volontairement tant que le code applicatif n'est pas corrigé (redirections et lecture locale absentes).
+
+
+---
+
+**Correction D14 — venv Python dédié conteneur (.venv-docker)**
+
+- **Constat (prod)** : l'API d'une preview Python échouait en `502 Bad Gateway`. La cause n'était pas réseau (DNS/egress HTTP/TLS confirmés fonctionnels) mais le venv : le `.venv` avait été créé **sur l'hôte** (atelier de développement), avec des shebangs `#!/var/www/forge/workspace/<projet>/…/python3.12`. Monté tel quel dans le conteneur (`/workspace`), ce chemin hôte n'existe pas : `cannot execute: required file not found` → `uvicorn` inutilisable → port API vide → 502. La détection se contentait d'un `vpy.is_file()` : un venv hôte existant était réutilisé au lieu d'être recréé dans le conteneur.
+- **Décision** : Option B retenue — en mode Docker (`PREVIEW_DRIVER=docker`), la Forge crée et exécute un venv **strictement dédié au conteneur** nommé `.venv-docker`, totalement indépendant du `.venv` hôte et non versionné. Le `.venv` standard (atelier destiné à être commité) n'est plus jamais pollué par l'exécution de la preview.
+- **Cible** : `backend/preview_runtime.py` uniquement (aucune modification de `_docker_cmd`, la conversion `/workspace/<rel>` s'appliquant avant le test du binaire).
+  - Nouvelle méthode `_venv_dir(d)` : source unique de vérité — `.venv-docker` en docker, `.venv` en natif.
+  - `_detect_python` : `venv = self._venv_dir(d)` (vpy, marqueur `.forge-installed`, `uvicorn_bin` suivent le venv du driver).
+  - `_run_docker` branche `__venv__` : `python3 -m venv --clear .venv-docker`, puis pip via `.venv-docker/bin/python`, marqueur posé dans `.venv-docker/.forge-installed`.
+  - `_run` natif : inchangé (conserve `.venv`).
+- **Isolation hôte/conteneur** : garantie par l'Option B ; le `.venv` hôte existant n'a pas besoin d'être nettoyé.
+- **Non-versionnement** : le `.gitignore` du projet ne contenait que `.venv/`. À compléter côté projet avec `.venv-docker/` (ou `.git/info/exclude` en local) pour éviter un commit accidentel du venv conteneur.
+- **Recette** : création de `deploy/docker/verify-d14.sh` (statique + unitaire, sans privilège ni conteneur).
+- **Vérifications** :
+  - Statique : présence de `_venv_dir`, référence `.venv-docker`, détection découplée (`self._venv_dir(d)`, plus de `d/.venv` en dur), création `--clear .venv-docker`, pip docker via `.venv-docker/bin/python`, marqueur `.venv-docker/.forge-installed`, mode natif inchangé (`venv .venv`).
+  - Unitaire : `_venv_dir()` renvoie `.venv-docker` en driver docker et `.venv` en driver natif.
+- **Résultat local** : recette `verify-d14.sh` verte (exit 0, conforme) ; `python3 -m py_compile backend/preview_runtime.py` OK.
+- **Recette fonctionnelle (à confirmer en prod après déploiement)** :
+  ```bash
+  sudo docker exec "$CTR" head -1 /workspace/backend/.venv-docker/bin/uvicorn
+  sudo docker exec "$CTR" /workspace/backend/.venv-docker/bin/uvicorn --version
+  curl -sS -o /dev/null -w 'api 8191 => %{http_code}\n' http://127.0.0.1:8191/
+  sudo docker exec "$CTR" cat /workspace/.forge-preview/api.run.sh
+  ```
+  Attendu : shebang `/workspace/…`, uvicorn exécutable dans le conteneur, `8191 => 200`, `api.run.sh` référençant `.venv-docker`, plus de 502.

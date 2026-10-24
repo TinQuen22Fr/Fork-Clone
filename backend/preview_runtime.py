@@ -18,6 +18,7 @@ Deux formes de projet sont gerees :
       package.json (vite / next / react-scripts / script dev|start)
       index.html, dist/, build/, public/  -> serveur statique Python
       app.py / main.py / requirements.txt -> venv + uvicorn ou python
+        (mode docker : venv dedie .venv-docker, jamais le .venv hote)
 """
 
 from __future__ import annotations
@@ -273,6 +274,15 @@ class PreviewManager:
         reste liee a 127.0.0.1 cote hote (contrat D4), seul le bind interne
         change."""
         return "0.0.0.0" if self.driver == "docker" else "127.0.0.1"
+
+    def _venv_dir(self, d: Path) -> Path:
+        """Venv propre au mode d'execution.
+
+        En mode docker, le venv est cree DANS le conteneur (chemins /workspace/...)
+        et ne doit jamais polluer le .venv de l'hote, qui est l'atelier de
+        developpement destine a etre committe. On utilise donc .venv-docker,
+        totalement independant et non versionne."""
+        return d / (".venv-docker" if self.driver == "docker" else ".venv")
 
     def _env(self, port: int, extra: Optional[dict] = None) -> dict:
         """Environnement des process enfants. HOME et caches dans le workspace
@@ -617,7 +627,7 @@ class PreviewManager:
         if not entry and not reqs.is_file():
             return None
 
-        venv = d / ".venv"
+        venv = self._venv_dir(d)
         vpy = venv / "bin" / "python"
         install: Optional[list[str]] = None
         if not vpy.is_file():
@@ -731,9 +741,9 @@ class PreviewManager:
         if install:
             st.phase = PHASE_INSTALLING
             if install == ["__venv__"]:
-                steps = [["python3", "-m", "venv", ".venv"]]
+                steps = [["python3", "-m", "venv", "--clear", ".venv-docker"]]
                 if (Path(plan["cwd"]) / "requirements.txt").is_file():
-                    steps.append([".venv/bin/python", "-m", "pip", "install",
+                    steps.append([".venv-docker/bin/python", "-m", "pip", "install",
                                   "-r", "requirements.txt"])
             else:
                 steps = [self._docker_cmd(install, project)]
@@ -743,7 +753,7 @@ class PreviewManager:
                 if code != 0:
                     self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
                     return
-            marker = Path(plan["cwd"]) / ".venv" / ".forge-installed"
+            marker = Path(plan["cwd"]) / ".venv-docker" / ".forge-installed"
             if marker.parent.is_dir():
                 marker.write_text("ok\n", encoding="utf-8")
             fresh = self.plan(
