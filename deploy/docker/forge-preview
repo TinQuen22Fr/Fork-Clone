@@ -9,7 +9,7 @@
 #
 #   forge-preview <verbe> <projet> [options bornees]
 #
-# Verbes : start | stop | rm | ps | logs | inspect | exec | health
+# Verbes : start | stop | rm | ps | logs | inspect | exec | health | stats | prune
 # Le projet est valide par regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$).
 # Toute commande arbitraire est refusee. Le conteneur est tenu en vie par
 # une commande de garde interne (sleep infinity) ; le lancement metier (install/run)
@@ -31,9 +31,27 @@ ROOTS=${FORGE_PREVIEW_WORKSPACE_ROOTS:-/var/www/forge/workspace}
 
 die() { printf '%s: %s\n' "$PROG" "$*" >&2; exit 64; }
 
+# --- Audit D9 : journaliser chaque start|stop (qui, quand, projet) -------
+# Ecrit dans un fichier dedie ET dans syslog (logger). SUDO_USER identifie
+# l'appelant d'origine quand le wrapper est invoque via sudo par le backend.
+AUDIT_DIR=${FORGE_PREVIEW_AUDIT_DIR:-/var/log/forge-preview}
+audit() {
+  local verb=$1 project=$2 rc=$3
+  local who ts line
+  who=${SUDO_USER:-${LOGNAME:-${USER:-inconnu}}}
+  ts=$(date '+%Y-%m-%dT%H:%M:%S%z')
+  line="forge-preview audit ts=$ts who=$who verb=$verb project=$project rc=$rc"
+  mkdir -p "$AUDIT_DIR" 2>/dev/null || true
+  printf '%s\n' "$line" >> "$AUDIT_DIR/audit.log" 2>/dev/null || true
+  if command -v logger >/dev/null 2>&1; then
+    logger -t forge-preview "$line" 2>/dev/null || true
+  fi
+}
+
+
 usage() {
   cat >&2 <<USAGE
-Usage : $PROG <start|stop|rm|ps|logs|inspect|health> <projet> [options]
+Usage : $PROG <start|stop|rm|ps|logs|inspect|stats|health> <projet> [options]
 
   start   <projet> --port <p> --workspace <dir> [--cpus N] [--memory M] [--env CLE=VAL]...
   stop    <projet>
@@ -41,8 +59,10 @@ Usage : $PROG <start|stop|rm|ps|logs|inspect|health> <projet> [options]
   ps      <projet|-->
   logs    <projet> [--tail N]
   inspect <projet>
+  stats   <projet>                    (CPU/RAM instantanes, D10)
   exec    <projet> --script <rel .forge-preview/*.sh> [--detach]
   health  <projet>
+  prune   --older-days <N>      (rm des conteneurs arretes > N jours + image prune)
 USAGE
   exit 64
 }
@@ -77,11 +97,47 @@ if [ "${1:-}" = "health" ]; then
   exit 0
 fi
 
+# --- Verbe prune : nettoyage periodique (pas de projet) ----------------------
+if [ "${1:-}" = "prune" ]; then
+  [ -x "$DOCKER" ] || die "docker introuvable ($DOCKER)"
+  shift
+  OLDER=30
+  if [ $# -eq 2 ] && [ "$1" = "--older-days" ]; then
+    valid_int "$2" || die "--older-days attend un entier"
+    [ "$2" -ge 1 ] && [ "$2" -le 3650 ] || die "--older-days hors bornes (1-3650)"
+    OLDER=$2
+  elif [ $# -ne 0 ]; then
+    die "option non reconnue pour prune"
+  fi
+  # Conteneurs forge-preview arretes (exited/created) depuis plus de OLDER jours.
+  # Format : "<id> <AAAA-MM-JJ> <HH:MM:SS> <tz>" -> epoch via mktime (mawk/gawk).
+  for CID in $(dk ps -a --filter "name=forge-preview-" --filter "status=exited" \
+      --filter "status=created" --format '{{.ID}} {{.CreatedAt}}' 2>/dev/null | \
+      awk -v days="$OLDER" '
+        BEGIN { cutoff = systime() - days * 86400 }
+        {
+          id = $1; d = $2 " " $3
+          gsub(/-/, " ", d); gsub(/:/, " ", d)
+          split(d, a, " ")
+          if (a[1] >= 2000) {
+            ep = mktime(a[1] " " a[2] " " a[3] " " a[4] " " a[5] " " a[6])
+            if (ep > 0 && ep <= cutoff) print id
+          }
+        }'); do
+    dk rm -f "$CID" >/dev/null 2>&1 || true
+  done
+  # Images intermediaires / orphelines non utilisees par un conteneur.
+  dk image prune -f >/dev/null 2>&1 || true
+  printf '%s: prune ok (older-days=%s)\n' "$PROG" "$OLDER"
+  exit 0
+fi
+
+
 [ $# -ge 2 ] || usage
 VERB=$1; PROJECT=$2; shift 2
 
 case "$VERB" in
-  start|stop|rm|logs|inspect|exec) valid_project "$PROJECT" || die "nom de projet invalide" ;;
+  start|stop|rm|logs|inspect|exec|stats) valid_project "$PROJECT" || die "nom de projet invalide" ;;
   ps)
     if [ "$PROJECT" != "--" ]; then
       valid_project "$PROJECT" || die "nom de projet invalide"
@@ -104,6 +160,7 @@ stop|rm)
   fi
   [ "$VERB" = "rm" ] && { rm -rf "$STATEDIR" 2>/dev/null || true; }
   printf '%s: %s %s (rc=%s)\n' "$PROG" "$VERB" "$NAME" "$RC" >&2
+  audit "$VERB" "$PROJECT" "$RC"
   exit "$RC"
   ;;
 
@@ -133,6 +190,11 @@ logs)
 inspect)
   [ $# -eq 0 ] || die "option non reconnue pour inspect"
   dk inspect "$NAME"
+  ;;
+
+stats)
+  [ $# -eq 0 ] || die "option non reconnue pour stats"
+  dk stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.PIDs}}' "$NAME" 2>&1
   ;;
 
 exec)
@@ -250,6 +312,9 @@ start)
   # D4 : garde en vie sans executer de code projet. La commande metier est
   # lancee par D5 (preview_runtime) via le wrapper.
   dk run "${RUN_ARGS[@]}" sleep infinity
+  RC=$?
+  audit "start" "$PROJECT" "$RC"
+  exit "$RC"
   ;;
 
 *)

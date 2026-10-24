@@ -437,6 +437,10 @@ class Settings:
         self.preview_autostart: bool = _env(
             "PREVIEW_AUTOSTART", "0"
         ).strip().lower() not in ("0", "false", "no", "off", "")
+        # Nettoyage et quotas disque (D7) : cadence de la boucle periodique.
+        self.preview_housekeeping_interval: int = int(
+            _env("PREVIEW_HOUSEKEEPING_INTERVAL", "3600")
+        )
         self.git_author_email: str = _env(
             "GIT_AUTHOR_EMAIL", "forge@localhost"
         )
@@ -534,6 +538,7 @@ async def lifespan(app: FastAPI):
         await _seed_admin()
         asyncio.create_task(_autostart_previews())
         asyncio.create_task(_reap_idle_previews())
+        asyncio.create_task(_preview_housekeeping())
 
     logger.info("Origines CORS autorisées : %s", settings.frontend_urls or "(aucune)")
     logger.info(
@@ -1009,7 +1014,12 @@ _FORGE_TOOLS_RULE_BLOCK = (
     "2. Tu as l'interdiction formelle de renvoyer un message vide ou "
     "contenant uniquement des appels d'outils.\n"
     "3. Decris systematiquement ce que tu as fait, les fichiers touches "
-    "et le resultat."
+    "et le resultat.\n"
+    "4. SECRETS : n'utilise jamais `cat`, `tac`, `less` ni `more` sur un "
+    "fichier `.env` (le backend l'interdit). Pour inspecter une configuration, "
+    "prefere `grep`/`sed` tronques (`| sed -n '1,80p'`, `| cut -c1-200`). "
+    "Toute valeur sensible est de toute facon masquee par ***REDACTED*** cote "
+    "backend : ne tente pas de la recuperer en clair."
 )
 
 
@@ -1717,7 +1727,10 @@ async def prepare_turn_context(user_id: Optional[str], project: Optional[str]) -
 # ni restreindre les binaires disponibles (choix d'architecture assume : machine
 # dediee mono-utilisateur). Detection au niveau du texte de la commande, avant
 # toute execution.
-_BASH_SENSITIVE_FILE_RE = re.compile(r"^$")
+_BASH_SENSITIVE_FILE_RE = re.compile(
+    r"\b(cat|tac|less|more)\s+[^;&|]*\.env(\b|\.)",
+    re.I,
+)
 
 
 def _truncate_lines(text: str, head: int = 50, tail: int = 50) -> str:
@@ -5194,7 +5207,13 @@ async def chat_status(current_user: dict = Depends(get_current_user)):
         }
         for cid, info in list(_ACTIVE_RUNS.items())
     ]
-    return {"turns": turns, "running": running}
+    # D10 : observabilite des previews (etat, CPU/RAM, uptime, dernier code).
+    previews = {}
+    try:
+        previews = preview_mgr().active_previews()
+    except Exception:
+        previews = {}
+    return {"turns": turns, "running": running, "previews": previews}
 
 
 @api_router.get("/context/{project}")
@@ -7130,6 +7149,28 @@ async def preview_logs(
         "target": target,
         "logs": preview_mgr().logs(pname, target),
     }
+
+
+async def _preview_housekeeping() -> None:
+    """Nettoyage periodique D7 : conteneurs arretes > N jours + images orphelines,
+    et alerte si l'espace libre / passe sous le seuil."""
+    interval = settings.preview_housekeeping_interval
+    if interval <= 0:
+        return
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            mgr = preview_mgr()
+            alert = mgr.disk_alert()
+            if alert:
+                logger.warning("Quota disque : %s", alert)
+            res = await mgr.prune()
+            if res["rc"] != 0:
+                logger.warning("Prune previews : %s", res["output"])
+            else:
+                logger.info("Prune previews : %s", res["output"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Housekeeping previews : %s", exc)
 
 
 async def _reap_idle_previews() -> None:
