@@ -296,6 +296,32 @@ if [ "$DO_BACKEND" -eq 1 ] && [ -f deploy/forge-backend.service ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 6bis. Wrapper Docker des previews : recopier la version du depot quand il
+# est deja installe. Le wrapper porte la logique de montage (ex. volume d'etat
+# /forge-state ajoute en D14) ; sans recopie, le backend est a jour mais le
+# conteneur reste sur l'ancien montage (read-only -> venv impossible).
+# ---------------------------------------------------------------------------
+if [ "$DO_BACKEND" -eq 1 ] && [ -f deploy/docker/forge-preview ]; then
+  WRAPPER_DST="/usr/local/bin/forge-preview"
+  if [ -e "$WRAPPER_DST" ]; then
+    # Garde-fou AVANT toute copie : jamais de socket Docker, jamais de
+    # commande arbitraire. Un depot compromis est refuse avant d'ecraser
+    # le binaire systeme.
+    if grep -q 'docker\.sock' deploy/docker/forge-preview; then
+      die "le wrapper Docker reference docker.sock — installation refusee"
+    fi
+    if ! cmp -s deploy/docker/forge-preview "$WRAPPER_DST"; then
+      c_step "Wrapper Docker des previews"
+      install -o root -g root -m 0755 deploy/docker/forge-preview "$WRAPPER_DST"
+      c_ok "wrapper mis a jour : $WRAPPER_DST"
+    else
+      c_ok "wrapper deja a jour : $WRAPPER_DST"
+    fi
+    install -o root -g root -m 0755 -d /var/lib/forge-preview
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 7. Nginx : signale un ecart, sans rien imposer
 # ---------------------------------------------------------------------------
 if [ -f deploy/nginx-forge.conf ] && [ -f /etc/nginx/sites-available/forge ]; then

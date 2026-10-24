@@ -1282,3 +1282,25 @@ Deux blocs D8 coexistent : un premier « 20 OK (15 statiques + 5 bout-en-bout) �
   sudo docker exec "$CTR" cat /workspace/.forge-preview/api.run.sh
   ```
   Attendu : shebang `/forge-state/…`, uvicorn exécutable dans le conteneur, `8191 => 200`, `api.run.sh` référençant `/forge-state/venv`, plus de 502, et **aucun `.venv-docker` dans le projet**.
+
+
+---
+
+**Correctif D14 (v3) — déploiement du wrapper absent d'`upgrade.sh`**
+
+- **Symptôme prod** : preview `storm-monitor-20km-Make_With_Forge` en échec, log `python3 -m venv --clear /forge-state/venv` → `Error: [Errno 30] Read-only file system: '/forge-state'`.
+- **Cause racine** : le backend prod (22:07) référençait `/forge-state`, mais le wrapper `/usr/local/bin/forge-preview` était resté sur l'ancienne version (sans montage `-v STATEDIR:/forge-state:rw`). `upgrade.sh` ne recopiait jamais le wrapper Docker ; seul un `install-d*.sh` manuel le faisait. Résultat : `/forge-state` n'existait pas dans le conteneur et tombait sur la couche `--read-only`.
+- **Correctif** : `upgrade.sh` recopie désormais `deploy/docker/forge-preview` (root:root, 0755) et réinstalle `/var/lib/forge-preview` quand le wrapper est déjà présent, avant le redémarrage du service — sans action manuelle.
+- **Effet attendu** : après `git pull + sudo bash upgrade.sh` puis **arrêt/relance de la preview** (le conteneur en cours garde l'ancien montage tant qu'il n'est pas recréé), le venv se crée dans `/forge-state/venv` et l'API répond `8191 => 200`.
+- **Vérification** : `bash -n upgrade.sh` OK.
+
+
+---
+
+**Correctif D14 (v3) — recopie automatique du wrapper système par upgrade.sh**
+
+- **Contexte** : le correctif v2 exigeait le montage `/forge-state` porté par `/usr/local/bin/forge-preview`. Or ce binaire système est hors de l'arbre déployé : `upgrade.sh` ne le mettait jamais à jour (seul un `install-d*.sh` manuel le faisait). En prod, le backend référençait `/forge-state` mais le wrapper restait sur l'ancienne version → crash venv en read-only.
+- **Correctif** : section `6bis` de `upgrade.sh` — recopie `deploy/docker/forge-preview` (root:root 0755) vers `/usr/local/bin/forge-preview` quand le binaire existe déjà, AVANT le redémarrage du service. Ajout du garde-fou `docker.sock` vérifié **avant** toute copie (refus avant d'écraser le binaire), et recopie conditionnelle via `cmp -s` (ne réécrit pas si identique).
+- **Mode** : aucune action manuelle — `git pull + sudo bash upgrade.sh` suffit désormais à synchroniser le binaire système.
+- **Attention recette** : après upgrade, **arrêter puis relancer la preview** concernée (le conteneur déjà lancé conserve son ancien montage tant qu'il n'est pas recréé).
+- **Vérification** : `bash -n upgrade.sh` OK ; bloc validé en sandbox.

@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-24T19:35:36.339255+00:00
+# Dernière mise à jour : 2026-10-24T21:20:37.480938+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit bb8f420 fix(previews): D14 — venv Python dédié conteneur (.venv-docker), détection et installation docker.
+- Git : branche claude-ai, dernier commit 7ff9f80 fix(previews): D14 v2 — venv conteneur hors workspace (/forge-state), sans pollution de l'atelier versionné.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -84,6 +84,11 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Consigne stricte et définitive : À chaque fois que tes modifications incluent upgrade.sh ou install.sh, tu as l'INTERDICTION de me proposer la procédure de mise à jour standard (git pull + sudo bash upgrade.sh).
+  [regle] Tu dois IMPÉRATIVEMENT m'afficher cet avertissement clair et explicite :
+  [regle] Tu dois impérativement récupérer ce script depuis le workspace via SSH et le remplacer manuellement dans le répertoire de prod AVANT de l'exécuter.
+  [regle] Conséquence : la prod utilise toujours l'ancienne version de l'exécutable, le conteneur démarre sans le montage /forge-state, et ça crashe direct en "Read-only file system".
+  [regle] ça ne fonctionne pas !
   [regle] après c'est pas clair ton truc et tes "consignes" j'ai pas à travailler moi sur le workspace de telle ou telle projets qui s'y trouve.
   [regle] valide la decision et donne le feux vert pour passer par l'agent vibe-coder au travail !
   [regle] Exemple actuellement le projet storm monitor 20km with forge tourne en préview mais certaines fonctionnalité ne fonctionne pas (erreur 502) ce qui prouve qu'il n'y a pas de navigation vers l'extérieur, idem l'API open meteo qui est utiliser ne reourne rien car il n'y a pas de navigation vers l'extérieur.
@@ -100,9 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] donc toujours avec RAPPORT_PREVIEWS_DOCKER.md, on continue comme le stipule la section 5 Ordre d'exécution recommandé.
   [regle] On continue toujours comme pour D1 → D2 → D3 → D4 → D5 → D6 → D11 → D12, sur le même principe et consignes.
   [regle] modification demandé avant le push fait, confirme ton rapport ou pas avant le push Attention dans le comit il faut indiqué que toutes les étapes D1 → D2 → D3 → D4 → D5 → D6 → D11 → D12 concerne ce push
-  [regle] Avant de pousser sur mon GitHub avec le bouton de ma forge et de lancer en suivant le script upgrade.sh pour mise à jour, je souhaite que tu fasse une review des choses faite dans ces étapes.
-  [regle] OK continue avec D12 dans les même conditions que le reste niveau consignes
-  [regle] fait ce qu'il faut et on finalise pour consigner la clôture de D11 dans RAPPORT_PREVIEWS_DOCKER.md :
-  [regle] Une fois arriver au bout tu consigne dans RAPPORT_PREVIEWS_DOCKER.md depuis le début nous procédons ainsi alors pourquoi chercher à executer quoi que ce soit de ton coté.
-  [regle] ok mais bon si la consigne était bonne je ne veux pas que ça redémarre automatiquement, que quand je le choisit mois.
-  [regle] ce que tu n'as toujours pas compris c'est que pour l'instant tu tra
+  [regle] Avant de pousser sur mon GitHub avec le bouton de ma forge et de lancer en suivant le
