@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-24T21:20:37.480938+00:00
+# Dernière mise à jour : 2026-10-24T21:52:18.516463+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 7ff9f80 fix(previews): D14 v2 — venv conteneur hors workspace (/forge-state), sans pollution de l'atelier versionné.
+- Git : branche claude-ai, dernier commit fd6882a fix(upgrade): D14 v3 — recopie automatique du wrapper système forge-preview (montage /forge-state).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -105,4 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] donc toujours avec RAPPORT_PREVIEWS_DOCKER.md, on continue comme le stipule la section 5 Ordre d'exécution recommandé.
   [regle] On continue toujours comme pour D1 → D2 → D3 → D4 → D5 → D6 → D11 → D12, sur le même principe et consignes.
   [regle] modification demandé avant le push fait, confirme ton rapport ou pas avant le push Attention dans le comit il faut indiqué que toutes les étapes D1 → D2 → D3 → D4 → D5 → D6 → D11 → D12 concerne ce push
-  [regle] Avant de pousser sur mon GitHub avec le bouton de ma forge et de lancer en suivant le
+  [regle] Avant de pousser sur mon GitHub avec le bouton de ma forge et de lancer en suivant le script u

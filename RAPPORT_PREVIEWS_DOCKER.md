@@ -1304,3 +1304,14 @@ Deux blocs D8 coexistent : un premier « 20 OK (15 statiques + 5 bout-en-bout) �
 - **Mode** : aucune action manuelle — `git pull + sudo bash upgrade.sh` suffit désormais à synchroniser le binaire système.
 - **Attention recette** : après upgrade, **arrêter puis relancer la preview** concernée (le conteneur déjà lancé conserve son ancien montage tant qu'il n'est pas recréé).
 - **Vérification** : `bash -n upgrade.sh` OK ; bloc validé en sandbox.
+
+
+---
+
+**Correctif D14 (v4) — PEP 668 : pip global au lieu du pip venv**
+
+- **Symptôme** : `api.install.sh` échoue avec `error: externally-managed-environment` (PEP 668). Le script exécute `python -m pip install` (pip global) au lieu de `/forge-state/venv/bin/python -m pip install`.
+- **Cause racine** : `_docker_cmd()` appelait `Path(arg).resolve()` sur le chemin du venv conteneur (`/var/lib/forge-preview/<projet>/venv/bin/python`). `resolve()` suit les symlinks → `/usr/bin/python3.14`. Le `relative_to(state_proj)` échoue, le fallback réduit au basename `python` (dans `known`), → pip global du système → PEP 668.
+- **Correction** : remplacé `Path(arg).resolve().relative_to(state_proj)` par `Path(arg).relative_to(state_proj)` (comparaison textuelle, sans résolution de symlinks). Le chemin d'état est déjà canonique, `resolve()` n'y apporte rien et casse les symlinks du venv.
+- **Recette** : test unitaire ajouté dans `verify-d14.sh` — assertion `PEP668_GUARD OK` vérifie que `_docker_cmd` produit `/forge-state/venv/bin/python` et jamais `python`.
+- **Fichier** : `backend/preview_runtime.py` (`_docker_cmd`, bloc state_proj).

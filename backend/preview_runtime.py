@@ -406,7 +406,12 @@ class PreviewManager:
                 continue
             if state_proj is not None:
                 try:
-                    rel = Path(arg).resolve().relative_to(state_proj)
+                    # PurePosixPath : comparaison textuelle SANS resolution
+                    # de symlinks.  resolve() suivrait venv/bin/python ->
+                    # /usr/bin/python3.xx et le relative_to echouerait,
+                    # degradant le chemin en nom de base via « known » ->
+                    # pip global -> PEP 668.
+                    rel = Path(arg).relative_to(state_proj)
                     out.append("/forge-state/" + rel.as_posix())
                     continue
                 except (ValueError, OSError):

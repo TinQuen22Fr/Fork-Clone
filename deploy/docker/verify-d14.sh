@@ -97,6 +97,17 @@ nvenv = mn._venv_dir(Path("/var/www/forge/workspace/p1/backend"))
 assert nvenv == Path("/var/www/forge/workspace/p1/backend/.venv"), nvenv
 print("VENV_NATIVE", nvenv)
 
+# PEP 668 regression : venv/bin/python is a symlink to the system
+# python.  _docker_cmd must NOT resolve() the symlink, otherwise
+# relative_to(state_proj) fails and the fallback strips it to "python"
+# (the global pip -> PEP 668).
+vpy_path = venv / "bin" / "python"
+raw_install = [str(vpy_path), "-m", "pip", "install", "-r", "/var/www/forge/workspace/p1/backend/requirements.txt"]
+docker_install = md._docker_cmd(raw_install, "p1")
+assert docker_install[0] == "/forge-state/venv/bin/python", \
+    f"PEP668 regression: got {docker_install[0]} instead of /forge-state/venv/bin/python"
+print("PEP668_GUARD OK")
+
 print("D14_OK")
 PY
 ) || true
@@ -105,6 +116,8 @@ printf '%s\n' "$OUT" | grep -q '^VENV_DOCKER /var/lib/forge-preview/p1/venv$' \
   && ok "unitaire : docker -> /var/lib/forge-preview/<projet>/venv" || ko "unitaire : venv docker KO"
 printf '%s\n' "$OUT" | grep -q '^VENV_NATIVE .*\.venv$' \
   && ok "unitaire : natif -> .venv" || ko "unitaire : natif KO"
+printf '%s\n' "$OUT" | grep -q '^PEP668_GUARD OK$' \
+  && ok "unitaire : PEP 668 — venv pip, pas global (symlink non résolu)" || ko "unitaire : PEP 668 regression"
 printf '%s\n' "$OUT" | grep -q '^D14_OK$' \
   && ok "assertions unitaires intégralement passées" || ko "assertions unitaires en échec"
 
