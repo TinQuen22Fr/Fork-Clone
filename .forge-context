@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-24T12:06:40.422795+00:00
+# Dernière mise à jour : 2026-10-24T14:44:19.220764+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 3df2fc2 feat(previews/docker): recette complète D1-D12 (durcissement Docker, wrapper/sudoers, image base, contrat réseau, driver runtime, veille/conservation, tests, bascule native↔docker).
+- Git : branche claude-ai, dernier commit 2da7df1 feat(previews): D7-D10 — quotas/nettoyage, masquage secrets, interdiction exec hôte, observabilité anti-boucle + recettes verify + audit/correctif documentaire.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -84,6 +84,9 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] rédige les recettes de vérification associées (nouveau verify-d13*.sh en append au rapport) mais procéde par étapes (plusieurs parties) pour ne pas figer la chose
+  [regle] bon visiblement le systeme de preview ne fonctionne pas.
+  [regle] test avec un projet de celle-ci voici ce que je constate et qui me semble ne pas fonctionner (voir capture) et à ajuster pour régler le pb :
   [regle] - `backend/server.py` : garde-fou `_BASH_SENSITIVE_FILE_RE` interdit `cat`/`tac`/`less`/`more` sur un `.env` ; consigne agent ajoutée au bloc de règles outils (jamais de `cat` d'un `.env`, `sed`/`grep` tronqués).
   [regle] SI oui même consignes concernant le message de commit en y intégrant bien-sur ce "correctif" doc.
   [regle] - **Correction ciblée** : dans `stats()`, le returncode de la commande wrapper était ignoré ; un conteneur absent faisait remonter le message d'erreur Docker dans `cpu_percent`. Désormais `returncode != 0` renvoie des champs `None` (conforme au docstring « ne jamais lever »).
@@ -102,8 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Petite subtilité à mémoriser : Quzand tu modifie install.sh ou upgrade.sh, meme en enregistrant ces fichiers sur mon github, avant de les lancer il faut que je les rapatries dans /var/www/forge (commande cp dans /var/www/forge/workspace/Fork-Clone (nom de la forge dans le workspace/sandbox atelier)) car si je lance celui-ci sans les modifs il les récupére bien de github et les enregistre dans /var
   [regle] si emergent arrive lui à ne pas avoir ça c'est que c'est possible chez moi
   [regle] pour après ne pas continuer jusqu'au bout...
-  [regle] 103-2. Workspace en bind mount → push GitHub toujours possible après arrêt.
-  [regle] Consigne bien tout où en est.
-  [regle] 5:# Ne pas editer a la main : relancer install-d2.sh.
-  [regle] 82: ko "une règle sudoers autorise docker directement (interdit)"
-  [regle] KO une règle sudoers autorise docker directement (interdit) == D2 : isolation de l'accès ==
+  [regle] 103-2. Workspace en bind mount →

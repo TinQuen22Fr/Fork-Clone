@@ -1203,3 +1203,30 @@ D5 n'avait pas de bloc de clôture. Réalité : **D5 est clos en production** �
 Deux blocs D8 coexistent : un premier « 20 OK (15 statiques + 5 bout-en-bout) » et un second « 15 statiques + 4 bout-en-bout ». Le **second bloc est la vérité de recette** (clôture consignée 2026-10-23 23:48, constat bout-en-bout réel joint). Le premier bloc est obsolète et doit être ignoré.
 
 **Verdict d'audit** : code et scripts conformes (D1 → D12), aucune correction technique requise. Seule la documentation est rectifiée ci-dessus.
+
+
+---
+
+**Correction D13a — Healthcheck HTTP (Vite) au lieu du simple test TCP**
+
+- **Constat (prod)** : le système de preview ne fonctionne pas. La détection de « prêt » se limite à un `connect_ex` TCP (`_port_open`), qui valide seulement l'ouverture du socket, pas la réponse de l'application. Un port ouvert ≠ Vite qui sert du contenu : la preview peut être signalée `running` alors que l'app ne répond pas.
+- **Cible** : remplacer la détection de readiness par une vraie sonde HTTP GET sur `http://127.0.0.1:<port>/`, timeout court explicite (~2 s), considérée **prête** si le statut est < 500 (2xx/3xx/4xx = serveur qui répond ; tolère le 404 de Vite sur `/`), **refusée** sinon (500, connexion refusée, timeout).
+- **Périmètre** : `backend/preview_runtime.py` — nouvelle fonction `_http_ready(port, host, timeout)`, suppression de `_port_open` et remplacement de ses 3 usages (détection « port déjà ouvert » dans `start()`, boucle de readiness dans `_run_docker()`, champ `port_open` dans `status()`).
+- **Recette** : création de `deploy/docker/verify-d13a.sh` (statique + unitaire avec serveur HTTP local en mémoire, sans privilège ni conteneur).
+- **Vérifications** :
+  - Statique : présence de `_http_ready`, timeout explicite dans la signature, vraie requête HTTP (urllib/http.client), seuil HTTP 500, suppression de `_port_open`, appel effectif de la sonde.
+  - Unitaire : serveur HTTP local — 200 → prêt ; 404 → prêt (Vite) ; 500 → refus ; port fermé → refus.
+- **Résultat local** : recette posée ; code applicatif à corriger en amont (Partie 1 du chantier de correction).
+
+
+---
+
+**Correction D13b — Câblage des logs métier vers l'interface (append pur, Partie 2)**
+
+- **Contexte** : en mode docker, le process métier est lancé via `docker exec --detach`. Sa sortie ne remonte pas dans `docker logs` (PID 1 = `sleep infinity`), d'où l'encart de logs vide dans l'interface.
+- **Correctif cible** : rediriger la sortie du script de lancement vers un journal partagé sous `<projet>/.forge-preview/` (visible côté hôte via le montage `/workspace`), puis faire de ce fichier la source de vérité de `logs()` (repli `docker logs` conservé en secours), avec troncature bornée.
+- **Recette** : création de `deploy/docker/verify-d13b.sh` (statique + unitaire, sans privilège ni conteneur).
+- **Vérifications** :
+  - Statique : redirection de sortie dans `_script_run`, journal sous `.forge-preview`, lecture du journal local prioritaire sur `docker logs` dans `logs()`, repli `docker logs` conservé, troncature bornée (`seek`/`tail`/`max_bytes`).
+  - Unitaire : `logs()` relit le journal local en mode docker, masquage des secrets conservé, gros journal tronqué à `max_bytes`.
+- **Résultat local** : recette posée en « red-green » ; elle échoue volontairement tant que le code applicatif n'est pas corrigé (redirections et lecture locale absentes).
