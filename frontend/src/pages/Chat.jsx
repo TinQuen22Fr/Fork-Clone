@@ -88,7 +88,18 @@ export default function Chat() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [conversations, setConversations] = useState([]);
-  const [activeId, setActiveId] = useState(null);
+  // Session de chat active persistee : au rechargement (F5 / Ctrl+Shift+R)
+  // on reste sur la conversation ouverte au lieu de retomber sur le hub.
+  const ACTIVE_CONV_KEY = "forge_active_conversation";
+  const [activeId, setActiveId] = useState(() => {
+    try {
+      return localStorage.getItem(ACTIVE_CONV_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+  // L'id restaure n'est validable qu'apres le chargement des conversations.
+  const activeIdValidatedRef = useRef(false);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]); // [{file, preview}]
@@ -181,6 +192,17 @@ export default function Chat() {
   const [runningTurns, setRunningTurns] = useState([]);
 
   const activeConv = Array.isArray(conversations) ? conversations.find((c) => c.id === activeId) : null;
+
+  // Miroir de activeId dans localStorage : toute ouverture/fermeture de
+  // conversation est memorisee pour survivre a un rechargement de page.
+  useEffect(() => {
+    try {
+      if (activeId) localStorage.setItem(ACTIVE_CONV_KEY, activeId);
+      else localStorage.removeItem(ACTIVE_CONV_KEY);
+    } catch {
+      /* stockage indisponible */
+    }
+  }, [activeId]);
 
   // Initial load - fetch conversations
   useEffect(() => {
@@ -440,6 +462,15 @@ export default function Chat() {
       const { data } = await api.get("/conversations");
       const list = Array.isArray(data) ? data : (data?.conversations || []);
       setConversations(list);
+      // Au premier chargement seulement : si la session restauree depuis
+      // localStorage ne correspond plus a aucune conversation (supprimee
+      // ailleurs), on la purge pour ne pas rester bloque sur un fil vide.
+      if (!activeIdValidatedRef.current) {
+        activeIdValidatedRef.current = true;
+        setActiveId((cur) =>
+          cur && !list.some((c) => c.id === cur) ? null : cur
+        );
+      }
     } catch (e) {
       setError(formatApiError(e));
     }
