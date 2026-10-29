@@ -281,8 +281,13 @@ start)
     if [ "$(dk inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = "true" ]; then
       die "conteneur $NAME deja en cours (stop d'abord)"
     fi
+    # Conteneur homonyme non demarre (created/exited) : on le purge pour que
+    # le prochain "dk run --name $NAME" ne bute pas sur "name already in use".
     dk rm -f "$NAME" >/dev/null 2>&1 || true
   fi
+  # Filet de securite : un "dk run" precedent peut avoir laisse un conteneur
+  # en etat "created" qu'inspect ne voit pas toujours selon la version.
+  dk rm -f "$NAME" >/dev/null 2>&1 || true
 
   mkdir -p "$STATEDIR" 2>/dev/null || true
   # D14 : le venv conteneur vit HORS du workspace versionne, dans l'etat du
@@ -292,9 +297,19 @@ start)
   _ws_gid=$(stat -c '%g' "$WORKSPACE" 2>/dev/null || echo 1000)
   chown "${_ws_uid}:${_ws_gid}" "$STATEDIR" 2>/dev/null || true
 
+  # Docker impose un hostname conforme RFC 1123 (minuscules, chiffres, tirets).
+  # Le nom du projet peut contenir des majuscules/underscores (ex. Fork-Clone),
+  # que dockerd refuse comme hostname -> on le normalise ici. Le nom du
+  # conteneur ($NAME) garde la casse d'origine (Docker l'accepte).
+  HOSTNAME_SAFE=$(printf '%s' "$PROJECT" \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -c 'a-z0-9-' '-' \
+    | sed -e 's/^-*//' -e 's/-*$//')
+  [ -n "$HOSTNAME_SAFE" ] || HOSTNAME_SAFE="preview"
+
   RUN_ARGS=(-d
     --name "$NAME"
-    --hostname "$PROJECT"
+    --hostname "$HOSTNAME_SAFE"
     --network "$NETWORK"
     -p "${PREVIEW_HOST}:${PORT}:${PORT}"
     --cpus "$CPUS"
@@ -318,8 +333,25 @@ start)
   RUN_ARGS+=("$IMAGE")
   # D4 : garde en vie sans executer de code projet. La commande metier est
   # lancee par D5 (preview_runtime) via le wrapper.
-  dk run "${RUN_ARGS[@]}" sleep infinity
+  RUN_OUT=$(dk run "${RUN_ARGS[@]}" sleep infinity 2>&1)
   RC=$?
+  if [ "$RC" -ne 0 ]; then
+    # Echec de creation : on nettoie un eventuel conteneur partiel et on
+    # remonte la cause exacte (hostname invalide, port occupe, image absente...).
+    dk rm -f "$NAME" >/dev/null 2>&1 || true
+    printf '%s: echec dk run pour %s : %s\n' "$PROG" "$NAME" "$RUN_OUT" >&2
+    audit "start" "$PROJECT" "$RC"
+    exit "$RC"
+  fi
+  # Le conteneur doit reellement etre "running" ; sinon l'install (exec)
+  # echouerait sur "No such container". On verifie et on remonte les logs.
+  if [ "$(dk inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then
+    CLOGS=$(dk logs "$NAME" 2>&1 | tail -n 20)
+    dk rm -f "$NAME" >/dev/null 2>&1 || true
+    printf '%s: conteneur %s cree mais non demarre : %s\n' "$PROG" "$NAME" "$CLOGS" >&2
+    audit "start" "$PROJECT" 1
+    exit 1
+  fi
   audit "start" "$PROJECT" "$RC"
   exit "$RC"
   ;;

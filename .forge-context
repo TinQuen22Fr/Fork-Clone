@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-29T21:46:47.983906+00:00
+# Dernière mise à jour : 2026-10-29T22:14:43.162758+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit a15e6af fix(deps): requirements.txt adaptatif par version Python (markers PEP 508) — pins Emergent 3.12 conservés, versions récentes sous 3.13+.
+- Git : branche claude-ai, dernier commit c32bf10 fix(preview): installation backend docker en une passe verbeuse — fin du « journal vide », venv fiabilisé (sans --clear, ensurepip + upgrade pip).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
