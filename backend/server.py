@@ -69,10 +69,8 @@ CLAUDE_CLI_UA = f"claude-cli/{CLAUDE_CLI_VERSION} (external, cli)"
 CLAUDE_MODELS: tuple[str, ...] = (
     "claude-opus-5-5",
     "claude-sonnet-5-5",
-    "claude-haiku-4-5-20251001",
+    "claude-haiku-5-5",
     "claude-fable-5-1",
-    "claude-opus-4-1",
-    "claude-sonnet-4-6",
 )
 
 _current_claude_model: ContextVar[str] = ContextVar("current_claude_model", default="")
@@ -2861,7 +2859,59 @@ def _classify_error(msg: str) -> str:
     return "unknown"
 
 
-def _build_chain(requested: str) -> list[str]:
+# Providers reputes forts par type de tache (best-effort, ordre de preference).
+# N'impose rien : sert uniquement a REORDONNER la chaine auto sans jamais
+# retirer un provider (le fallback complet est integralement conserve).
+_VISION_PROVIDERS = ("claude", "gemini", "openrouter", "nvidia")
+_CODE_PROVIDERS = ("claude", "opencode", "cerebras", "groq")
+_REASONING_PROVIDERS = ("claude", "gemini", "cerebras", "groq")
+
+_CODE_HINT_RE = re.compile(
+    r"\b(code|coder|codes|bug|debug|refactor|fonction|function|classe|class|"
+    r"compile|stacktrace|traceback|exception|regex|script|algorithm|algorithme|"
+    r"python|javascript|typescript|java|rust|golang|sql|html|css|api)\b",
+    re.IGNORECASE,
+)
+_REASONING_HINT_RE = re.compile(
+    r"\b(reflechis|r[ée]flexion|analyse|analyser|raisonne|raisonnement|"
+    r"demontre|d[ée]montre|explique pourquoi|[ée]tape par [ée]tape|"
+    r"step by step|reasoning|prouve|justifie|compare|strat[ée]gie)\b",
+    re.IGNORECASE,
+)
+
+
+def pick_best_provider(
+    prompt: Optional[str] = None, has_image: bool = False
+) -> Optional[str]:
+    """
+    Signal simple de pertinence pour le mode auto.
+
+    Renvoie l'id d'un provider a privilegier selon la demande, ou None si
+    aucun signal clair. Ne leve jamais, ne configure rien, ne retire aucun
+    provider : c'est une simple PREFERENCE d'ordonnancement.
+    """
+    try:
+        if has_image:
+            preferred = _VISION_PROVIDERS
+        elif prompt and _CODE_HINT_RE.search(prompt):
+            preferred = _CODE_PROVIDERS
+        elif prompt and _REASONING_HINT_RE.search(prompt):
+            preferred = _REASONING_PROVIDERS
+        else:
+            return None
+        for pid in preferred:
+            if pid in PROVIDER_IDS and _provider_available(pid):
+                return pid
+    except Exception:
+        return None
+    return None
+
+
+def _build_chain(
+    requested: str,
+    prompt: Optional[str] = None,
+    has_image: bool = False,
+) -> list[str]:
     """
     Chaine de providers a essayer.
 
@@ -2869,6 +2919,10 @@ def _build_chain(requested: str) -> list[str]:
     si le provider demande echoue, l'erreur precise est renvoyee telle quelle
     au frontend. Seul le mode "auto" beneficie de la cascade de secours
     multi-providers (Ollama local toujours en tout dernier recours).
+
+    En mode auto, si `prompt`/`has_image` revelent un type de tache (image,
+    code, raisonnement), le provider le plus pertinent est place EN TETE sans
+    jamais retirer les autres : le fallback complet reste intact.
     """
     if requested != "auto":
         return [requested]
@@ -2879,6 +2933,11 @@ def _build_chain(requested: str) -> list[str]:
             priority.append(p)
 
     chain = list(priority) if settings.enable_fallback else priority[:1]
+
+    # Reordonnancement par pertinence (mode auto uniquement).
+    best = pick_best_provider(prompt, has_image)
+    if best and best in chain and chain[0] != best:
+        chain = [best] + [p for p in chain if p != best]
 
     if "ollama" in chain[1:]:
         chain = [p for p in chain if p != "ollama"] + ["ollama"]
@@ -2938,7 +2997,7 @@ async def generate_ai_response(
     reellement repondu et l'historique des tentatives.
     """
     requested = provider if provider in PROVIDER_IDS or provider == "auto" else "claude"
-    chain = _build_chain(requested)
+    chain = _build_chain(requested, prompt=text, has_image=bool(images))
     single = len(chain) == 1  # choix explicite : aucune bascule, erreur brute renvoyee
     attempts: list[dict] = []
 
@@ -4632,7 +4691,7 @@ async def stream_ai_response(
     de zero, l'erreur est donc remontee telle quelle.
     """
     requested = provider if provider in PROVIDER_IDS or provider == "auto" else "claude"
-    chain = _build_chain(requested)
+    chain = _build_chain(requested, prompt=text, has_image=bool(images))
     single = len(chain) == 1  # choix explicite : aucune bascule, erreur brute renvoyee
     attempts: list[dict] = []
 
@@ -6290,6 +6349,7 @@ async def _fetch_catalog(pid: str) -> list[str]:
     # regression possible.
     if pid == "claude":
         ids = list(CLAUDE_MODELS)
+        discovered_ok = False
         if settings.claude_token:
             try:
                 async with httpx.AsyncClient(
@@ -6315,7 +6375,12 @@ async def _fetch_catalog(pid: str) -> list[str]:
                         if m.get("id")
                     ]
                 if discovered:
+                    # L'API a repondu : on utilise EXCLUSIVEMENT son catalogue,
+                    # c'est l'unique source de verite de ce que le compte OAuth
+                    # peut reellement invoquer. Aucune fusion avec la liste
+                    # statique (qui ne sert plus que de repli sur echec total).
                     ids = discovered
+                    discovered_ok = True
                     logger.info(
                         "Catalogue Claude decouvert : %d modele(s)", len(ids)
                     )
@@ -6324,10 +6389,12 @@ async def _fetch_catalog(pid: str) -> list[str]:
                     "Catalogue Claude indisponible, repli statique: %s",
                     str(e)[:150],
                 )
-        # Le modele configure (CLAUDE_MODEL) doit toujours etre proposable,
-        # meme s'il sort de la liste decouverte (ex: variante recente).
+        # Le modele configure (CLAUDE_MODEL) n'est reinjecte que s'il est
+        # absent d'une liste REELLEMENT decouverte : cela evite de proposer un
+        # modele fantome quand CLAUDE_MODEL pointe sur un id obsolete et que
+        # l'on est retombe sur le repli statique.
         configured = (settings.claude_model or "").strip()
-        if configured and configured not in ids:
+        if discovered_ok and configured and configured not in ids:
             ids.insert(0, configured)
         _CATALOG_CACHE[pid] = (time.time(), ids)
         return ids
@@ -6378,6 +6445,76 @@ async def _fetch_catalog(pid: str) -> list[str]:
     return ids
 
 
+# -------------------------------------------------------------------------
+# Metadonnees d'acces & capacites (Brique 2)
+# -------------------------------------------------------------------------
+def _provider_auth_type(pid: str) -> str:
+    """Nature de l'authentification du provider.
+
+    - oauth_subscription : Claude (jeton OAuth d'abonnement)
+    - local              : Ollama local (aucune cle)
+    - api_key            : tous les autres (cle API / proxy)
+    """
+    if pid == "claude":
+        return "oauth_subscription"
+    if pid == "ollama":
+        return "local"
+    return "api_key"
+
+
+def _provider_tier(pid: str) -> str:
+    """Palier d'acces du provider.
+
+    - subscription : Claude (inclus dans l'abonnement)
+    - local        : Ollama local
+    - free         : providers gratuits
+    - paid         : providers a la consommation (Gemini, OpenCode...)
+    """
+    if pid == "claude":
+        return "subscription"
+    if pid == "ollama":
+        return "local"
+    if pid in FREE_PROVIDER_IDS:
+        return "free"
+    return "paid"
+
+
+def _model_capabilities(model_id: str) -> list[str]:
+    """Capacites deduites heuristiquement du nom du modele.
+
+    Pur best-effort sur l'identifiant : ne contacte aucune API, ne leve jamais.
+    """
+    if not model_id:
+        return []
+    m = model_id.lower()
+    caps: list[str] = []
+    # Vision (multimodal)
+    if any(k in m for k in (
+        "vision", "-vl", "vl-", "multimodal", "omni", "llava",
+        "pixtral", "gemini", "claude-opus", "claude-sonnet", "gpt-4o",
+    )):
+        caps.append("vision")
+    # Raisonnement avance
+    if any(k in m for k in (
+        "reason", "thinking", "-r1", "deepseek-r", "o1", "o3", "qwq",
+        "opus", "reasoner",
+    )):
+        caps.append("reasoning")
+    # Outils / function calling (la plupart des modeles d'instruction recents)
+    if any(k in m for k in (
+        "claude", "gpt-4", "gpt-5", "gemini", "qwen", "llama-3", "llama3",
+        "mistral", "mixtral", "command", "nemotron", "deepseek", "tool",
+    )):
+        caps.append("tools")
+    # Contexte long
+    if any(k in m for k in (
+        "128k", "200k", "256k", "1m", "long", "claude", "gemini",
+    )):
+        caps.append("long_context")
+    # Dedoublonnage en conservant l'ordre
+    return list(dict.fromkeys(caps))
+
+
 @api_router.get("/models")
 async def list_models(current_user: dict = Depends(get_current_user)):
     """Providers detectes dynamiquement + modele reel et catalogue de chacun."""
@@ -6395,7 +6532,13 @@ async def list_models(current_user: dict = Depends(get_current_user)):
             "model": _provider_model(pid),
             "available": _provider_available(pid),
             "local": pid == "ollama",
+            "auth_type": _provider_auth_type(pid),
+            "tier": _provider_tier(pid),
             "models": catalogs.get(pid, []),
+            "models_meta": [
+                {"id": mid, "capabilities": _model_capabilities(mid)}
+                for mid in catalogs.get(pid, [])
+            ],
         }
         for pid in PROVIDER_IDS
     ]
@@ -6412,6 +6555,155 @@ async def list_models(current_user: dict = Depends(get_current_user)):
         "enable_fallback": settings.enable_fallback,
         "enable_tools": settings.enable_tools,
     }
+
+
+# -------------------------------------------------------------------------
+# Healthcheck a la demande : ping reel d'un couple (provider, model)
+# -------------------------------------------------------------------------
+# Cache memoire court pour eviter de re-pinger au moindre clic.
+# Cle = (provider, model) -> (timestamp_epoch, resultat_dict).
+_HEALTH_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+_HEALTH_TTL = 600.0  # 10 minutes
+
+
+class ModelHealthRequest(BaseModel):
+    provider: str
+    model: str
+
+
+def _health_truncate(msg: str, limit: int = 200) -> str:
+    msg = (msg or "").strip().replace("\n", " ")
+    return msg[:limit] + ("…" if len(msg) > limit else "")
+
+
+async def _ping_claude(model: str) -> dict:
+    headers = {
+        "authorization": f"Bearer {settings.claude_token}",
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+        "content-type": "application/json",
+        "user-agent": CLAUDE_CLI_UA,
+        "x-app": "cli",
+    }
+    payload = {
+        "model": model,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0)) as http:
+        resp = await http.post(ANTHROPIC_URL, headers=headers, json=payload)
+    if resp.status_code < 400:
+        return {"status": "ok", "code": resp.status_code, "message": "modele operationnel"}
+    detail = resp.text
+    try:
+        detail = resp.json().get("error", {}).get("message", detail)
+    except Exception:
+        pass
+    if resp.status_code in (400, 403, 404, 429):
+        return {
+            "status": "listed_but_failing",
+            "code": resp.status_code,
+            "message": _health_truncate(detail),
+        }
+    return {
+        "status": "unreachable",
+        "code": resp.status_code,
+        "message": _health_truncate(detail),
+    }
+
+
+async def _ping_openai_compatible(provider: str, model: str) -> dict:
+    """Micro-completion OpenAI-compatible (free providers + opencode/ollama_cloud)."""
+    if provider in FREE_PROVIDER_IDS:
+        conf = settings.free_providers[provider]
+        base_url = conf["base_url"]
+        headers = _free_provider_headers(provider)
+        timeout = conf.get("timeout", 60.0)
+    elif provider == "opencode":
+        base_url = settings.opencode_base_url
+        headers = {
+            "Authorization": f"Bearer {settings.opencode_api_key}",
+            "x-api-key": settings.opencode_api_key,
+            "Content-Type": "application/json",
+            "User-Agent": settings.opencode_user_agent,
+        }
+        timeout = settings.opencode_timeout
+    elif provider == "ollama_cloud":
+        base_url = settings.ollama_cloud_url
+        headers = {
+            "Authorization": f"Bearer {settings.ollama_cloud_api_key}",
+            "Content-Type": "application/json",
+        }
+        timeout = 60.0
+    else:
+        return {"status": "unreachable", "code": 0, "message": f"provider non pris en charge: {provider}"}
+
+    payload = {
+        "model": model,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(min(float(timeout), 30.0), connect=10.0)) as http:
+        resp = await http.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+    if resp.status_code < 400:
+        return {"status": "ok", "code": resp.status_code, "message": "modele operationnel"}
+    detail = resp.text
+    try:
+        body = resp.json()
+        detail = (body.get("error") or {}).get("message", detail) if isinstance(body.get("error"), dict) else body.get("error", detail)
+    except Exception:
+        pass
+    if resp.status_code in (400, 401, 403, 404, 422, 429):
+        return {
+            "status": "listed_but_failing",
+            "code": resp.status_code,
+            "message": _health_truncate(str(detail)),
+        }
+    return {
+        "status": "unreachable",
+        "code": resp.status_code,
+        "message": _health_truncate(str(detail)),
+    }
+
+
+@api_router.post("/models/health")
+async def model_health(
+    req: ModelHealthRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Ping reel a la demande d'un couple (provider, model). Ne leve jamais."""
+    provider = (req.provider or "").strip()
+    model = (req.model or "").strip()
+    if not provider or not model:
+        return {"status": "unreachable", "code": 0, "message": "provider/model manquant"}
+
+    key = (provider, model)
+    now = time.time()
+    cached = _HEALTH_CACHE.get(key)
+    if cached and (now - cached[0]) < _HEALTH_TTL:
+        return {**cached[1], "cached": True, "provider": provider, "model": model}
+
+    if not _provider_available(provider):
+        result = {
+            "status": "unreachable",
+            "code": 0,
+            "message": f"{PROVIDER_LABELS.get(provider, provider)} non configure (cle/URL absente)",
+        }
+        _HEALTH_CACHE[key] = (now, result)
+        return {**result, "cached": False, "provider": provider, "model": model}
+
+    try:
+        if provider == "claude":
+            result = await _ping_claude(model)
+        else:
+            result = await _ping_openai_compatible(provider, model)
+    except httpx.HTTPError as e:
+        result = {"status": "unreachable", "code": 0, "message": _health_truncate(f"reseau: {e}")}
+    except Exception as e:  # pragma: no cover - garde-fou absolu
+        result = {"status": "unreachable", "code": 0, "message": _health_truncate(f"erreur: {e}")}
+
+    _HEALTH_CACHE[key] = (now, result)
+    return {**result, "cached": False, "provider": provider, "model": model}
 
 
 # =========================================================================

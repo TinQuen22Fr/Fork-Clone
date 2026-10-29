@@ -58,6 +58,7 @@ import {
   Moon,
   FileDown,
   Brain,
+  Activity,
 } from "lucide-react";
 import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
@@ -1128,6 +1129,37 @@ export default function Chat() {
   const currentModel = () =>
     modelOverride || models.find((m) => m.id === provider)?.model || "";
 
+  // Healthcheck a la demande : pastille de statut du couple (provider, modele).
+  const [healthStatus, setHealthStatus] = useState(null); // {status,message,provider,model}
+  const [healthChecking, setHealthChecking] = useState(false);
+
+  const checkModelHealth = async () => {
+    const mdl = currentModel();
+    if (!provider || provider === "auto" || !mdl) return;
+    setHealthChecking(true);
+    try {
+      const { data } = await api.post("/models/health", {
+        provider,
+        model: mdl,
+      });
+      setHealthStatus(data);
+    } catch (e) {
+      setHealthStatus({
+        status: "unreachable",
+        message: e?.response?.data?.detail || "verification impossible",
+        provider,
+        model: mdl,
+      });
+    } finally {
+      setHealthChecking(false);
+    }
+  };
+
+  // Un changement de provider/modele invalide la pastille affichee.
+  useEffect(() => {
+    setHealthStatus(null);
+  }, [provider, modelOverride]);
+
   const isFavorite = favorites.some(
     (f) => f.provider === provider && f.model === (modelOverride || "")
   );
@@ -1795,6 +1827,46 @@ export default function Chat() {
                       ))}
                     </select>
                   </div>
+                  {provider !== "auto" && activeModel && (
+                    <div
+                      className="flex items-center gap-1 flex-shrink-0"
+                      data-testid="provider-access-badges"
+                      title={`Accès : ${
+                        activeModel.auth_type === "oauth_subscription"
+                          ? "OAuth (abonnement)"
+                          : activeModel.auth_type === "local"
+                          ? "Local"
+                          : "Clé API"
+                      } · Palier : ${activeModel.tier || "?"}`}
+                    >
+                      {activeModel.auth_type === "oauth_subscription" ? (
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-mono border border-[#05d9e8]/60 text-[#05d9e8]">
+                          OAuth
+                        </span>
+                      ) : activeModel.auth_type === "local" ? (
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-mono border border-[#9d4edd]/60 text-[#9d4edd]">
+                          Local
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-mono border border-white/30 text-gray-300">
+                          API
+                        </span>
+                      )}
+                      {activeModel.tier === "subscription" ? (
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-mono border border-[#ffd700]/60 text-[#ffd700]">
+                          Abo
+                        </span>
+                      ) : activeModel.tier === "free" ? (
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-mono border border-[#06d6a0]/60 text-[#06d6a0]">
+                          Free
+                        </span>
+                      ) : activeModel.tier === "paid" ? (
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-mono border border-[#ff9f1c]/60 text-[#ff9f1c]">
+                          Paid
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
                   {catalog.length > 0 && (
                     <div
                       className="flex items-center gap-1 flex-1 sm:flex-none min-w-0 border-2 border-white/20 hover:border-[#ffd700]/60 bg-black/40 px-2 py-1"
@@ -1837,6 +1909,48 @@ export default function Chat() {
                       fill={isFavorite ? "currentColor" : "none"}
                     />
                   </button>
+                  {provider && provider !== "auto" && (
+                    <button
+                      type="button"
+                      onClick={checkModelHealth}
+                      disabled={healthChecking}
+                      className={`btn-ghost border-2 flex-shrink-0 flex items-center gap-1 ${
+                        healthStatus?.status === "ok"
+                          ? "border-green-500 text-green-400"
+                          : healthStatus?.status === "listed_but_failing"
+                          ? "border-amber-500 text-amber-400"
+                          : healthStatus?.status === "unreachable"
+                          ? "border-red-500 text-red-400"
+                          : "border-white/20 hover:border-[#ffd700] hover:text-[#ffd700]"
+                      }`}
+                      title={
+                        healthStatus
+                          ? `${
+                              healthStatus.status === "ok"
+                                ? "✅ Opérationnel"
+                                : healthStatus.status === "listed_but_failing"
+                                ? "⚠️ Listé mais échoue"
+                                : "❌ Injoignable"
+                            }${
+                              healthStatus.message ? " — " + healthStatus.message : ""
+                            }${healthStatus.cached ? " (cache)" : ""}`
+                          : "Vérifier que ce modèle répond réellement"
+                      }
+                      data-testid="check-health-btn"
+                    >
+                      {healthChecking ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : healthStatus?.status === "ok" ? (
+                        <Check className="w-5 h-5" />
+                      ) : healthStatus?.status === "listed_but_failing" ? (
+                        <Activity className="w-5 h-5" />
+                      ) : healthStatus?.status === "unreachable" ? (
+                        <X className="w-5 h-5" />
+                      ) : (
+                        <Activity className="w-5 h-5" />
+                      )}
+                    </button>
+                  )}
                   <div
                     className="flex items-center gap-px border-2 border-white/20 bg-black/40 px-1 py-1 flex-shrink-0 sm:ml-2"
                     title="Effort de raisonnement (modeles compatibles uniquement)"
