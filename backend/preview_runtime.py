@@ -445,7 +445,22 @@ class PreviewManager:
             'export HOME=/forge-state',
             'export XDG_CACHE_HOME=/forge-state/.cache',
             'export PIP_CACHE_DIR=/forge-state/.cache/pip',
-            'mkdir -p /forge-state/.cache/pip 2>/dev/null || true',
+            # --- Diagnostic + verrou permissions /forge-state --------------
+            # /forge-state doit etre inscriptible par l'utilisateur du
+            # conteneur (chown -R fait par le wrapper au start). Si ce n'est
+            # pas le cas (wrapper non deploye / STATEDIR root:root), on le dit
+            # explicitement au lieu d'echouer sur un cryptique EACCES.
+            'echo "-- diagnostic /forge-state --"',
+            'id || true',
+            'ls -ld /forge-state 2>&1 || true',
+            'if ! ( mkdir -p /forge-state/.cache/pip && touch /forge-state/.forge-write-test ) 2>/dev/null; then',
+            '  echo "ERREUR: /forge-state n\'est pas inscriptible par $(id -u):$(id -g)."',
+            '  echo "        Proprietaire actuel : $(stat -c \'%U:%G (%u:%g)\' /forge-state 2>/dev/null)."',
+            '  echo "        Cause : le wrapper forge-preview deploye en prod n\'applique pas le chown -R du STATEDIR."',
+            '  echo "        Action : deployer la version a jour de deploy/docker/forge-preview (chown -R + --user)."',
+            '  exit 13',
+            'fi',
+            'rm -f /forge-state/.forge-write-test 2>/dev/null || true',
         ]
         if rel_cwd:
             lines.append(f"cd {shlex.quote(rel_cwd)}")

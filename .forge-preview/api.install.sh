@@ -2,6 +2,10 @@
 set -euo pipefail
 set +e
 echo "== forge preview install =="
+export HOME=/forge-state
+export XDG_CACHE_HOME=/forge-state/.cache
+export PIP_CACHE_DIR=/forge-state/.cache/pip
+mkdir -p /forge-state/.cache/pip 2>/dev/null || true
 cd backend
 echo "-- python du conteneur --"
 python3 --version || true
