@@ -295,7 +295,11 @@ start)
   # (UID/GID du user preview) pour que le venv y soit inscriptible.
   _ws_uid=$(stat -c '%u' "$WORKSPACE" 2>/dev/null || echo 1000)
   _ws_gid=$(stat -c '%g' "$WORKSPACE" 2>/dev/null || echo 1000)
-  chown "${_ws_uid}:${_ws_gid}" "$STATEDIR" 2>/dev/null || true
+  # Chown RECURSIF : un STATEDIR cree par un ancien wrapper peut appartenir a
+  # root:root (venv non inscriptible par l'utilisateur du conteneur -> EACCES
+  # sur /forge-state/venv). On repare la propriete a chaque start.
+  chown -R "${_ws_uid}:${_ws_gid}" "$STATEDIR" 2>/dev/null || true
+  chmod -R u+rwX "$STATEDIR" 2>/dev/null || true
 
   # Docker impose un hostname conforme RFC 1123 (minuscules, chiffres, tirets).
   # Le nom du projet peut contenir des majuscules/underscores (ex. Fork-Clone),
@@ -310,6 +314,7 @@ start)
   RUN_ARGS=(-d
     --name "$NAME"
     --hostname "$HOSTNAME_SAFE"
+    --user "${_ws_uid}:${_ws_gid}"
     --network "$NETWORK"
     -p "${PREVIEW_HOST}:${PORT}:${PORT}"
     --cpus "$CPUS"

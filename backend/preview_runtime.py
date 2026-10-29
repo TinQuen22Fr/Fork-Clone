@@ -438,6 +438,14 @@ class PreviewManager:
         lines = [
             "set +e",
             'echo "== forge preview install =="',
+            # Le conteneur tourne en --user non-root avec rootfs read-only.
+            # HOME herite de l'hote pointe vers un chemin inexistant ici : on
+            # ancre HOME et les caches dans /forge-state (inscriptible apres
+            # chown), sinon venv/pip echouent sur le cache (~/.cache).
+            'export HOME=/forge-state',
+            'export XDG_CACHE_HOME=/forge-state/.cache',
+            'export PIP_CACHE_DIR=/forge-state/.cache/pip',
+            'mkdir -p /forge-state/.cache/pip 2>/dev/null || true',
         ]
         if rel_cwd:
             lines.append(f"cd {shlex.quote(rel_cwd)}")
