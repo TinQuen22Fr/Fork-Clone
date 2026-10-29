@@ -325,8 +325,13 @@ class Settings:
 
         # --- Gemini (Google, via SDK google-genai) ---
         self.gemini_api_key: str = _env("GEMINI_API_KEY")
-        self.gemini_model: str = _env("GEMINI_MODEL", "gemini-3.6-flash")
-        self.gemini_fallback_model: str = _env("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")
+        # Pas de version figee en dur : le catalogue reel est decouvert
+        # dynamiquement via l'API /v1beta/models. Ces valeurs ne servent que
+        # de repli si la decouverte echoue et restent surchargeable via l'env.
+        self.gemini_model: str = _env("GEMINI_MODEL", "gemini-3.8-flash")
+        self.gemini_fallback_model: str = _env(
+            "GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite"
+        )
 
         # --- Ollama (moteur local, gratuit, pas de cle API) ---
         self.ollama_url: str = _env("OLLAMA_URL", "http://localhost:11434")
@@ -6402,7 +6407,26 @@ async def _fetch_catalog(pid: str) -> list[str]:
     ids: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as http:
-            if pid == "opencode":
+            if pid == "gemini":
+                # Catalogue Gemini decouvert dynamiquement via l'API officielle
+                # (GET /v1beta/models). On ne garde que les modeles supportant
+                # generateContent et on strippe le prefixe "models/". En cas
+                # d'echec, repli sur le modele configure (gere plus bas).
+                if settings.gemini_api_key:
+                    resp = await http.get(
+                        "https://generativelanguage.googleapis.com/v1beta/models",
+                        params={
+                            "key": settings.gemini_api_key,
+                            "pageSize": 1000,
+                        },
+                    )
+                    resp.raise_for_status()
+                    for m in resp.json().get("models", []):
+                        name = (m.get("name") or "").removeprefix("models/")
+                        methods = m.get("supportedGenerationMethods") or []
+                        if name and "generateContent" in methods:
+                            ids.append(name)
+            elif pid == "opencode":
                 resp = await http.get(
                     f"{settings.opencode_base_url}/models",
                     headers={
@@ -6439,6 +6463,15 @@ async def _fetch_catalog(pid: str) -> list[str]:
     except Exception as e:  # noqa: BLE001
         logger.warning("Catalogue %s indisponible: %s", pid, str(e)[:150])
         return cached[1] if cached else []
+
+    # Repli : si la decouverte n'a rien rendu, on expose au moins le modele
+    # configure (et son fallback pour Gemini) afin de ne jamais laisser le
+    # provider sans aucun modele selectionnable.
+    if not ids and pid == "gemini":
+        for cfg in (settings.gemini_model, settings.gemini_fallback_model):
+            cfg = (cfg or "").strip()
+            if cfg and cfg not in ids:
+                ids.append(cfg)
 
     ids.sort()
     _CATALOG_CACHE[pid] = (time.time(), ids)
