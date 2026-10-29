@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-29T19:38:24.990684+00:00
+# Dernière mise à jour : 2026-10-29T20:19:19.985840+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit f831d26 feat(providers): assainissement Claude OAuth, healthcheck à la demande, métadonnées d'accès et routage par pertinence.
+- Git : branche claude-ai, dernier commit d62b16b feat(providers): catalogue Gemini dynamique via /v1beta/models, suppression des versions figées en dur.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -84,6 +84,9 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] donc là oui pour l'instant je ne vais pas tester quoi que ce soit en preview (logique ça ne fonctionne pas !
+  [regle] la preview ne fonctionne pas comme pour d'autres projet, ça ne se lance pas dans le docker...
+  [regle] Ca ne fonctionne pas on ne peux pas selectionner la version de gemini en prenant le provider gemini...
   [regle] Pour gemini il faut intégré également les modele pas de dure.
   [regle] 3. **Ne jamais lever** : toute exception → statut `unreachable` + message tronqué.
   [regle] la liste découverte. Sinon ne pas le forcer.
@@ -104,6 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] rédige les recettes de vérification associées (nouveau verify-d13*.sh en append au rapport) mais procéde par étapes (plusieurs parties) pour ne pas figer la chose
   [regle] bon visiblement le systeme de preview ne fonctionne pas.
   [regle] test avec un projet de celle-ci voici ce que je constate et qui me semble ne pas fonctionner (voir capture) et à ajuster pour régler le pb :
-  [regle] - `backend/server.py` : garde-fou `_BASH_SENSITIVE_FILE_RE` interdit `cat`/`tac`/`less`/`more` sur un `.env` ; consigne agent ajoutée au bloc de règles outils (jamais de `cat` d'un `.env`, `sed`/`grep` tronqués).
-  [regle] SI oui même consignes concernant le message de commit en y intégrant bien-sur ce "correctif" doc.
-  [regle]

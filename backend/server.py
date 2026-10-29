@@ -6554,7 +6554,7 @@ async def list_models(current_user: dict = Depends(get_current_user)):
     catalogs: dict[str, list[str]] = {}
     # Claude expose un catalogue statique : on l'inclut explicitement pour que
     # le selecteur de modele precis s'affiche aussi pour ce provider.
-    for pid in ("claude", "opencode", "ollama_cloud", *FREE_PROVIDER_IDS):
+    for pid in ("claude", "gemini", "opencode", "ollama_cloud", *FREE_PROVIDER_IDS):
         if _provider_available(pid):
             catalogs[pid] = await _fetch_catalog(pid)
 
