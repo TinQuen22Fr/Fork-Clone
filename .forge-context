@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-25T16:22:52.369772+00:00
+# Dernière mise à jour : 2026-10-29T12:25:20.933726+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 25d073d fix(previews): D14 v4 — PEP 668 regression, ne pas résoudre les symlinks du venv dans _docker_cmd.
+- Git : branche claude-ai, dernier commit 5c3f3fe Mod F5/Ctrl+Shift+R fenêtre de chat sans redirection Hub Forge.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -84,6 +84,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] ok je consigne cela et verrais après.
+  [regle] Si je clique de nouveau sur accueil le projet charger est toujours ouvert, et l'autre éventuellement se charge à côté toujours sans fermer l'autre.
   [regle] nous sommes bien d'accord qu'est-ce que tu viens de coder c'est par exemple si je suis sur le projet forclone et que je fais un F5 ou la touche Contrôle plus Shift + R est-ce que ça actualise bien la fenêtre de chat de ce projet ou est-ce que ça renvoie toujours à directement donc du coup en faisant cette combinaison de touches sur le hub de la forge directement.
   [regle] Ce que tu dois faire scrupuleusement et simplement : Remplace les appels stricts os.environ["VAR"] par os.environ.get("VAR") pour ne plus générer de KeyError.
   [regle] Consigne stricte et définitive : À chaque fois que tes modifications incluent upgrade.sh ou install.sh, tu as l'INTERDICTION de me proposer la procédure de mise à jour standard (git pull + sudo bash upgrade.sh).
@@ -101,7 +103,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] test avec un projet de celle-ci voici ce que je constate et qui me semble ne pas fonctionner (voir capture) et à ajuster pour régler le pb :
   [regle] - `backend/server.py` : garde-fou `_BASH_SENSITIVE_FILE_RE` interdit `cat`/`tac`/`less`/`more` sur un `.env` ; consigne agent ajoutée au bloc de règles outils (jamais de `cat` d'un `.env`, `sed`/`grep` tronqués).
   [regle] SI oui même consignes concernant le message de commit en y intégrant bien-sur ce "correctif" doc.
-  [regle] - **Correction ciblée** : dans `stats()`, le returncode de la commande wrapper était ignoré ; un conteneur absent faisait remonter le message d'erreur Docker dans `cpu_percent`. Désormais `returncode != 0` renvoie des champs `None` (conforme au docstring « ne jamais lever »).
-  [regle] Le garde-fou _host_exec_allowed (preview_runtime.py) interdit toute
-  [regle] OK runtime présent : execution hote interdite en mode docker
-  [regle] donc touj
+  [regle] - **Correction ciblée** : dans `stats()`, le returncode de la commande wrapper était ignoré ; un conteneur absent faisait remonter le message d'erreur Docker dans `cpu_percent`. Désormais `returncode != 0` renvoie des champs `None` (conforme au docstring « ne jamais lever »
