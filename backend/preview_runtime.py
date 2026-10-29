@@ -1272,27 +1272,52 @@ class PreviewManager:
             }
         return out
 
+    def _read_log_file(self, path: Path, max_bytes: int) -> str:
+        """Dernier tronçon d'un fichier de log sur disque (ou chaîne vide)."""
+        if not path.is_file():
+            return ""
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            return fh.read().decode("utf-8", "replace")
+
     def logs(self, project: str, target: str = "", max_bytes: int = LOG_TAIL_BYTES) -> str:
-        if self.driver == "docker":
-            n = min(5000, max(50, max_bytes // 100))
-            try:
-                out = subprocess.run(
-                    ["sudo", "-n", self.wrapper, "logs", project, "--tail", str(n)],
-                    capture_output=True, text=True, timeout=30,
-                )
-                return redact_secrets(out.stdout or "")
-            except Exception:
-                return ""
+        # En mode docker, l'installation (docker exec --script) et le démarrage
+        # écrivent leur sortie dans le FICHIER de log côté hôte (st.log_path),
+        # PAS dans `docker logs` (qui ne capture que le PID 1 « sleep infinity »
+        # du conteneur). On lit donc d'abord le fichier — c'est là que se trouve
+        # le journal d'install, cause du « journal vide » historique — puis on y
+        # ajoute `docker logs` pour la sortie runtime de l'application.
         candidates = (
             [self.log_path(project, target)]
             if target
             else [self.log_path(project, t) for t in ("web", "app", "api")]
         )
+        file_part = ""
         for p in candidates:
-            if p.is_file():
-                size = p.stat().st_size
-                with open(p, "rb") as fh:
-                    if size > max_bytes:
-                        fh.seek(size - max_bytes)
-                    return redact_secrets(fh.read().decode("utf-8", "replace"))
-        return ""
+            chunk = self._read_log_file(p, max_bytes)
+            if chunk:
+                file_part = chunk
+                break
+
+        if self.driver != "docker":
+            return redact_secrets(file_part)
+
+        docker_part = ""
+        n = min(5000, max(50, max_bytes // 100))
+        try:
+            out = subprocess.run(
+                ["sudo", "-n", self.wrapper, "logs", project, "--tail", str(n)],
+                capture_output=True, text=True, timeout=30,
+            )
+            docker_part = (out.stdout or "") + (out.stderr or "")
+        except Exception:
+            docker_part = ""
+
+        parts = []
+        if file_part.strip():
+            parts.append(file_part.rstrip())
+        if docker_part.strip():
+            parts.append("----- docker logs (runtime conteneur) -----\n" + docker_part.rstrip())
+        return redact_secrets("\n".join(parts))
