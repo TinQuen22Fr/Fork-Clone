@@ -427,6 +427,42 @@ class PreviewManager:
             out.append(base if base in known else arg)
         return out
 
+    def _venv_install_script(self, rel_cwd: str, has_reqs: bool) -> str:
+        """Corps shell d'installation backend (mode docker), en une passe et
+        verbeux. Objectifs :
+        - ne jamais produire un journal vide : chaque etape est annoncee et sa
+          sortie capturee (le wrapper remonte stdout+stderr via docker exec) ;
+        - creer le venv sans --clear destructif sur le montage /forge-state ;
+        - garantir pip operationnel (ensurepip + upgrade) avant l'install ;
+        - afficher la version de Python du conteneur (diagnostic deps)."""
+        lines = [
+            "set +e",
+            'echo "== forge preview install =="',
+        ]
+        if rel_cwd:
+            lines.append(f"cd {shlex.quote(rel_cwd)}")
+        lines += [
+            'echo "-- python du conteneur --"',
+            "python3 --version || true",
+            'echo "-- creation / reutilisation du venv --"',
+            'if [ ! -x /forge-state/venv/bin/python ]; then',
+            '  python3 -m venv /forge-state/venv || { echo "ERREUR: creation du venv impossible"; exit 1; }',
+            'fi',
+            '/forge-state/venv/bin/python --version',
+            'echo "-- mise a niveau de pip --"',
+            '/forge-state/venv/bin/python -m ensurepip --upgrade 2>/dev/null || true',
+            '/forge-state/venv/bin/python -m pip install --upgrade pip setuptools wheel || { echo "ERREUR: mise a niveau de pip impossible"; exit 1; }',
+        ]
+        if has_reqs:
+            lines += [
+                'echo "-- installation des dependances (requirements.txt) --"',
+                '/forge-state/venv/bin/python -m pip install -r requirements.txt',
+                'rc=$?',
+                'if [ "$rc" -ne 0 ]; then echo "ERREUR: pip install -r requirements.txt a echoue (code $rc)"; exit "$rc"; fi',
+            ]
+        lines.append('echo "== installation terminee avec succes =="')
+        return "\n".join(lines)
+
     def _script_cmd(self, st: PreviewProcess, cmd: list[str], cwd: str) -> str:
         rel = self._rel_cwd(st.project, cwd)
         head = [f"cd {shlex.quote(rel)}"] if rel else []
@@ -775,15 +811,17 @@ class PreviewManager:
         if install:
             st.phase = PHASE_INSTALLING
             if install == ["__venv__"]:
-                steps = [["python3", "-m", "venv", "--clear", "/forge-state/venv"]]
-                if (Path(plan["cwd"]) / "requirements.txt").is_file():
-                    steps.append(["/forge-state/venv/bin/python", "-m", "pip",
-                                  "install", "-r", "requirements.txt"])
+                has_reqs = (Path(plan["cwd"]) / "requirements.txt").is_file()
+                body = self._venv_install_script(self._rel_cwd(project, plan["cwd"]), has_reqs)
+                code = await self._spawn_wait_script(st, body, timeout=1800)
+                if code != 0:
+                    self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
+                    return
             else:
-                steps = [self._docker_cmd(install, project)]
-            for step in steps:
-                code = await self._spawn_wait(st, step, plan["cwd"], {}, st.log_path,
-                                              timeout=1800)
+                code = await self._spawn_wait(
+                    st, self._docker_cmd(install, project), plan["cwd"], {},
+                    st.log_path, timeout=1800,
+                )
                 if code != 0:
                     self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
                     return
@@ -1022,6 +1060,21 @@ class PreviewManager:
         except asyncio.TimeoutError:
             proc.kill()
             return 124
+
+    async def _spawn_wait_script(
+        self, st: PreviewProcess, body: str, timeout: int
+    ) -> int:
+        """Execute un corps shell complet (plusieurs commandes) en une seule
+        passe, en mode docker. Utilise pour l'installation backend : le script
+        est verbeux (echo de chaque etape) afin de ne JAMAIS produire un
+        journal vide, meme si une etape echoue tot."""
+        rel = self._write_script(st.project, st.target, "install", body)
+        code, out = await self._docker(
+            "exec", st.project, "--script", rel, timeout=timeout
+        )
+        with open(st.log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n$ .forge-preview/{Path(rel).name}\n{redact_secrets(out)}\n")
+        return code
 
     async def _kill(self, st: PreviewProcess) -> None:
         if st.task and not st.task.done():

@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-29T20:19:19.985840+00:00
+# Dernière mise à jour : 2026-10-29T21:46:47.983906+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit d62b16b feat(providers): catalogue Gemini dynamique via /v1beta/models, suppression des versions figées en dur.
+- Git : branche claude-ai, dernier commit a15e6af fix(deps): requirements.txt adaptatif par version Python (markers PEP 508) — pins Emergent 3.12 conservés, versions récentes sous 3.13+.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -71,6 +71,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] 2. Backoff obligatoire entre deux démarrages du même projet (ex. 30 s).
   [regle] 2. Workspace en bind mount → push GitHub toujours possible après arrêt.
+  [regle] bon je sais pas ce à quoi tu joue mais la preview ne fonctionne pas !
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
   [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
   [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Seul une erreur est visible : si les API est développer avec la forge, il faut que si ils y a des services, des requêtes API autre que local;
   [regle] rédige les recettes de vérification associées (nouveau verify-d13*.sh en append au rapport) mais procéde par étapes (plusieurs parties) pour ne pas figer la chose
   [regle] bon visiblement le systeme de preview ne fonctionne pas.
-  [regle] test avec un projet de celle-ci voici ce que je constate et qui me semble ne pas fonctionner (voir capture) et à ajuster pour régler le pb :
