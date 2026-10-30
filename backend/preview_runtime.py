@@ -767,7 +767,17 @@ class PreviewManager:
         venv = self._venv_dir(d)
         vpy = venv / "bin" / "python"
         install: Optional[list[str]] = None
-        if not vpy.is_file():
+        if self.driver == "docker":
+            # En docker, le venv vit dans /forge-state (chemin CONTENEUR).
+            # Tester vpy.is_file() cote HOTE est trompeur : un venv hote peut
+            # exister tout en etant inutilisable dans le conteneur (symlink
+            # vers un python absent de l'image). On delegue donc toujours au
+            # script verbeux __venv__, qui recree le venv s'il manque ou est
+            # casse (`if [ ! -x /forge-state/venv/bin/python ]`) et pose le
+            # marqueur .forge-installed apres une install reussie.
+            if not (venv / ".forge-installed").is_file():
+                install = ["__venv__"]
+        elif not vpy.is_file():
             install = ["__venv__"]
         elif reqs.is_file() and not (venv / ".forge-installed").is_file():
             install = [str(vpy), "-m", "pip", "install", "-r", str(reqs)]
