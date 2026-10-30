@@ -33,6 +33,7 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
   const [error, setError] = useState("");
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState("");
+  const [logsLoading, setLogsLoading] = useState(false);
   const [logTarget, setLogTarget] = useState("");
   const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState(previewUrl || "");
@@ -81,6 +82,9 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
         `/workspace/projects/${project}/preview/${action}`
       );
       setStatus(data);
+      // Si la fenetre de logs est ouverte, on la rafraichit automatiquement
+      // pour qu'elle reflete l'action qui vient d'etre lancee.
+      if (showLogs) loadLogs();
       return data;
     } catch (e) {
       setError(formatApiError(e));
@@ -108,16 +112,25 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
     }
   };
 
-  const loadLogs = async (target = logTarget) => {
+  const loadLogs = async (rawTarget) => {
+    // On n'accepte qu'une cible texte : un onClick peut passer un Event ici,
+    // on le filtre pour eviter d'envoyer ?target=[object Object] au backend.
+    const target =
+      typeof rawTarget === "string" ? rawTarget : logTarget || "";
     setLogTarget(target);
+    // Vider immediatement : l'utilisateur doit voir l'effet du bouton.
+    setLogs("");
+    setLogsLoading(true);
     try {
       const { data } = await api.get(
         `/workspace/projects/${project}/preview/logs`,
         { params: target ? { target } : {} }
       );
-      setLogs(data.logs || "(journal vide)");
+      setLogs(data.logs || "");
     } catch (e) {
       setLogs(formatApiError(e));
+    } finally {
+      setLogsLoading(false);
     }
   };
 
@@ -230,11 +243,12 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
               </span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={loadLogs}
-                  className="text-[10px] font-mono uppercase text-gray-500 hover:text-[#05d9e8]"
+                  onClick={() => loadLogs()}
+                  disabled={logsLoading}
+                  className="text-[10px] font-mono uppercase text-gray-500 hover:text-[#05d9e8] disabled:opacity-40"
                   data-testid="preview-logs-refresh"
                 >
-                  rafraîchir
+                  {logsLoading ? "…" : "rafraîchir"}
                 </button>
                 <button
                   onClick={() => setShowLogs(false)}
@@ -283,7 +297,7 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
               className="max-h-[55vh] overflow-auto bg-black/60 p-4 text-[11px] font-mono text-gray-300 whitespace-pre-wrap"
               data-testid="preview-logs-content"
             >
-              {logs || "(journal vide)"}
+              {logs ? logs : logsLoading ? "(chargement…)" : "(journal vide)"}
             </pre>
             <div className="flex justify-end gap-2 border-t-2 border-white/10 px-4 py-3">
               <button
