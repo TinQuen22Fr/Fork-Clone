@@ -49,6 +49,17 @@ die()    { printf '\033[1;31mERREUR:\033[0m %s\n' "$*" >&2; exit 1; }
 cd "$APP_DIR"
 
 # ---------------------------------------------------------------------------
+# 0. Auto-relance apres pull : empreinte du script courant
+#    upgrade.sh est lu une seule fois par bash au lancement. Si le pull ci-dessous
+#    recupere une nouvelle version de CE fichier, bash continue pourtant d'executer
+#    l'ancien code deja charge en memoire. On capture donc l'empreinte AVANT le pull,
+#    on la recompare APRES, et on se re-execute avec le nouveau code si besoin.
+#    FORGE_UPGRADE_REEXEC empeche toute boucle infinie (une seule relance autorisee).
+# ---------------------------------------------------------------------------
+SELF_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SELF_HASH_BEFORE="$(sha256sum "$SELF_PATH" | cut -d' ' -f1)"
+
+# ---------------------------------------------------------------------------
 # 1. Sauvegarde du .env (le seul fichier irremplacable)
 # ---------------------------------------------------------------------------
 c_step "Sauvegarde de la configuration"
@@ -79,6 +90,18 @@ if [ "$DO_PULL" -eq 1 ] && [ -d .git ]; then
   [ "$TARGET" = "$CUR_BRANCH" ] || git -c safe.directory=* checkout "$TARGET"
   git -c safe.directory=* pull --ff-only origin "$TARGET"
   c_ok "branche $TARGET @ $(git -c safe.directory=* rev-parse --short HEAD)"
+
+  # --- Auto-relance si upgrade.sh lui-meme a change pendant ce pull ---
+  SELF_HASH_AFTER="$(sha256sum "$SELF_PATH" | cut -d' ' -f1)"
+  if [ "$SELF_HASH_BEFORE" != "$SELF_HASH_AFTER" ] && [ "${FORGE_UPGRADE_REEXEC:-0}" != "1" ]; then
+    printf '\n\033[1;33m==> Nouvelle version de upgrade.sh detectee apres le pull\033[0m\n'
+    printf '\033[1;32m  ok\033[0m nouveau script recupere et sauvegarde sur le disque\n'
+    printf '\033[1;36m==>\033[0m Relance d'"'"'upgrade.sh avec le nouveau code...\n\n'
+    export FORGE_UPGRADE_REEXEC=1
+    # Le pull est deja fait : la relance repart --no-pull pour ne pas re-puller,
+    # constate que tout est up-to-date, et execute les nouveautes correctement.
+    exec bash "$SELF_PATH" --no-pull
+  fi
   [ "${STASHED:-0}" -eq 1 ] && c_warn "recupere tes modifs avec : git stash pop"
 else
   c_step "Code : pull ignore"
