@@ -1568,7 +1568,7 @@ class PreviewManager:
                     st.project, st.target, "probe",
                     "\n".join([
                         "set +e",
-                        'for i in 1 2 3 4 5 6 7 8 9 10; do',
+                        'for i in $(seq 1 90); do',
                         f'  if python3 -c "import socket,sys;'
                         f's=socket.socket();s.settimeout(1);'
                         f's.connect((\'127.0.0.1\',{port}));s.close()" 2>/dev/null; then',
@@ -1584,7 +1584,7 @@ class PreviewManager:
             try:
                 proc = subprocess.run(
                     ["sudo", "-n", self.wrapper, "exec", st.project, "--script", rel],
-                    capture_output=True, text=True, timeout=40,
+                    capture_output=True, text=True, timeout=120,
                 )
                 return proc.returncode == 0
             except Exception:
