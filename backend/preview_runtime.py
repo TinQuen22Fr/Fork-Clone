@@ -24,6 +24,7 @@ Deux formes de projet sont gerees :
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -495,7 +496,26 @@ class PreviewManager:
                 'rc=$?',
                 'if [ "$rc" -ne 0 ]; then echo "ERREUR: pip install -r requirements.txt a echoue (code $rc)"; exit "$rc"; fi',
             ]
-        lines.append('echo "== installation terminee avec succes =="')
+        # Marqueur d'installation ecrit DEPUIS LE CONTENEUR : /forge-state est
+        # un bind mount monté en :rw sur /var/lib/forge-preview/<projet>, donc
+        # l'utilisateur du conteneur y ecrit sans probleme. Cote hote, le
+        # backend se contente de LIRE ce fichier — ecrire depuis l'hote est
+        # impossible (ProtectSystem=strict) et c'etait la cause du crash
+        # silencieux de la cible api (OSError EROFS, cf. _run_install).
+        #
+        # L'empreinte de requirements.txt est stockee dedans : si le fichier
+        # change, le marqueur ne correspond plus et l'installation est rejouee.
+        # Sans cela, une dependance ajoutee resterait absente du venv.
+        lines += [
+            'echo "-- enregistrement du marqueur d\'installation --"',
+            'if [ -f requirements.txt ]; then',
+            '  _req_hash=$(sha256sum requirements.txt | cut -d" " -f1)',
+            'else',
+            '  _req_hash="no-reqs"',
+            'fi',
+            'printf "%s\\n" "$_req_hash" > /forge-state/venv/.forge-installed 2>/dev/null || true',
+            'echo "== installation terminee avec succes =="',
+        ]
         return "\n".join(lines)
 
     def _script_cmd(self, st: PreviewProcess, cmd: list[str], cwd: str) -> str:
@@ -754,6 +774,33 @@ class PreviewManager:
 
         return {"kind": kind, "cmd": cmd, "install": install, "cwd": str(d), "hint": ""}
 
+    def _docker_install_fresh(self, venv: Path, reqs: Path) -> bool:
+        """Le marqueur .forge-installed correspond-il encore a requirements.txt ?
+
+        Le marqueur est ecrit PAR LE CONTENEUR dans /forge-state/venv (bind
+        mount :rw sur /var/lib/forge-preview/<projet>/venv). Il contient
+        l'empreinte sha256 de requirements.txt au moment de l'installation.
+
+        Cote hote on ne fait que LIRE ce fichier : aucune ecriture n'est
+        tentee sur /var/lib/forge-preview, qui est hors des ReadWritePaths du
+        service systemd durci (c'est cette ecriture qui provoquait l'OSError
+        EROFS et le 502 silencieux sur /api/*).
+
+        En cas de doute (marqueur absent, illisible, empreinte differente),
+        on renvoie False : l'installation sera rejouee. Le script etant
+        idempotent, ce n'est jamais dangereux, juste plus lent.
+        """
+        marker = venv / ".forge-installed"
+        try:
+            stored = marker.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return False
+        try:
+            current = hashlib.sha256(reqs.read_bytes()).hexdigest()
+        except OSError:
+            return False
+        return bool(stored) and stored == current
+
     def _detect_api(self, d: Path, port: int) -> dict:
         """Backend d'un monorepo : Python d'abord, sinon Node."""
         py = self._detect_python(d, port)
@@ -788,19 +835,24 @@ class PreviewManager:
         vpy = venv / "bin" / "python"
         install: Optional[list[str]] = None
         if self.driver == "docker":
-            # En docker, le venv vit dans /forge-state (chemin CONTENEUR).
-            # Tester vpy.is_file() cote HOTE est trompeur : un venv hote peut
-            # exister tout en etant inutilisable dans le conteneur (symlink
-            # vers un python absent de l'image). On delegue donc toujours au
-            # script verbeux __venv__, qui recree le venv s'il manque ou est
-            # casse (`if [ ! -x /forge-state/venv/bin/python ]`) et pose le
-            # marqueur .forge-installed apres une install reussie.
-            # Idempotent : le script __venv__ ne recree le venv que si le
-            # binaire python manque, et pip detecte les dependances deja
-            # satisfaites. On ne skippe JAMAIS en docker, pour etre robuste
-            # apres un rm -rf partiel ou un venv corrompu (le marqueur
-            # .forge-installed cote hote survivrait a tort).
-            install = ["__venv__"]
+            # En docker, le venv vit dans /forge-state, qui est un bind mount
+            # de /var/lib/forge-preview/<projet> : ces chemins sont donc
+            # les MEMES des deux cotes. On peut donc lire l'etat reel du venv.
+            #
+            # Deux raisons de ne PAS se fier au seul binaire python :
+            #   - un venv hote peut exister tout en etant inutilisable dans le
+            #     conteneur (symlink vers un python absent de l'image) ;
+            #   - apres un rm -rf partiel, .forge-installed survivrait a tort.
+            # Le marqueur contient l'empreinte de requirements.txt : il ne vaut
+            # que si le fichier n'a pas change depuis la derniere install.
+            #
+            # On evite ainsi de rejouer pip (plusieurs minutes) a CHAQUE
+            # demarrage, tout en restant correct si les dependances changent.
+            install = None
+            if not vpy.is_file():
+                install = ["__venv__"]
+            elif reqs.is_file() and not self._docker_install_fresh(venv, reqs):
+                install = ["__venv__"]
         elif not vpy.is_file():
             install = ["__venv__"]
         elif reqs.is_file() and not (venv / ".forge-installed").is_file():
@@ -930,9 +982,34 @@ class PreviewManager:
             if code != 0:
                 self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
                 return None
-        marker = self._venv_dir(Path(plan["cwd"])) / ".forge-installed"
-        if marker.parent.is_dir():
-            marker.write_text("ok\n", encoding="utf-8")
+        # Marqueur d'installation : utile UNIQUEMENT en mode natif, ou il
+        # evite de relancer pip a chaque demarrage (cf. _detect_python, qui
+        # ne propose l'install que si le marqueur manque).
+        #
+        # En docker il est a la fois INUTILE et DANGEREUX :
+        #   - inutile, car _detect_python renvoie toujours ["__venv__"] en
+        #     docker (install idempotente : le script ne recree le venv que
+        #     si le binaire python manque, pip saute les deps satisfaites) ;
+        #   - dangereux, car /var/lib/forge-preview est HORS des
+        #     ReadWritePaths= du service systemd durci (ProtectSystem=strict).
+        #     L'ecriture levait OSError(EROFS) APRES une installation
+        #     reussie, tuant la task de la cible api sans aucun message :
+        #     le conteneur restait publie sur son port avec un process
+        #     absent, d'ou un 502 durable sur /api/* (bug constate le
+        #     2026-10-30, meme famille que KNOWN_ISSUE_preview_map_readonly).
+        # On ignore donc toute erreur d'ecriture du marqueur : il n'est
+        # jamais consulte en docker, son absence ne change rien au cycle.
+        if self.driver != "docker":
+            marker = self._venv_dir(Path(plan["cwd"])) / ".forge-installed"
+            try:
+                if marker.parent.is_dir():
+                    marker.write_text("ok\n", encoding="utf-8")
+            except OSError as exc:
+                logger.warning(
+                    "Preview %s/%s : marqueur %s non ecrit (%s) — sans consequence "
+                    "en mode natif, l'install sera simplement rejouee.",
+                    st.project, st.target, marker, exc,
+                )
         fresh = self.plan(
             st.project,
             st.port - (API_PORT_OFFSET if st.target == "api" else 0),
@@ -945,6 +1022,27 @@ class PreviewManager:
         return plan
 
     async def _run_docker(self, st: PreviewProcess, plan: dict) -> None:
+        """Enveloppe de securite : toute exception devient un echec VISIBLE.
+
+        Cette coroutine est lancee par asyncio.create_task() sans personne
+        pour lire son resultat (une task par cible). Sans ce filet, une
+        exception (ex. OSError EROFS sur /var/lib/forge-preview) tuait la task
+        en silence : la cible restait figee en phase "installing" a vie, le
+        port publie par le conteneur n'etait jamais servi, et le reverse proxy
+        renvoyait 502 sans aucune explication dans le journal."""
+        try:
+            await self._run_docker_inner(st, plan)
+        except asyncio.CancelledError:
+            # Arret volontaire (stop / redemarrage) : rien a signaler.
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Preview %s/%s : echec inattendu du demarrage docker",
+                st.project, st.target,
+            )
+            self._record_failure(st, f"erreur inattendue au demarrage : {exc}")
+
+    async def _run_docker_inner(self, st: PreviewProcess, plan: dict) -> None:
         port = plan["port"]
         project = st.project
         target = st.target
@@ -980,18 +1078,21 @@ class PreviewManager:
         st.task = run_task
         port_open = False
         for _ in range(360):
-            if await asyncio.get_running_loop().run_in_executor(None, _port_open, port):
-                port_open = True
-                break
+            # 1. La task de streaming est-elle terminee ?
+            #    `exec` a alors rendu la main : l'application est morte.
+            #    On teste ce cas AVANT le port, car docker-proxy publie le port
+            #    cote hote des la creation du conteneur meme si RIEN n'ecoute
+            #    dedans : ce faux positif faisait declarer « en ligne » une
+            #    cible absente, et Nginx renvoyait 502 sur /api/*.
             if run_task.done():
-                # Le process est mort avant d'ouvrir son port : on remonte le
-                # traceback (fin du journal) au lieu d'un message generique.
+                if run_task.cancelled():
+                    # Arret volontaire (stop) : rien a signaler.
+                    return
                 exit_code = 0
-                if not run_task.cancelled():
-                    try:
-                        exit_code = run_task.result() or 0
-                    except Exception:
-                        exit_code = 1
+                try:
+                    exit_code = run_task.result() or 0
+                except Exception:
+                    exit_code = 1
                 tail = self._read_log_file(st.log_path, 8000)
                 self._record_failure(
                     st,
@@ -1000,8 +1101,24 @@ class PreviewManager:
                     exit_code,
                 )
                 return
+            # 2. Le port est-il ouvert cote hote ?
+            if await asyncio.get_running_loop().run_in_executor(None, _port_open, port):
+                port_open = True
+                break
             await asyncio.sleep(0.5)
         if port_open:
+            # Confirmation supplementaire : en docker, le port publie existe des
+            # la creation du conteneur (docker-proxy). Un simple connect() TCP
+            # ne prouve donc rien. On exige en plus que le service reponde.
+            alive = await self._docker_port_answers(st, port)
+            if not alive:
+                tail = self._read_log_file(st.log_path, 8000)
+                self._record_failure(
+                    st,
+                    f"port {port} publie par le conteneur mais aucun service ne "
+                    f"repond dedans — fin du journal : {tail[-1500:]}",
+                )
+                return
             self._record_success(st)
             logger.info(
                 "Preview %s/%s en ligne sur 127.0.0.1:%s (docker)",
@@ -1430,6 +1547,53 @@ class PreviewManager:
                 "stats": self.stats(project),
             }
         return out
+
+    async def _docker_port_answers(self, st: PreviewProcess, port: int) -> bool:
+        """Verifie qu'un service repond VRAIMENT dans le conteneur.
+
+        `_port_open()` ne teste que la socket cote HOTE. En docker, le port est
+        publie par docker-proxy des `docker create`, independamment de ce qui
+        tourne dans le conteneur : le test reussit meme quand l'application est
+        morte. On interroge donc le reseau interne du conteneur.
+        """
+        if self.driver != "docker":
+            return True
+        loop = asyncio.get_running_loop()
+
+        def _probe() -> bool:
+            # `forge-preview exec` n'accepte que des scripts .forge-preview/*.sh.
+            # On passe par le shell du conteneur via un script temporaire borne.
+            try:
+                rel = self._write_script(
+                    st.project, st.target, "probe",
+                    "\n".join([
+                        "set +e",
+                        'for i in 1 2 3 4 5 6 7 8 9 10; do',
+                        f'  if python3 -c "import socket,sys;'
+                        f's=socket.socket();s.settimeout(1);'
+                        f's.connect((\'127.0.0.1\',{port}));s.close()" 2>/dev/null; then',
+                        '    exit 0',
+                        '  fi',
+                        '  sleep 1',
+                        'done',
+                        'exit 1',
+                    ]),
+                )
+            except OSError:
+                return True
+            try:
+                proc = subprocess.run(
+                    ["sudo", "-n", self.wrapper, "exec", st.project, "--script", rel],
+                    capture_output=True, text=True, timeout=40,
+                )
+                return proc.returncode == 0
+            except Exception:
+                return True
+
+        try:
+            return await loop.run_in_executor(None, _probe)
+        except Exception:
+            return True
 
     def _read_log_file(self, path: Path, max_bytes: int) -> str:
         """Dernier tronçon d'un fichier de log sur disque (ou chaîne vide)."""
