@@ -176,6 +176,7 @@ class PreviewManager:
         )
         self._procs: dict[str, dict[str, PreviewProcess]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._install_locks: dict[str, asyncio.Lock] = {}
         self._last_seen: dict[str, float] = {}
         self._started_at: dict[str, float] = {}       # D10 : dernier demarrage (backoff)
         self._disabled: set[str] = set()              # D10 : previews desactivees
@@ -205,6 +206,15 @@ class PreviewManager:
     # -- utilitaires ------------------------------------------------------
     def _lock(self, project: str) -> asyncio.Lock:
         return self._locks.setdefault(project, asyncio.Lock())
+
+    def _install_lock(self, project: str) -> asyncio.Lock:
+        """Serialise les phases d'installation d'un meme projet.
+
+        npm (web) et pip (api) sont gourmands en CPU/RAM : les lancer en
+        parallele dans un conteneur limite provoque contention et OOM.
+        Ce verrou force une installation a la fois, tout en conservant une
+        task asyncio par cible (necessaire pour stop() et le poll /status)."""
+        return self._install_locks.setdefault(project, asyncio.Lock())
 
     # -- D10 : garde-fous anti-boucle ------------------------------------
     def _mark_failure(self, st: PreviewProcess) -> bool:
@@ -365,7 +375,9 @@ class PreviewManager:
         rel = self._rel_script(target, name)
         p = d / f"{target}.{name}.sh"
         p.write_text(
-            "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n",
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            "export PYTHONUNBUFFERED=1\n"
+            + body + "\n",
             encoding="utf-8",
         )
         os.chmod(p, 0o755)
@@ -473,13 +485,13 @@ class PreviewManager:
             'fi',
             '/forge-state/venv/bin/python --version',
             'echo "-- mise a niveau de pip --"',
-            '/forge-state/venv/bin/python -m ensurepip --upgrade 2>/dev/null || true',
-            '/forge-state/venv/bin/python -m pip install --upgrade pip setuptools wheel || { echo "ERREUR: mise a niveau de pip impossible"; exit 1; }',
+            '/forge-state/venv/bin/python -u -m ensurepip --upgrade 2>/dev/null || true',
+            '/forge-state/venv/bin/python -u -m pip install --upgrade --progress-bar off pip setuptools wheel || { echo "ERREUR: mise a niveau de pip impossible"; exit 1; }',
         ]
         if has_reqs:
             lines += [
                 'echo "-- installation des dependances (requirements.txt) --"',
-                '/forge-state/venv/bin/python -m pip install -r requirements.txt',
+                '/forge-state/venv/bin/python -u -m pip install --progress-bar off -r requirements.txt',
                 'rc=$?',
                 'if [ "$rc" -ne 0 ]; then echo "ERREUR: pip install -r requirements.txt a echoue (code $rc)"; exit "$rc"; fi',
             ]
@@ -574,6 +586,14 @@ class PreviewManager:
                 fh.write(f"\n[timeout {timeout}s] : forge-preview {' '.join(args)}\n")
                 fh.flush()
                 return 124
+            except asyncio.CancelledError:
+                # Arret propre (stop/redemarrage) : on termine le wrapper sudo
+                # pour ne pas laisser un docker exec orphelin.
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise
 
     # -- nettoyage et quotas disque (D7) ---------------------------------
     def disk_free_gb(self) -> float:
@@ -775,8 +795,12 @@ class PreviewManager:
             # script verbeux __venv__, qui recree le venv s'il manque ou est
             # casse (`if [ ! -x /forge-state/venv/bin/python ]`) et pose le
             # marqueur .forge-installed apres une install reussie.
-            if not (venv / ".forge-installed").is_file():
-                install = ["__venv__"]
+            # Idempotent : le script __venv__ ne recree le venv que si le
+            # binaire python manque, et pip detecte les dependances deja
+            # satisfaites. On ne skippe JAMAIS en docker, pour etre robuste
+            # apres un rm -rf partiel ou un venv corrompu (le marqueur
+            # .forge-installed cote hote survivrait a tort).
+            install = ["__venv__"]
         elif not vpy.is_file():
             install = ["__venv__"]
         elif reqs.is_file() and not (venv / ".forge-installed").is_file():
@@ -796,7 +820,10 @@ class PreviewManager:
         # log vide) sans jamais lancer uvicorn.
         src = ""
         try:
-            src = (d / entry).read_text(encoding="utf-8", errors="ignore")[:2_000_000]
+            # 4 Mo : les gros fichiers (ex. server.py de la Forge, 322 Ko)
+            # sont lus en entier, mais on garde une marge pour les monolithes
+            # encore plus gros ou la declaration ASGI est loin du debut.
+            src = (d / entry).read_text(encoding="utf-8", errors="ignore")[:4_000_000]
         except Exception:
             pass
         module = entry[:-3]
@@ -804,7 +831,14 @@ class PreviewManager:
             asgi = "FastAPI(" in src
             uvicorn_bin = str(venv / "bin" / "uvicorn")
             if asgi:
-                cmd = [uvicorn_bin, f"{module}:app", "--host", self._bind(), "--port", str(port)]
+                # Variable ASGI reelle : `app`, `application`, `api`, ou toute
+                # affectation du style `xxx = FastAPI(...)`. Par defaut `app`.
+                m = re.search(
+                    r"^\s*([A-Za-z_]\w*)\s*=\s*FastAPI\(",
+                    src, re.MULTILINE,
+                )
+                asgi_var = m.group(1) if m else "app"
+                cmd = [uvicorn_bin, f"{module}:{asgi_var}", "--host", self._bind(), "--port", str(port)]
                 kind = "python-fastapi"
             else:
                 cmd = [str(vpy), entry]
@@ -877,6 +911,39 @@ class PreviewManager:
             st.task = asyncio.create_task(self._run_docker(st, t))
         return self.status(project, port)
 
+    async def _run_install(self, st: PreviewProcess, plan: dict) -> Optional[dict]:
+        """Execute l'installation (serialisee par _install_lock) et retourne
+        le plan recalc le cas echeant (apres creation du venv/node_modules)."""
+        install = plan.get("install")
+        if install == ["__venv__"]:
+            has_reqs = (Path(plan["cwd"]) / "requirements.txt").is_file()
+            body = self._venv_install_script(self._rel_cwd(st.project, plan["cwd"]), has_reqs)
+            code = await self._spawn_wait_script(st, body, timeout=1800)
+            if code != 0:
+                self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
+                return None
+        else:
+            code = await self._spawn_wait(
+                st, self._docker_cmd(install, st.project), plan["cwd"], {},
+                st.log_path, timeout=1800,
+            )
+            if code != 0:
+                self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
+                return None
+        marker = self._venv_dir(Path(plan["cwd"])) / ".forge-installed"
+        if marker.parent.is_dir():
+            marker.write_text("ok\n", encoding="utf-8")
+        fresh = self.plan(
+            st.project,
+            st.port - (API_PORT_OFFSET if st.target == "api" else 0),
+        )
+        for t in fresh["targets"]:
+            if t["target"] == st.target and t.get("kind"):
+                st.kind = t["kind"]
+                st.cmd = " ".join(t["cmd"])
+                return t
+        return plan
+
     async def _run_docker(self, st: PreviewProcess, plan: dict) -> None:
         port = plan["port"]
         project = st.project
@@ -887,53 +954,68 @@ class PreviewManager:
         install = plan.get("install")
         if install:
             st.phase = PHASE_INSTALLING
-            if install == ["__venv__"]:
-                has_reqs = (Path(plan["cwd"]) / "requirements.txt").is_file()
-                body = self._venv_install_script(self._rel_cwd(project, plan["cwd"]), has_reqs)
-                code = await self._spawn_wait_script(st, body, timeout=1800)
-                if code != 0:
-                    self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
-                    return
-            else:
-                code = await self._spawn_wait(
-                    st, self._docker_cmd(install, project), plan["cwd"], {},
-                    st.log_path, timeout=1800,
-                )
-                if code != 0:
-                    self._record_failure(st, f"installation echouee (code {code}) — voir les logs", code)
-                    return
-            marker = self._venv_dir(Path(plan["cwd"])) / ".forge-installed"
-            if marker.parent.is_dir():
-                marker.write_text("ok\n", encoding="utf-8")
-            fresh = self.plan(
-                st.project,
-                st.port - (API_PORT_OFFSET if st.target == "api" else 0),
-            )
-            for t in fresh["targets"]:
-                if t["target"] == st.target and t.get("kind"):
-                    plan = t
-                    st.kind = t["kind"]
-                    st.cmd = " ".join(t["cmd"])
-                    break
+            async with self._install_lock(project):
+                plan = await self._run_install(st, plan) or plan
+            if st.phase == PHASE_ERROR:
+                return
 
         st.phase = PHASE_STARTING
         rel = self._write_script(
             project, target, "run", self._script_run(st, plan["cmd"], plan["cwd"])
         )
-        code, out = await self._docker("exec", project, "--script", rel, "--detach")
-        if code != 0:
-            self._record_failure(st, f"echec lancement (code {code}) : {out[-200:]}", code)
-            return
+        # Le run est lance en STREAMING (pas --detach) : sa sortie est ecrite
+        # au fil de l'eau dans le journal de la cible. Le PID 1 du conteneur
+        # reste `sleep infinity`, donc `docker logs` ne contient rien d'utile ;
+        # c'est ici que le traceback d'un crash devient visible en direct.
+        header = (
+            f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"demarrage {project}/{target} ({st.kind}) port {port} =====\n"
+        )
+        run_task = asyncio.create_task(
+            self._docker_stream(
+                st.log_path, "exec", project, "--script", rel,
+                header=header, timeout=1800,
+            )
+        )
+        st.task = run_task
+        port_open = False
         for _ in range(360):
             if await asyncio.get_running_loop().run_in_executor(None, _port_open, port):
-                self._record_success(st)
-                logger.info(
-                    "Preview %s/%s en ligne sur 127.0.0.1:%s (docker)",
-                    project, target, port,
+                port_open = True
+                break
+            if run_task.done():
+                # Le process est mort avant d'ouvrir son port : on remonte le
+                # traceback (fin du journal) au lieu d'un message generique.
+                exit_code = 0
+                if not run_task.cancelled():
+                    try:
+                        exit_code = run_task.result() or 0
+                    except Exception:
+                        exit_code = 1
+                tail = self._read_log_file(st.log_path, 8000)
+                self._record_failure(
+                    st,
+                    f"le process s'est arrete avant d'ouvrir le port {port} — "
+                    f"fin du journal : {tail[-1500:]}",
+                    exit_code,
                 )
                 return
             await asyncio.sleep(0.5)
-        self._record_failure(st, "port non ouvert apres 180s — voir les logs")
+        if port_open:
+            self._record_success(st)
+            logger.info(
+                "Preview %s/%s en ligne sur 127.0.0.1:%s (docker)",
+                project, target, port,
+            )
+            return
+        # Timeout 180s sans port : on arrete la task de streaming et on lit le
+        # journal pour un diagnostic exploitable.
+        run_task.cancel()
+        tail = self._read_log_file(st.log_path, 8000)
+        self._record_failure(
+            st,
+            f"port non ouvert apres 180s — fin du journal : {tail[-1500:]}",
+        )
 
     async def start(self, project: str, port: int, restart: bool = False) -> dict:
         # D10 : backoff entre deux demarches d'un meme projet.
