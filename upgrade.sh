@@ -296,29 +296,52 @@ if [ "$DO_BACKEND" -eq 1 ] && [ -f deploy/forge-backend.service ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6bis. Wrapper Docker des previews : recopier la version du depot quand il
-# est deja installe. Le wrapper porte la logique de montage (ex. volume d'etat
-# /forge-state ajoute en D14) ; sans recopie, le backend est a jour mais le
-# conteneur reste sur l'ancien montage (read-only -> venv impossible).
+# 6bis. Wrapper Docker des previews : recopier SYSTEMATIQUEMENT la version du
+# depot (detection du chemin reel, pose si absent). Le wrapper porte la logique
+# de montage (volume d'etat /forge-state, chown -R du STATEDIR, --user aligne) ;
+# sans recopie, le backend est a jour mais le conteneur reste sur l'ancien
+# montage/chown -> venv impossible (EACCES sur /forge-state).
 # ---------------------------------------------------------------------------
 if [ "$DO_BACKEND" -eq 1 ] && [ -f deploy/docker/forge-preview ]; then
+  c_step "Wrapper Docker des previews"
+  # Le wrapper installe vit HORS du depot. On le cherche d'abord a son
+  # emplacement canonique, puis via le PATH (command -v) et le sudoers, car
+  # une install plus ancienne a pu le poser ailleurs. Sans cette detection,
+  # upgrade.sh recopiait le backend mais laissait un wrapper obsolete en
+  # place -> montages /forge-state et chown absents -> venv impossible.
   WRAPPER_DST="/usr/local/bin/forge-preview"
-  if [ -e "$WRAPPER_DST" ]; then
-    # Garde-fou AVANT toute copie : jamais de socket Docker, jamais de
-    # commande arbitraire. Un depot compromis est refuse avant d'ecraser
-    # le binaire systeme.
-    if grep -q 'docker\.sock' deploy/docker/forge-preview; then
-      die "le wrapper Docker reference docker.sock — installation refusee"
+  if [ ! -e "$WRAPPER_DST" ]; then
+    _found="$(command -v forge-preview 2>/dev/null || true)"
+    if [ -z "$_found" ]; then
+      _found="$(grep -rhoE '/[^ ]*/forge-preview' /etc/sudoers.d 2>/dev/null | head -n1 || true)"
     fi
+    [ -n "$_found" ] && WRAPPER_DST="$_found"
+  fi
+  # Garde-fou AVANT toute copie : jamais de socket Docker. Un depot
+  # compromis est refuse avant d'ecraser le binaire systeme.
+  if grep -q 'docker\.sock' deploy/docker/forge-preview; then
+    die "le wrapper Docker reference docker.sock — installation refusee"
+  fi
+  if [ -e "$WRAPPER_DST" ]; then
     if ! cmp -s deploy/docker/forge-preview "$WRAPPER_DST"; then
-      c_step "Wrapper Docker des previews"
       install -o root -g root -m 0755 deploy/docker/forge-preview "$WRAPPER_DST"
       c_ok "wrapper mis a jour : $WRAPPER_DST"
     else
       c_ok "wrapper deja a jour : $WRAPPER_DST"
     fi
-    install -o root -g root -m 0755 -d /var/lib/forge-preview
+  else
+    # Introuvable : on NE saute PAS en silence. On le pose a l'emplacement
+    # canonique et on avertit clairement (le sudoers doit pointer dessus).
+    install -o root -g root -m 0755 deploy/docker/forge-preview /usr/local/bin/forge-preview
+    c_warn "wrapper introuvable sur le systeme — installe dans /usr/local/bin/forge-preview"
+    c_warn "verifie que /etc/sudoers.d/ autorise bien ce chemin exact"
   fi
+  # Etat des previews : creer le dossier ET reparer la propriete des
+  # sous-dossiers residuels (un ancien wrapper les creait en root:root,
+  # ce qui bloque le venv du conteneur non-root -> EACCES sur /forge-state).
+  install -o root -g root -m 0755 -d /var/lib/forge-preview
+  chown -R "$SERVICE_USER":"$SERVICE_USER" /var/lib/forge-preview/* 2>/dev/null || true
+  c_ok "etat des previews : /var/lib/forge-preview (proprietaire $SERVICE_USER)"
 fi
 
 # ---------------------------------------------------------------------------
