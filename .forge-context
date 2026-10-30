@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-30T14:08:28.725945+00:00
+# Dernière mise à jour : 2026-10-30T14:43:30.053879+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit af66e29 fix(upgrade): bloc 6bis — déploie le wrapper forge-preview corrigé (chown -R + --user 1000:1000) pour STATEDIR inscriptible, et script d'install venv verbeux (création venv + diagnostic /forge-state + journal non vide) corrigeant la preview Docker figée sur "installation…".
+- Git : branche claude-ai, dernier commit 3ea45d4 feat(upgrade): auto-relance de upgrade.sh après git pull — empreinte SHA-256 avant/après pull, re-exec avec le nouveau code si le script a changé (garde FORGE_UPGRADE_REEXEC anti-boucle, relance en --no-pull). Fin de la copie SSH manuelle du script..
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -85,6 +85,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] sauf que mêm au bout de 10 mn toujours installation et rien d'autre !
   [regle] avant l'étape 2 il faut récuper en ssh le script upgrade.sh (dejà dit) .
   [regle] oui mais quand tu dit ou confirme que je dois faire enregistrer sur github tu n'as visiblement toujours pas compris qu'il faut me donner aussi le message de commit pour cette enregistrement car c'est moi qui dois l'entrer ça ne se fais pas par défaut (pour le moment et c'est un peu chiant d'ailleur !
   [regle] donc dans le cas présent tu ne m'a pas toujours confirmer le enregistrement sur github et donc logique que deux code peuvent etre différent.
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] ça ne fonctionne pas !
   [regle] après c'est pas clair ton truc et tes "consignes" j'ai pas à travailler moi sur le workspace de telle ou telle projets qui s'y trouve.
   [regle] valide la decision et donne le feux vert pour passer par l'agent vibe-coder au travail !
-  [regle] Exemple actuellement le projet storm monitor 20km with fo

@@ -531,6 +531,50 @@ class PreviewManager:
             return 124, f"timeout ({timeout}s) : forge-preview {' '.join(args)}"
         return proc.returncode, redact_secrets((out or b"").decode("utf-8", "replace"))
 
+    async def _docker_stream(
+        self, log_path: "Path", *args: str, header: str = "", timeout: int = 1800
+    ) -> int:
+        """Comme _docker, mais ecrit la sortie du wrapper dans `log_path` au fil
+        de l'eau (ligne par ligne), au lieu d'attendre la fin du process.
+
+        Sans ce streaming, le fichier de log reste vide pendant toute la duree
+        de l'install (npm/pip, plusieurs minutes) et l'UI affiche
+        « (journal vide) » + « installation… » fige : la sortie n'etait ecrite
+        qu'une fois `communicate()` termine. Ici chaque ligne est flushee des
+        qu'elle arrive, de sorte que la route /logs (qui lit ce fichier) voie
+        le journal defiler en direct."""
+        cmd = ["sudo", "-n", self.wrapper, *args]
+        with open(log_path, "a", encoding="utf-8") as fh:
+            if header:
+                fh.write(header if header.endswith("\n") else header + "\n")
+                fh.flush()
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+
+            async def _pump() -> None:
+                assert proc.stdout is not None
+                while True:
+                    raw = await proc.stdout.readline()
+                    if not raw:
+                        break
+                    line = redact_secrets(raw.decode("utf-8", "replace"))
+                    fh.write(line)
+                    fh.flush()
+
+            try:
+                await asyncio.wait_for(_pump(), timeout=timeout)
+                return await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                fh.write(f"\n[timeout {timeout}s] : forge-preview {' '.join(args)}\n")
+                fh.flush()
+                return 124
+
     # -- nettoyage et quotas disque (D7) ---------------------------------
     def disk_free_gb(self) -> float:
         """Espace libre sur / (en Go)."""
@@ -1061,12 +1105,12 @@ class PreviewManager:
             rel = self._write_script(
                 st.project, st.target, "install", self._script_cmd(st, cmd, cwd)
             )
-            code, out = await self._docker(
-                "exec", st.project, "--script", rel, timeout=timeout
+            return await self._docker_stream(
+                log,
+                "exec", st.project, "--script", rel,
+                header=f"\n$ {' '.join(cmd)}\n",
+                timeout=timeout,
             )
-            with open(log, "a", encoding="utf-8") as fh:
-                fh.write(f"\n$ {' '.join(cmd)}\n{redact_secrets(out)}\n")
-            return code
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(f"\n$ {' '.join(cmd)}\n")
             fh.flush()
@@ -1092,12 +1136,12 @@ class PreviewManager:
         est verbeux (echo de chaque etape) afin de ne JAMAIS produire un
         journal vide, meme si une etape echoue tot."""
         rel = self._write_script(st.project, st.target, "install", body)
-        code, out = await self._docker(
-            "exec", st.project, "--script", rel, timeout=timeout
+        return await self._docker_stream(
+            st.log_path,
+            "exec", st.project, "--script", rel,
+            header=f"\n$ .forge-preview/{Path(rel).name}\n",
+            timeout=timeout,
         )
-        with open(st.log_path, "a", encoding="utf-8") as fh:
-            fh.write(f"\n$ .forge-preview/{Path(rel).name}\n{redact_secrets(out)}\n")
-        return code
 
     async def _kill(self, st: PreviewProcess) -> None:
         if st.task and not st.task.done():
