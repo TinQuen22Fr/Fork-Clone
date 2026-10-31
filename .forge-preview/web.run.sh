@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONUNBUFFERED=1
 export HOST=0.0.0.0
 export PORT=8092
 cd frontend

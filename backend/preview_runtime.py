@@ -365,6 +365,20 @@ class PreviewManager:
             return out
         return out
 
+    # Base MongoDB clonee a chaque upgrade.sh (voir PREVIEW_BDD_CLONE.md).
+    # Les conteneurs preview n'accedent jamais a la base de prod :
+    # - MONGO_URL pointe sur la gateway Docker (hote vu depuis le conteneur) ;
+    # - DB_NAME est force a "forge_preview".
+    # Ces deux cles overridant toute valeur venant du .env du projet.
+    _PREVIEW_MONGO_URL = "mongodb://172.31.0.1:27017"
+    _PREVIEW_DB_NAME = "forge_preview"
+
+    def _preview_db_env(self) -> dict[str, str]:
+        return {
+            "MONGO_URL": self._PREVIEW_MONGO_URL,
+            "DB_NAME": self._PREVIEW_DB_NAME,
+        }
+
     def _rel_script(self, target: str, name: str) -> str:
         """Chemin relatif au workspace monte d'un script borne, ecrit sous
         <projet>/.forge-preview/. Le wrapper n'autorise que ce prefixe."""
@@ -939,7 +953,9 @@ class PreviewManager:
         ]
         if len(ports) > 1:
             args += ["--port2", str(ports[1])]
-        for key, val in self._project_env(project).items():
+        _penv = self._project_env(project)
+        _penv.update(self._preview_db_env())
+        for key, val in _penv.items():
             args += ["--env", f"{key}={val}"]
         code, out = await self._docker(*args)
         if code != 0:
@@ -1232,6 +1248,7 @@ class PreviewManager:
         cwd, port = plan["cwd"], plan["port"]
         env = self._env(port, plan.get("env"))
         env.update(self._project_env(st.project))
+        env.update(self._preview_db_env())
         log = st.log_path
         try:
             with open(log, "a", encoding="utf-8") as fh:

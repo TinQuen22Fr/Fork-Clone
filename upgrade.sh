@@ -480,6 +480,78 @@ if [ "$DO_BACKEND" -eq 1 ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# N. Clonage de la BDD prod -> BDD preview (forge_preview)
+#    Les conteneurs de preview n'ont jamais acces a la base de prod : ils
+#    recoivent DB_NAME=forge_preview via preview_runtime.py. A chaque upgrade,
+#    on ecrase forge_preview avec un dump frais de la base de prod, pour que
+#    les previews refletent l'etat courant.
+#
+#    - Lit MONGO_URL + DB_NAME dans backend/.env (source).
+#    - mongodump --archive | mongorestore --drop --nsFrom=<src>.* --nsTo=forge_preview.*
+#    - En cas d'echec : log, on ne bloque PAS la fin de l'upgrade.
+# ---------------------------------------------------------------------------
+c_step "Clonage BDD preview (forge_preview)"
+if command -v mongodump >/dev/null 2>&1 && command -v mongorestore >/dev/null 2>&1; then
+  SRC_MONGO_URL=""
+  SRC_DB_NAME=""
+  if [ -f backend/.env ]; then
+    SRC_MONGO_URL="$(grep -m1 -E '^MONGO_URL=' backend/.env | cut -d= -f2- || true)"
+    SRC_DB_NAME="$(grep -m1 -E '^DB_NAME=' backend/.env | cut -d= -f2- || true)"
+  fi
+  SRC_MONGO_URL="${SRC_MONGO_URL:-mongodb://localhost:27017}"
+  SRC_DB_NAME="${SRC_DB_NAME:-forge}"
+  DST_DB_NAME="forge_preview"
+
+  if [ "$SRC_DB_NAME" = "$DST_DB_NAME" ]; then
+    c_warn "DB_NAME de prod == $DST_DB_NAME : clonage ignore (conflit)"
+  else
+    CLONE_T0=$(date +%s)
+    CLONE_TMP="$(mktemp -t forge-preview-clone.XXXXXX.archive)"
+    CLONE_LOG="$(mktemp -t forge-preview-clone.XXXXXX.log)"
+    CLONE_RC=0
+
+    if ! mongodump --uri="$SRC_MONGO_URL" --db="$SRC_DB_NAME" \
+          --archive="$CLONE_TMP" --quiet >"$CLONE_LOG" 2>&1; then
+      CLONE_RC=1
+    fi
+
+    if [ "$CLONE_RC" -eq 0 ]; then
+      if ! mongorestore --uri="$SRC_MONGO_URL" \
+            --archive="$CLONE_TMP" --drop \
+            --nsFrom="${SRC_DB_NAME}.*" --nsTo="${DST_DB_NAME}.*" \
+            --quiet >>"$CLONE_LOG" 2>&1; then
+        CLONE_RC=2
+      fi
+    fi
+
+    CLONE_DT=$(( $(date +%s) - CLONE_T0 ))
+    CLONE_SIZE=$(stat -c%s "$CLONE_TMP" 2>/dev/null || echo 0)
+    rm -f "$CLONE_TMP" 2>/dev/null || true
+
+    if [ "$CLONE_RC" -eq 0 ]; then
+      # Horodatage du clonage pour tracabilite (vu par le backend si besoin).
+      STAMP_FILE="$APP_DIR/.forge-preview-db-clone"
+      {
+        printf 'last_clone_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'source_db=%s\n'      "$SRC_DB_NAME"
+        printf 'target_db=%s\n'      "$DST_DB_NAME"
+        printf 'duration_sec=%s\n'   "$CLONE_DT"
+        printf 'archive_bytes=%s\n'  "$CLONE_SIZE"
+      } > "$STAMP_FILE" 2>/dev/null || true
+      c_ok "clone $SRC_DB_NAME -> $DST_DB_NAME ok (${CLONE_DT}s, ${CLONE_SIZE} octets)"
+      rm -f "$CLONE_LOG" 2>/dev/null || true
+    else
+      c_warn "clonage $SRC_DB_NAME -> $DST_DB_NAME echoue (rc=$CLONE_RC) — upgrade continue"
+      c_warn "journal : $CLONE_LOG"
+      sed -n '1,20p' "$CLONE_LOG" 2>/dev/null | sed 's/^/      /' || true
+    fi
+  fi
+else
+  c_warn "mongodump/mongorestore absents — clonage BDD preview ignore"
+  c_warn "installe mongodb-database-tools pour activer le clone a chaque upgrade"
+fi
+
 c_step "Mise a jour terminee"
 cat <<EOF
   Journal en direct   : journalctl -u $SERVICE -f
