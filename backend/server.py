@@ -5872,6 +5872,46 @@ def _truncate_step_logs(step: dict) -> dict:
     return {**step, "tools": tools}
 
 
+# Brique E : cycle de vie d'outil explicite.
+# Chaque entree d'outil recoit un statut propre (`success` / `error`) au lieu
+# d'un couple appel/resultat binaire. Le statut est derive de la sortie de
+# l'outil : code de sortie non nul pour `bash`, ou message d'erreur connu pour
+# les autres. Cela ameliore la lisibilite des longs tours et prepare la reprise.
+_TOOL_ERROR_PREFIXES = (
+    "erreur",
+    "error:",
+    "acces aux fichiers de configuration",
+    "accès aux fichiers de configuration",
+)
+_BASH_EXIT_RE = re.compile(r"^exit_code:\s*(-?\d+)\s*$", re.MULTILINE)
+
+
+def _derive_tool_status(tool_entry: dict) -> str:
+    """Derive le statut terminal d'un appel d'outil (`success` ou `error`).
+
+    - `bash` : le code de sortie fait foi (0 = success, sinon error). En
+      l'absence de code (ex. timeout), on retombe sur l'analyse du texte.
+    - autres outils : un message commencant par un prefixe d'erreur connu
+      marque l'echec.
+    Ne leve jamais : en cas de doute, on considere `success` pour ne pas
+    fausser le cycle de vie du tour.
+    """
+    try:
+        output = (tool_entry.get("output") or "").strip()
+        name = (tool_entry.get("tool") or "").strip()
+        if name == "bash":
+            m = _BASH_EXIT_RE.search(output)
+            if m is not None:
+                return "success" if int(m.group(1)) == 0 else "error"
+        head = output.lstrip().lower()[:80]
+        for prefix in _TOOL_ERROR_PREFIXES:
+            if head.startswith(prefix):
+                return "error"
+        return "success"
+    except Exception:  # noqa: BLE001
+        return "success"
+
+
 def _new_step(index: int, intention: str) -> dict:
     return {
         "index": index,
@@ -6030,6 +6070,10 @@ async def _run_generation(
                     message_id = assist_doc["id"]
                 if current is None:
                     _start_step()
+                # Brique E : statut propre a cette entree d'outil (success/error),
+                # calcule des l'arrivee du resultat puis propage a la persistance
+                # et au client (via `ev["step"]`, recopie tel quel par le SSE).
+                ev["step"]["status"] = _derive_tool_status(ev["step"])
                 current["tools"].append(ev["step"])
                 # Une fois qu'une salve d'outils est ouverte, le texte qui
                 # suivra appartiendra a l'etape SUIVANTE (scellement).

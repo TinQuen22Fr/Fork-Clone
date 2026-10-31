@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-31T22:24:56.078767+00:00
+# Dernière mise à jour : 2026-10-31T23:05:09.124216+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 7b577b0 feat(sse): état terminal idempotent des tours (Brique C) — statut gardé, filet finally, balayage des fantômes.
+- Git : branche claude-ai, dernier commit 45226b6 feat(reality-checks): Brique G — exécution auto des checks projet rattachée au tour.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -27,6 +27,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/mock_openai_provider.py
   backend/tests/test_deps_regression.py
   backend/tests/test_kokoro_optional.py
+  backend/tests/test_reality_checks.py
   backend/tests/test_regression.py
   backend/tests/test_sse_finish.py
   backend/tests/test_sse_replay.py
@@ -40,6 +41,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/patch_backend.py
   backend/patch_push.py
   backend/preview_runtime.py
+  backend/reality_checks.py
   backend/requirements-kokoro.txt
   backend/requirements.txt
   backend/reset_password.py
@@ -64,8 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/docker/preview-base.Dockerfile
   deploy/docker/verify-d1.sh
   deploy/docker/verify-d10.sh
-  deploy/docker/verify-d10a.sh
-  deploy/docker/verify-d10b.sh
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).

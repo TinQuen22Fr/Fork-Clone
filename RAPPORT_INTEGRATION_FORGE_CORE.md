@@ -255,6 +255,26 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - **Non vérifié** : exécution de bout en bout d'un vrai tour avec un projet pourvu de `checks/` (nécessite serveur live + MongoDB). Les tests d'intégration réseau préexistants (`test_regression.py`, `test_tts_bugs.py`, `backend_test.py`, `test_deps_regression.py`, `test_kokoro_optional.py`) échouent faute de serveur HTTP actif — sans lien avec cette brique.
 - **Affichage frontend** : non traité ici. L'événement SSE `reality_check` et le champ `reality_check` du document sont disponibles côté client, mais aucun rendu dédié n'a encore été ajouté (hors périmètre de l'étape 7).
 
+### Étape 8 — Brique E : cycle de vie d'outil explicite — FAIT le 2026-11-01 00:07:59 CET
+
+**Objet.** Donner à chaque appel d'outil un statut propre (`success` / `error`) par entrée, au lieu du couple appel/résultat binaire. Améliore la lisibilité des longs tours et prépare la reprise après coupure (Brique F).
+
+**Fait.**
+- **`backend/server.py`** :
+  - `_derive_tool_status(tool_entry)` : dérive le statut terminal d'une entrée d'outil. Pour `bash`, le **code de sortie fait foi** (`exit_code: 0` → `success`, sinon `error`) ; à défaut de code (timeout), repli sur l'analyse du texte. Pour les autres outils, un message commençant par un préfixe d'erreur connu (`erreur`, `error:`, blocage fichier sensible) marque l'échec. **Ne lève jamais** : en cas de doute, `success`.
+  - Dans la boucle `_run_generation`, à l'arrivée de chaque événement `tool` : `ev["step"]["status"]` est calculé puis l'entrée est empilée et publiée. Le statut est donc **persisté** (via `steps[].tools[].status`, préservé par `_truncate_step_logs`) et **transmis au client** (recopie de `ev["step"]` par `_sse_from_event`, avec `seq` — compatible Brique A).
+  - Les deux niveaux de statut coexistent sans collision : `step.status` (`running`/`done`, niveau **étape**) et `tools[].status` (`success`/`error`, niveau **entrée d'outil**).
+- **`backend/tests/test_tool_lifecycle.py`** : 13 tests autonomes (sans réseau ni MongoDB) — codes de sortie `bash` (0 / non nul / négatif), timeout, fichier introuvable, blocage fichier sensible, sortie vide, absence de champ, mot « erreur » en milieu de sortie, survie du statut à la troncature, statut initial d'étape.
+
+**Vérifié.**
+- `pytest backend/tests/test_tool_lifecycle.py` → **13 passed**.
+- Suite unitaire sans réseau (toutes briques A/B/C/E/G + boucle d'outils) → **50 passed**.
+- `import server` → OK ; `py_compile` → OK ; `git diff --check` → propre.
+
+**Non vérifié.**
+- Rendu frontend du statut par entrée d'outil : hors périmètre de l'étape 8. Le champ `status` est disponible côté client (événement `tool` et document persisté), mais l'affichage dédié (badge pending/running/success/error) reste à faire côté UI.
+- Statut `pending`/`running` en temps réel : non applicable ici, car les providers exécutent l'outil puis émettent le résultat d'un seul bloc. Le statut terminal (`success`/`error`) est celui qui est suivi par entrée ; le `pending`/`running` live nécessiterait de réécrire tous les providers (hors périmètre).
+
 ---
 
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés
