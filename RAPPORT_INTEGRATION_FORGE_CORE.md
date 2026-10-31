@@ -219,6 +219,23 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - **Défauts corrigés pendant l'étape** : (1) terminal non livré quand `after_seq` dépassait le tampon ; (2) assertion de test erronée sur la borne du tampon. Les deux sont couverts par les tests.
 - **Non vérifié** : la reconnexion réelle dans un navigateur (rafraîchir en plein tour) — non exécutable en sandbox sans serveur + client lancés.
 
+### Étape 6 — Brique C : état terminal idempotent — FAIT le 2026-10-31 23:12:40 CET
+
+- **Objectif** : un tour assistant finit **toujours** `done` ou `error`, une seule fois, même si le client a disparu, si la tâche est annulée ou si le backend redémarre en plein tour → fin des tours « bloqués en cours » fantômes.
+- **Backend — `backend/server.py`** :
+  - Nouveau cycle de statut sur le document assistant : `running` (créé par `_ensure_assistant_doc`, avec `completed_at: None`) → `done` | `error`. Constantes `TURN_TERMINAL_STATUSES` et filtre `_NOT_TERMINAL` (`$nin`).
+  - `_finalize_assistant` : `update_one` **gardé par statut** (ne matche que si le tour n'est pas déjà terminal) ; pose `status` (`error` si `stopped`, sinon `done`) et `completed_at` **une seule fois**. Une seconde clôture est sans effet.
+  - `_settle_assistant(database, message_id)` : filet de sécurité, force `error` + `stopped` + `completed_at` si le tour n'est pas terminal ; renvoie `False` (no-op) sinon. Appelé dans le `finally` de `_run_generation` sous `asyncio.shield`, donc exécuté même sur annulation ou exception.
+  - `_reap_orphan_turns(database)` : au démarrage (`lifespan`, après `_seed_admin`), tout tour resté `running` est clos en `error` avec `orphaned: true` (valable car un seul worker uvicorn). Un échec n'empêche pas le démarrage.
+  - `_persist_assistant` (chemin d'arrêt) : écrit directement un statut terminal + `completed_at`.
+- **Compatibilité** : les messages existants n'ont pas de champ `status` ; ils ne sont **pas** touchés (le balayage cible uniquement `status == "running"`). Le champ `stopped` est conservé : le frontend n'est pas modifié.
+- **Tests ajoutés** : `backend/tests/test_terminal_status.py` (8 tests, collection Mongo factice en mémoire) — démarrage en `running`, `done`, `error` si arrêté, idempotence de la double clôture, `_settle_assistant` appliqué une seule fois, no-op sans `message_id`, balayage ne touchant que les `running` (messages anciens intacts), statut terminal à la persistance directe.
+- **Vérifications** :
+  - `pytest backend/tests/test_terminal_status.py test_sse_finish.py test_sse_replay.py test_tool_loop.py` (lancé depuis la racine du projet) → **24 passed**.
+  - `pytest backend/tests --collect-only` → **64 tests collectés** (56 + 8), 0 erreur.
+  - `py_compile backend/server.py` → OK ; `git diff --check` → propre.
+- **Non vérifié** : le comportement contre un vrai MongoDB (la garde `$nin` est testée sur une collection factice) et le balayage au démarrage réel après un redémarrage du service. Les anciens messages sans `status` restent sans statut : ils ne sont pas migrés.
+
 ---
 
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés

@@ -539,6 +539,12 @@ async def lifespan(app: FastAPI):
             [("user_id", 1), ("project", 1), ("norm", 1)]
         )
         await _seed_admin()
+        try:
+            reaped = await _reap_orphan_turns(db)
+            if reaped:
+                logger.warning("Tours fantomes clos au demarrage : %d", reaped)
+        except Exception:  # noqa: BLE001
+            logger.exception("Balayage des tours fantomes impossible")
         asyncio.create_task(_autostart_previews())
         asyncio.create_task(_reap_idle_previews())
         asyncio.create_task(_preview_housekeeping())
@@ -5886,6 +5892,8 @@ async def _ensure_assistant_doc(database, conversation_id: str) -> dict:
         "fallback_used": False,
         "routing": [],
         "stopped": False,
+        "status": "running",
+        "completed_at": None,
         "created_at": now_iso(),
     }
     await database.messages.insert_one(doc)
@@ -6113,9 +6121,22 @@ async def _run_generation(
                 logger.exception("Sauvegarde de secours impossible")
     finally:
         _ACTIVE_RUNS.pop(conversation_id, None)
+        # Brique C : quoi qu'il arrive (annulation, exception, sortie anticipee
+        # sans contenu), le tour ne reste jamais `running`. No-op s'il est deja
+        # terminal.
+        try:
+            await asyncio.shield(_settle_assistant(database, message_id))
+        except BaseException:  # noqa: BLE001
+            logger.warning("Brique C: statut terminal de secours impossible")
         # Filet de securite : meme sur annulation ou exception, le tour se
         # termine par UN evenement terminal (idempotent si deja emis).
         channel.finish("error" if stopped else "done")
+
+
+# Brique C : statuts terminaux d'un tour assistant. Un tour demarre en
+# `running` et ne peut quitter cet etat qu'UNE fois (done | error).
+TURN_TERMINAL_STATUSES = ("done", "error")
+_NOT_TERMINAL = {"$nin": list(TURN_TERMINAL_STATUSES)}
 
 
 async def _finalize_assistant(
@@ -6125,7 +6146,12 @@ async def _finalize_assistant(
     meta: dict,
     stopped: bool,
 ) -> dict:
-    """Cloture le document assistant : contenu final, meta, statut."""
+    """Cloture le document assistant : contenu final, meta, statut terminal.
+
+    Transition idempotente : le `update_one` est garde par le statut (il ne
+    matche que si le tour n'est pas deja terminal) et `completed_at` n'est
+    pose qu'une seule fois.
+    """
     update = {
         "content": redact_secrets(content) or "(reponse vide)",
         "provider": meta.get("provider"),
@@ -6134,10 +6160,45 @@ async def _finalize_assistant(
         "fallback_used": meta.get("fallback_used", False),
         "routing": meta.get("attempts", []),
         "stopped": stopped,
+        "status": "error" if stopped else "done",
+        "completed_at": now_iso(),
     }
-    await database.messages.update_one({"id": message_id}, {"$set": update})
+    await database.messages.update_one(
+        {"id": message_id, "status": _NOT_TERMINAL}, {"$set": update}
+    )
     doc = await database.messages.find_one({"id": message_id}, {"_id": 0})
     return doc or {"id": message_id, **update}
+
+
+async def _settle_assistant(database, message_id: Optional[str]) -> bool:
+    """Filet de securite : force `error` si le tour n'est pas encore terminal.
+
+    Sans effet (renvoie False) si le tour a deja atteint un statut terminal.
+    """
+    if not message_id:
+        return False
+    res = await database.messages.update_one(
+        {"id": message_id, "status": _NOT_TERMINAL},
+        {"$set": {"status": "error", "stopped": True, "completed_at": now_iso()}},
+    )
+    return bool(getattr(res, "modified_count", 0))
+
+
+async def _reap_orphan_turns(database) -> int:
+    """Au demarrage, aucun tour n'est reellement en cours (1 seul worker) :
+    tout tour reste `running` est un fantome (crash/redemarrage) -> `error`."""
+    res = await database.messages.update_many(
+        {"role": "assistant", "status": "running"},
+        {
+            "$set": {
+                "status": "error",
+                "stopped": True,
+                "orphaned": True,
+                "completed_at": now_iso(),
+            }
+        },
+    )
+    return int(getattr(res, "modified_count", 0) or 0)
 
 
 async def _persist_assistant(
@@ -6161,6 +6222,8 @@ async def _persist_assistant(
         "fallback_used": meta.get("fallback_used", False),
         "routing": meta.get("attempts", []),
         "stopped": stopped,
+        "status": "error" if stopped else "done",
+        "completed_at": now_iso(),
         "created_at": now_iso(),
     }
     await database.messages.insert_one(doc)
