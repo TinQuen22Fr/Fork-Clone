@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-10-30T23:47:33.224705+00:00
+# Dernière mise à jour : 2026-10-31T00:15:41.261305+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit fd1e5fa fix(preview): sonde API docker patiente 90 s (demarrage uvicorn lent, faux echec a 10 s).
+- Git : branche claude-ai, dernier commit bcdd6b6 fix(preview-ui): bouton rafraichir vide le journal puis le recharge, et logs recharges apres start/stop/restart.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -85,6 +85,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] la forge dans le workspace est ton ateliers, upgrade.sh est le script pour faire toute mise à jour de la forge (commande à faire dans /var/www/forge) de nouveau je rappel que ce script récupére le code enregistrer dans github EN LIGNE PAS EN LOCAL !
   [regle] par contre toujours erreur 502 en preview au moment de vouloir se connecter !
   [regle] Le journal devient (journal vide) sans rien d'autre et ça indique toujours preview dans le header en jaune avec le petit cercle qui tourne.
   [regle] Retour icone header forge sur le projet Fork-Clone : il y a eu une fois un retour de log directement indiquant sois disant installation finit, mais d'une l'icone Backend est toujours en jaune et le mot Installation en jaune en haut.
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] la liste découverte. Sinon ne pas le forcer.
   [regle] ok je consigne cela et verrais après.
   [regle] Si je clique de nouveau sur accueil le projet charger est toujours ouvert, et l'autre éventuellement se charge à côté toujours sans fermer l'autre.
-  [regle] nous sommes bien d'accord qu'est-ce que tu viens de coder c'est par exemple si je suis sur le projet forclone et que je fais un F5 ou la touche Contrôle plus Shift + R est-ce que ça actualise bien la fenêtre de chat de ce projet ou est-ce que ça renvoie toujours à directement donc du coup en faisant cette combinaison de touches sur le hub de la forge directement.
