@@ -6757,6 +6757,7 @@ class GithubPushRequest(BaseModel):
     conversation_id: Optional[str] = None
     create_if_missing: bool = False
     private: bool = True
+    force: bool = False  # push --force-with-lease (ecrase la branche distante)
 
 
 # =========================================================================
@@ -7975,26 +7976,28 @@ async def github_push(
         # Authentification via header HTTP temporaire : le jeton n'apparait
         # jamais dans l'URL du remote ni dans la table des processus (ps).
         basic_auth = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
-        push = _git(
-            [
-                "-c",
-                f"http.extraHeader=AUTHORIZATION: basic {basic_auth}",
-                "push",
-                "origin",
-                f"HEAD:refs/heads/{branch}",
-            ],
-            work_dir,
-            timeout=600,
-        )
+        push_args = [
+            "-c",
+            f"http.extraHeader=AUTHORIZATION: basic {basic_auth}",
+            "push",
+        ]
+        if payload.force:
+            # --force-with-lease : ecrase SEULEMENT si la branche distante est
+            # bien celle que nous avions vue au dernier fetch. Sinon refuse,
+            # pour ne pas detruire des commits inconnus pousses par un tiers.
+            push_args.append("--force-with-lease")
+        push_args += ["origin", f"HEAD:refs/heads/{branch}"]
+        push = _git(push_args, work_dir, timeout=600)
         if push.returncode != 0:
             err = _redact(push.stderr or push.stdout, token)[:600]
-            if "rejected" in err or "non-fast-forward" in err:
+            if "rejected" in err or "non-fast-forward" in err or "stale info" in err:
                 raise HTTPException(
                     status_code=409,
                     detail=(
                         "Push refuse : la branche distante a des commits que le "
-                        "workspace n'a pas. Choisis une autre branche (ou cree-en "
-                        "une nouvelle) pour ne rien ecraser. Detail : " + err
+                        "workspace n'a pas. Choisis une autre branche, cree-en "
+                        "une nouvelle, ou coche \"Forcer l'enregistrement\" "
+                        "pour ecraser la branche distante. Detail : " + err
                     ),
                 )
             raise HTTPException(status_code=502, detail=f"git push: {err}")

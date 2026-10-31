@@ -32,6 +32,8 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const [conflict, setConflict] = useState(false);
+  const [force, setForce] = useState(false);
 
   const loadStatus = async (proj) => {
     try {
@@ -82,6 +84,8 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
     setRepo(full);
     setBranch("");
     setBranches([]);
+    setConflict(false);
+    setForce(false);
     if (!full) return;
     setBusy(true);
     try {
@@ -118,6 +122,14 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
       setError("Choisis un dépôt (ou saisis un nom) et une branche.");
       return;
     }
+    if (force) {
+      const ok = window.confirm(
+        `Forcer l'enregistrement va ECRASER la branche distante "${target}" ` +
+        `du dépôt ${targetRepo} avec le contenu local. Les commits distants ` +
+        `absents en local seront perdus. Continuer ?`
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     setError("");
     setResult(null);
@@ -130,8 +142,11 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
         conversation_id: conversationId || null,
         create_if_missing: creatingRepo,
         private: privateRepo,
+        force,
       });
       setResult(data);
+      setConflict(false);
+      setForce(false);
       if (creatingRepo) {
         setCreatingRepo(false);
         setRepo(data.repo);
@@ -139,6 +154,10 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
       }
       loadStatus(project);
     } catch (e) {
+      const status = e?.response?.status;
+      if (status === 409) {
+        setConflict(true);
+      }
       setError(formatApiError(e));
     } finally {
       setBusy(false);
@@ -335,11 +354,12 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                 <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
                   Message de commit
                 </span>
-                <input
+                <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Sauvegarde depuis la Forge"
-                  className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
+                  placeholder={"Sauvegarde depuis la Forge\n\nLigne vide puis corps du message sur plusieurs lignes si besoin."}
+                  rows={5}
+                  className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs resize-y leading-relaxed whitespace-pre-wrap"
                   data-testid="github-commit-message"
                 />
               </label>
@@ -353,6 +373,27 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
             >
               {error}
             </div>
+          )}
+
+          {conflict && (
+            <label
+              className="flex items-start gap-2 border-2 border-[#ffd700]/60 bg-[#ffd700]/5 px-3 py-2 text-xs text-[#ffd700] cursor-pointer"
+              data-testid="github-force-wrap"
+            >
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                className="mt-0.5 accent-[#ffd700]"
+                data-testid="github-force-checkbox"
+              />
+              <span>
+                <b>Forcer l'enregistrement</b> (push --force-with-lease) : ecrase
+                la branche distante avec le contenu local. Les commits distants
+                absents en local seront perdus. A utiliser seulement si tu es sur
+                de ce que tu fais.
+              </span>
+            </label>
           )}
 
           {result && (
