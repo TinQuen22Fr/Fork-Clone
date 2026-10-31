@@ -236,6 +236,25 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
   - `py_compile backend/server.py` → OK ; `git diff --check` → propre.
 - **Non vérifié** : le comportement contre un vrai MongoDB (la garde `$nin` est testée sur une collection factice) et le balayage au démarrage réel après un redémarrage du service. Les anciens messages sans `status` restent sans statut : ils ne sont pas migrés.
 
+### Étape 7 — Brique G : reality checks automatiques — FAIT le 2026-10-31 23:29:09 CET
+
+- **Objet** : après une étape qui touche au code, la Forge lance automatiquement les scripts de vérification autonomes du projet et rattache leur verdict au tour. Un tour ne se déclare « fini » que si le check passe, ou signale explicitement l'échec.
+- **Convention des checks** (empruntée à `build-your-own-x`) : scripts dans `<projet>/checks/`, nommés `NN_*_test.py` (`NN` = deux chiffres d'ordre). Chaque script est autonome, s'exécute sans argument depuis la racine du projet, et imprime son verdict sur la dernière ligne non vide : `PASS` ou `FAIL[: hint]`. Le **code de sortie fait foi** (0 = succès) ; le marqueur texte sert de repli et à extraire le *hint*. En cas de désaccord marqueur/code, l'échec prime.
+- **Module ajouté** : `backend/reality_checks.py` — `discover_checks()` (découverte triée et filtrée), `_parse_verdict()` (code de sortie + marqueur + hint), `run_reality_checks()` (exécution agrégée). Bornes de sécurité : `CHECK_TIMEOUT_S=60` par script, `CHECKS_TOTAL_TIMEOUT_S=180` global, `CHECK_OUTPUT_TRUNC=4000`. **Ne lève jamais** : toute erreur devient un résultat d'échec ou un no-op, jamais une exception qui casserait le tour.
+- **Backend — `backend/server.py`** :
+  - Import `from reality_checks import run_reality_checks` et `import sys` (absent jusque-là).
+  - Flag de config `settings.enable_reality_checks` (`ENABLE_REALITY_CHECKS`, défaut `True`).
+  - Dans `_run_generation`, après `_finalize_step("done")` et avant la clôture : si le tour a exécuté au moins un outil (`tool_steps`), n'est pas déjà arrêté, et est rattaché à un projet, les checks sont lancés via `project_root(project)` et `sys.executable`. Le résultat est publié en événement SSE `reality_check` et, **si un check échoue, le tour passe en `error`** (`stopped = True` + `error_detail`).
+  - Verdict rattaché au document assistant persisté (`final_meta["reality_check"]` → champ `reality_check` dans `_finalize_assistant`).
+  - Événement `reality_check` ajouté à `_sse_from_event` (transmis au client avec son `seq`, compatible Brique A).
+- **Tests ajoutés** : `backend/tests/test_reality_checks.py` — 13 tests autonomes (sans réseau ni MongoDB) : découverte triée/filtrée, absence de `checks/`, parsing du verdict (marqueur PASS/FAIL, repli code de sortie, désaccord marqueur/exit), projet `None`, tout-pass, échec avec hint, timeout, script qui crashe, troncature de sortie.
+- **Vérification** :
+  - `backend/.venv/bin/python -m pytest backend/tests/test_reality_checks.py -q` → **13 passed**.
+  - Suite unitaire sans réseau (reality + Briques A/B/C + boucle d'outils) → **37 passed**.
+  - `import server` → OK ; `py_compile backend/server.py backend/reality_checks.py` → OK ; `git diff --check` → propre.
+- **Non vérifié** : exécution de bout en bout d'un vrai tour avec un projet pourvu de `checks/` (nécessite serveur live + MongoDB). Les tests d'intégration réseau préexistants (`test_regression.py`, `test_tts_bugs.py`, `backend_test.py`, `test_deps_regression.py`, `test_kokoro_optional.py`) échouent faute de serveur HTTP actif — sans lien avec cette brique.
+- **Affichage frontend** : non traité ici. L'événement SSE `reality_check` et le champ `reality_check` du document sont disponibles côté client, mais aucun rendu dédié n'a encore été ajouté (hors périmètre de l'étape 7).
+
 ---
 
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés

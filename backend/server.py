@@ -26,6 +26,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import sys
 import io
 import re
 import json
@@ -141,6 +142,7 @@ from starlette.background import BackgroundTask
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from preview_runtime import PreviewManager
+from reality_checks import run_reality_checks
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -315,6 +317,8 @@ class Settings:
         self.claude_model: str = _env("CLAUDE_MODEL", "claude-sonnet-4-6")
         self.claude_max_tokens: int = int(_env("CLAUDE_MAX_TOKENS", "4096"))
         self.enable_tools: bool = _env_bool("ENABLE_TOOLS", True)
+        # Brique G : reality checks automatiques (scripts <projet>/checks/).
+        self.enable_reality_checks: bool = _env_bool("ENABLE_REALITY_CHECKS", True)
         self.claude_system_prompt: str = _env(
             "CLAUDE_SYSTEM_PROMPT",
             "Tu es Claude Unchained Forge, un assistant IA direct, franc et sans "
@@ -5694,6 +5698,8 @@ def _sse_from_event(ev: dict) -> Optional[str]:
         payload = {"detail": ev["detail"]}
     elif etype == "done":
         payload = dict(ev["doc"])
+    elif etype == "reality_check":
+        payload = {k: v for k, v in ev.items() if k not in ("seq", "type")}
     elif etype == "finished":
         payload = {"status": ev.get("status", "done")}
     elif etype == "user_message":
@@ -6046,6 +6052,35 @@ async def _run_generation(
         # Fin de flux : on cloture et persiste l'etape en cours.
         await _finalize_step("done")
 
+        # Brique G : reality checks. Si le tour a touche au code (au moins un
+        # outil execute) et que le projet fournit des scripts `checks/NN_*_test.py`,
+        # on les lance et on rattache leur verdict au tour. Un echec signale
+        # explicitement le probleme (evenement SSE) et marque le tour en erreur :
+        # un tour ne se declare « fini » que si le check passe ou signale l'echec.
+        reality = None
+        if (
+            settings.enable_reality_checks
+            and tool_steps
+            and not stopped
+            and project
+        ):
+            try:
+                proot = project_root(project)
+                pybin = sys.executable or "python3"
+                reality = await run_reality_checks(proot, pybin)
+            except Exception:  # noqa: BLE001
+                logger.warning("Brique G: reality checks impossibles")
+                reality = None
+            if reality is not None:
+                channel.publish({"type": "reality_check", "reality": reality})
+                if not reality.get("ok"):
+                    stopped = True
+                    if not error_detail:
+                        error_detail = (
+                            "Reality check en echec — "
+                            + (reality.get("hint") or "verification projet non passee")
+                        )
+
         if error_detail and not chunks and not tool_steps:
             # Rien a conserver : on laisse le client afficher l'erreur, mais on
             # emet quand meme l'evenement terminal (fin de flux explicite).
@@ -6065,6 +6100,8 @@ async def _run_generation(
             "fallback_used": False,
             "attempts": [],
         }
+        if reality is not None:
+            final_meta = {**final_meta, "reality_check": reality}
         ai_doc = await _finalize_assistant(
             database, message_id, "".join(chunks), final_meta, stopped
         )
@@ -6163,6 +6200,9 @@ async def _finalize_assistant(
         "status": "error" if stopped else "done",
         "completed_at": now_iso(),
     }
+    # Brique G : rattache le verdict des reality checks au tour, s'il y en a eu.
+    if meta.get("reality_check") is not None:
+        update["reality_check"] = meta["reality_check"]
     await database.messages.update_one(
         {"id": message_id, "status": _NOT_TERMINAL}, {"$set": update}
     )
