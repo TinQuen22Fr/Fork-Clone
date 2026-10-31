@@ -275,6 +275,29 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - Rendu frontend du statut par entrée d'outil : hors périmètre de l'étape 8. Le champ `status` est disponible côté client (événement `tool` et document persisté), mais l'affichage dédié (badge pending/running/success/error) reste à faire côté UI.
 - Statut `pending`/`running` en temps réel : non applicable ici, car les providers exécutent l'outil puis émettent le résultat d'un seul bloc. Le statut terminal (`success`/`error`) est celui qui est suivi par entrée ; le `pending`/`running` live nécessiterait de réécrire tous les providers (hors périmètre).
 
+### Étape 9 — Brique D : chaîne d'actions déclarative — FAIT le 2026-11-01 00:32:55 CET
+
+**Objet** : remplacer le pilotage **binaire** par `MAX_TOOL_ITERS` par une **chaîne d'actions explicite et inspectable**. Chaque étape du tour est désormais classée en **action typée** avec statut et raison, ce qui distingue enfin le **travail de l'agent** du **travail de plomberie/relance**. `MAX_TOOL_ITERS` est conservé **uniquement comme garde-fou de sécurité** (anti-boucle infinie) : il ne pilote plus la logique.
+
+**Modèle d'action** (`backend/server.py`) :
+- `CodingAgent` — cas nominal : l'agent raisonne (intention du LLM) et/ou exécute des outils de fond.
+- `ScriptRequest` — plomberie : salve d'outils **sans intention** du modèle (setup, commandes de fond).
+- `FollowUp` — relance/garde-fou : tour muet, limite d'itérations atteinte, message « Actions terminées ».
+
+**Implémentation** :
+- `_classify_action(step) -> (type, reason)` : classe une étape à partir de son intention et de sa salve d'outils. Les marqueurs de relance (`Reponse non finalisee`, `Trop d'etapes d'outils`, `Actions terminées`, `modele muet`…) priment et donnent `FollowUp`. **Ne lève jamais** : en cas de doute, `CodingAgent`.
+- `_new_step` enrichi des champs `action` (défaut `CodingAgent`) et `action_reason`.
+- Classification **figée à la clôture** de chaque étape (`_finalize_step`), une fois l'intention et les outils connus.
+- Champs **persistés** (`steps[].action`, `steps[].action_reason`, préservés par `_truncate_step_logs`) et **transmis au client** via l'événement `step_done` (recopie de `ev["step"]`, compatible Brique A).
+
+**Tests** : `backend/tests/test_action_chain.py` — 13 tests autonomes (sans réseau ni MongoDB) : classification des trois types d'action, priorité du marqueur `FollowUp`, enrichissement de `_new_step`, préservation des champs à la troncature, et vérification que `MAX_TOOL_ITERS` reste un entier garde-fou > 0.
+
+**Vérifications** :
+- `pytest test_action_chain.py` → **13 passed**.
+- Suite unitaire sans réseau (briques A/B/C/D/E/G + boucle d'outils) → **63 passed**.
+- `import server` → OK ; `py_compile` → OK ; `git diff --check` → propre.
+- **Non vérifié** : affichage frontend d'un badge d'action par étape (hors périmètre ; les champs sont disponibles côté client mais sans rendu dédié). Les boucles internes `MAX_TOOL_ITERS` des 11 providers n'ont pas été réécrites : conformément au plan, le compteur reste un garde-fou et la chaîne d'actions est modélisée au niveau de l'orchestrateur `_run_generation`.
+
 ---
 
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés

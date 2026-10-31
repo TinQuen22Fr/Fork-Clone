@@ -5912,12 +5912,65 @@ def _derive_tool_status(tool_entry: dict) -> str:
         return "success"
 
 
+# Brique D : chaine d'actions declarative.
+# Chaque etape est classee en action typee avec un statut et une raison, ce qui
+# rend la boucle inspectable/persistable et distingue le travail de l'agent
+# (CodingAgent) du travail de plomberie/relance (ScriptRequest / FollowUp).
+# `MAX_TOOL_ITERS` reste un simple garde-fou de securite : il ne pilote plus la
+# logique, il n'empeche que les boucles d'outils infinies.
+ACTION_CODING = "CodingAgent"       # travail de l'agent : texte + outils de fond
+ACTION_SCRIPT = "ScriptRequest"     # plomberie : salve d'outils sans intention LLM
+ACTION_FOLLOWUP = "FollowUp"        # relance/garde-fou : tour muet, limite atteinte
+
+# Marqueurs de relance/garde-fou emis comme `delta` par les providers.
+_FOLLOWUP_MARKERS = (
+    "reponse non finalisee",
+    "réponse non finalisée",
+    "trop d'etapes d'outils",
+    "trop d'étapes d'outils",
+    "actions terminées",
+    "actions terminees",
+    "la tâche a nécessité beaucoup",
+    "modele muet",
+    "modèle muet",
+)
+
+
+def _classify_action(step: dict) -> tuple[str, str]:
+    """Classe une etape en action typee `(type, reason)`.
+
+    - `FollowUp`  : l'intention porte un marqueur de relance/garde-fou (tour
+      muet, limite d'iterations atteinte, message « Actions terminees »).
+    - `ScriptRequest` : l'etape execute des outils sans intention propre du LLM
+      (salve de plomberie : setup, commandes de fond).
+    - `CodingAgent`   : cas nominal, l'agent raisonne (intention) et agit.
+    Ne leve jamais : en cas de doute, `CodingAgent`.
+    """
+    try:
+        intention = (step.get("intention") or "").strip()
+        tools = step.get("tools") or []
+        low = intention.lower()
+        for marker in _FOLLOWUP_MARKERS:
+            if marker in low:
+                return ACTION_FOLLOWUP, "relance ou garde-fou (tour muet / limite)"
+        if tools and not intention:
+            return ACTION_SCRIPT, "salve d'outils sans intention du modele"
+        if tools:
+            return ACTION_CODING, "raisonnement du modele + execution d'outils"
+        return ACTION_CODING, "raisonnement du modele"
+    except Exception:  # noqa: BLE001
+        return ACTION_CODING, "classification par defaut"
+
+
 def _new_step(index: int, intention: str) -> dict:
     return {
         "index": index,
         "intention": (intention or "").strip(),
         "tools": [],
         "status": "running",
+        # Brique D : action typee de la chaine declarative (fixee a la cloture).
+        "action": ACTION_CODING,
+        "action_reason": "",
         "created_at": now_iso(),
     }
 
@@ -6018,6 +6071,11 @@ async def _run_generation(
         if not has_content:
             current = None
             return
+        # Brique D : fige l'action typee de l'etape maintenant que son
+        # intention et sa salve d'outils sont connues.
+        action, reason = _classify_action(current)
+        current["action"] = action
+        current["action_reason"] = reason
         if message_id:
             finished = await _persist_step(database, message_id, current)
             # On emet l'evenement de fin d'etape : le client cloture le cadre
