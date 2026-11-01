@@ -298,6 +298,23 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 - `import server` → OK ; `py_compile` → OK ; `git diff --check` → propre.
 - **Non vérifié** : affichage frontend d'un badge d'action par étape (hors périmètre ; les champs sont disponibles côté client mais sans rendu dédié). Les boucles internes `MAX_TOOL_ITERS` des 11 providers n'ont pas été réécrites : conformément au plan, le compteur reste un garde-fou et la chaîne d'actions est modélisée au niveau de l'orchestrateur `_run_generation`.
 
+### Étape 10 — Brique F : session reprenable côté provider — FAIT le 2026-11-01 00:38:33 CET
+
+**Objet.** Remplacer la relance par renvoi de tout l'historique par une **vraie reprise de session côté provider**, là où l'API le permet. Seul le transport OpenAI **Responses** (`/responses`) l'autorise nativement via `previous_response_id` ; les transports `/chat/completions` et `/messages` restent inchangés (leurs API n'exposent pas de reprise par identifiant).
+
+**Fichiers.** `backend/server.py` (config + payload + boucle `/responses`), `backend/tests/test_session_resume.py` (13 tests), consignation ici.
+
+**Logique.**
+- Flag `enable_provider_session_resume` (`ENABLE_PROVIDER_SESSION_RESUME`, défaut `True`).
+- Payload `/responses` : ajout de `store: true` (le provider mémorise la réponse), prérequis de la reprise.
+- Boucle `/responses` de `_generate_opencode` : à chaque tour réussi, mémorisation de `data["id"]` dans `prev_response_id`. Au tour suivant, si la reprise est active et l'id posé, le payload envoie **`previous_response_id` + le seul delta** (`function_call_output` des outils), au lieu de reconstruire tout l'`input`. Moins de tokens, contexte rechargé côté provider.
+- **Repli transparent** : si l'API ne renvoie pas d'`id` (ou `id` vide), on retombe sur le comportement actuel (historique complet). `resume_delta` est initialisé défensivement à `base_messages`.
+- La reprise ne s'applique **qu'au transport `/responses`** ; `resume_session` est faux ailleurs.
+
+**Vérifications.** `pytest test_session_resume.py` → 13 passed. Suite unitaire sans réseau (briques A/B/C/D/E/F/G + boucle d'outils) → 76 passed. `import server` → OK ; `py_compile` → OK ; `git diff --check` → propre.
+
+- **Non vérifié** : enchaînement réel contre l'API du provider (dépend de fournisseurs externes ; nécessite une clé OpenCode et un modèle `/responses` live). Les tests valident le **contrat du payload** (présence de `store`, forme `previous_response_id` + delta, extraction de l'id), pas le dialogue HTTP de bout en bout. Les transports `/chat` et `/messages` continuent d'utiliser la relance textuelle `EMPTY_TURN_NUDGE` (leurs API ne supportent pas la reprise par id).
+
 ---
 
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés

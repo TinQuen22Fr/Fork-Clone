@@ -319,6 +319,12 @@ class Settings:
         self.enable_tools: bool = _env_bool("ENABLE_TOOLS", True)
         # Brique G : reality checks automatiques (scripts <projet>/checks/).
         self.enable_reality_checks: bool = _env_bool("ENABLE_REALITY_CHECKS", True)
+        # Brique F : reprise de session cote provider (OpenAI Responses :
+        # previous_response_id). Repli transparent sur l'historique complet si
+        # l'API ne renvoie pas d'id de reponse.
+        self.enable_provider_session_resume: bool = _env_bool(
+            "ENABLE_PROVIDER_SESSION_RESUME", True
+        )
         self.claude_system_prompt: str = _env(
             "CLAUDE_SYSTEM_PROMPT",
             "Tu es Claude Unchained Forge, un assistant IA direct, franc et sans "
@@ -3701,6 +3707,11 @@ def _opencode_payload(
             body["instructions"] = system_prompt
         if tools_enabled:
             body["tools"] = RESPONSES_TOOLS
+        # Brique F : session reprenable. `store: true` permet au provider de
+        # memoriser la reponse et d'enchainer le tour suivant via
+        # `previous_response_id` (voir boucle /responses de _generate_opencode).
+        if settings.enable_provider_session_resume:
+            body["store"] = True
         return "/responses", body
 
     body = {"model": model, "max_tokens": settings.claude_max_tokens}
@@ -3874,12 +3885,27 @@ async def _generate_opencode(
                 answer = None
                 failed = False
                 retry_other_transport = False
+                # Brique F : reprise de session cote provider (/responses).
+                # `prev_response_id` memorise l'id du dernier tour ; tant qu'il
+                # est pose, on n'envoie que le delta (resultats d'outils) au lieu
+                # de tout l'historique, via `previous_response_id`.
+                prev_response_id: Optional[str] = None
+                resume_delta: list = base_messages  # repli defensif
+                resume_session = (
+                    transport == "responses"
+                    and settings.enable_provider_session_resume
+                )
 
                 for iteration in range(MAX_TOOL_ITERS):
                     path, payload = _opencode_payload(
                         transport, model_name, messages, system_prompt,
                         settings.enable_tools,
                     )
+                    if resume_session and prev_response_id:
+                        # Reprise : seul le delta est transmis, le provider
+                        # recharge le contexte depuis `previous_response_id`.
+                        payload["previous_response_id"] = prev_response_id
+                        payload["input"] = resume_delta
                     try:
                         logger.info(
                             "Appel OpenCode (modele %s, transport %s, iter %d)...",
@@ -3914,6 +3940,10 @@ async def _generate_opencode(
                         break
 
                     turn = _opencode_extract_turn(transport, data)
+                    if resume_session:
+                        # Id de la reponse courante : base du prochain tour.
+                        new_id = data.get("id") if isinstance(data, dict) else None
+                        prev_response_id = new_id or None
                     if turn["tool_calls"] and settings.enable_tools:
                         outputs = []
                         for tc in turn["tool_calls"]:
@@ -3933,10 +3963,17 @@ async def _generate_opencode(
                                 ],
                             })
                         elif transport == "responses":
-                            messages = messages + (turn.get("output") or []) + [
+                            tool_outputs = [
                                 {"type": "function_call_output", "call_id": tc["id"], "output": out}
                                 for tc, out in zip(turn["tool_calls"], outputs)
                             ]
+                            if resume_session and prev_response_id:
+                                # Reprise : le provider connait deja le tour
+                                # precedent, on ne renvoie que les sorties d'outils.
+                                resume_delta = tool_outputs
+                            else:
+                                # Repli (pas d'id renvoye) : historique complet.
+                                messages = messages + (turn.get("output") or []) + tool_outputs
                         else:  # chat
                             msg = turn.get("message") or {}
                             messages.append({
