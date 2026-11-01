@@ -315,6 +315,16 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 
 - **Non vérifié** : enchaînement réel contre l'API du provider (dépend de fournisseurs externes ; nécessite une clé OpenCode et un modèle `/responses` live). Les tests valident le **contrat du payload** (présence de `store`, forme `previous_response_id` + delta, extraction de l'id), pas le dialogue HTTP de bout en bout. Les transports `/chat` et `/messages` continuent d'utiliser la relance textuelle `EMPTY_TURN_NUDGE` (leurs API ne supportent pas la reprise par id).
 
+### Étape 11 — Brique H : journal de boucle — FAIT le 2026-11-01 02:20:31 CET
+
+- Ajout de la section `## Journal de boucle` (`Intention → Friction → Suite`, 3 puces par boucle, journal `vibes.md`) aux trois agents :
+  - `agents/vibe-coder.md` — section **6. Journal de boucle** (analyse → modification → vérification).
+  - `agents/vibe-planner.md` — journal d'analyse avec mention explicite que consigner `vibes.md` ne contrevient pas à la lecture seule du code.
+  - `agents/vibe-reviewer.md` — journal d'audit (périmètre / preuves manquantes / prochain constat ou verdict).
+- Zéro code touché, conformément à la brique H (gain de traçabilité et d'amélioration continue).
+- Vérifications : `git diff --check` sur `agents/` → propre. Contenu relu ligne à ligne.
+- **Non vérifié** : aucune exécution nécessaire (brique 100 % rédactionnelle, pas de build ni de tests).
+
 ---
 
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés

@@ -48,3 +48,11 @@ Terminer par un verdict unique : **REJET**, **CORRECTIONS REQUISES** ou **ACCEPT
 - Markdown propre, une section par niveau de gravité.
 - Pas de bavardage, pas de préambule.
 - Blocs de code uniquement pour les preuves ou les commandes de reproduction.
+
+
+## Journal de boucle
+- À chaque passe d'audit, consigner 3 puces dans `vibes.md` :
+  - **Intention** : le périmètre audité.
+  - **Friction** : preuves manquantes ou vérifications non exécutables.
+  - **Suite** : le prochain constat à creuser ou le verdict.
+- Journal factuel et daté, sans bavardage.

@@ -27,3 +27,11 @@
 - Une action à la fois : commande, puis résultat, puis action suivante.
 - Pas de texte d'introduction ni de conclusion inutile.
 - Les blocs de code portent un langage et contiennent uniquement le code ou la commande.
+
+
+## 6. Journal de boucle
+- À chaque boucle (analyse → modification → vérification), consigner 3 puces dans `vibes.md` :
+  - **Intention** : ce que tu t'apprêtes à faire, atomique et borné.
+  - **Friction** : ce qui bloque, ralentit ou reste non vérifié.
+  - **Suite** : la prochaine action unique.
+- Journal factuel et daté, sans bavardage.
