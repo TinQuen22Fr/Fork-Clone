@@ -12,3 +12,8 @@
 - **Intention** : implémenter l'endpoint POST /api/github/commit-message + bouton « Générer » dans GithubSaveDialog, génération déterministe du message conventionnel depuis le git diff réel.
 - **Friction** : yarn/eslint inutilisables (EACCES sur /home/quentin/.config, hors périmètre) → build via node_modules/vite/bin/vite.js ; bouton non testé en navigateur (preview Docker HS) et needs_project multi-projets non exécuté.
 - **Suite** : enregistrer le lot sur GitHub (server.py, GithubSaveDialog.jsx, test_commit_message.py, RAPPORT + vibes.md) puis valider le bouton au premier usage réel.
+
+## 2026-11-03 — Bandeau « Réseau indisponible » récurrent
+- **Intention** : fiabiliser le client HTTP pour que le bandeau ne s'affiche que sur vraie panne, pas sur micro-coupure/réveil d'onglet.
+- **Friction** : causes réelles = aucun `timeout` axios (requêtes pendantes → ERR_NETWORK) + retry limité à 1 essai/600 ms (insuffisant au réveil). Non testable en live faute d'env preview fonctionnel.
+- **Suite** : `timeout: 20000` ajouté ; retry GET idempotent avec backoff [400,900,1800] ms + prise en compte `ECONNABORTED`/timeout ; POST/PATCH/DELETE jamais rejoués. Build vite OK (33.77s). → Enregistrer sur GitHub.

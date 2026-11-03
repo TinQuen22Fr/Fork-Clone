@@ -28,6 +28,9 @@ function cleanDoubleSlashes(url) {
 const api = axios.create({
   baseURL: API,
   withCredentials: true,
+  // Un appel ne doit jamais rester pendu indefiniment : au-dela de ce delai,
+  // on echoue proprement (et le retry ci-dessous prend le relais sur les GET).
+  timeout: 20000,
   // Les donnees sont toujours fraiches cote serveur : on interdit tout cache
   // navigateur/proxy qui renverrait un corps tronque ou perime.
   headers: { "Cache-Control": "no-store" },
@@ -45,26 +48,34 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Retry automatique : au rechargement force (Ctrl+Shift+R) ou lors d'un
-// reveil d'onglet, le navigateur annule parfois les requetes en vol, ce qui
-// produit un "Network Error" axios alors que le serveur va tres bien. On
-// rejoue UNE fois, uniquement les requetes idempotentes (GET), apres un court
-// delai. Aucun retry sur les POST/PATCH/DELETE : on ne veut jamais risquer un
-// doublon (envoi de message, suppression...).
+// Retry automatique : au rechargement force (Ctrl+Shift+R), au reveil d'onglet
+// ou lors d'une micro-coupure reseau, le navigateur annule/echoue parfois des
+// requetes alors que le serveur va tres bien. On rejoue, uniquement les
+// requetes idempotentes (GET), avec un backoff. Aucun retry sur les
+// POST/PATCH/DELETE : on ne veut jamais risquer un doublon (envoi, suppression).
+// Nombre max de tentatives supplementaires et delais (backoff) entre chacune.
+// Une micro-coupure WiFi ou un reveil d'onglet depasse souvent les 600 ms :
+// on retente donc plusieurs fois, en espacant, avant de declarer l'echec.
+const RETRY_BACKOFFS_MS = [400, 900, 1800];
+
 api.interceptors.response.use(
   (response) => response,
   async (err) => {
     const cfg = err?.config || {};
     const isNetwork =
       err?.code === "ERR_NETWORK" ||
+      err?.code === "ECONNABORTED" || // timeout axios
       err?.message === "Network Error" ||
+      (typeof err?.message === "string" && err.message.includes("timeout")) ||
       (typeof err?.message === "string" && err.message.includes("Failed to fetch"));
     const method = (cfg.method || "get").toLowerCase();
-    const retriable = isNetwork && method === "get" && !cfg.__forgeRetried;
-    // Une requete annulee volontairement (AbortController) ne doit pas etre rejouee.
-    if (retriable && err?.name !== "CanceledError" && err?.code !== "ERR_CANCELED") {
-      cfg.__forgeRetried = true;
-      await new Promise((r) => setTimeout(r, 600));
+    const canceled = err?.name === "CanceledError" || err?.code === "ERR_CANCELED";
+    const attempt = cfg.__forgeAttempt || 0;
+    const retriable =
+      isNetwork && method === "get" && !canceled && attempt < RETRY_BACKOFFS_MS.length;
+    if (retriable) {
+      cfg.__forgeAttempt = attempt + 1;
+      await new Promise((r) => setTimeout(r, RETRY_BACKOFFS_MS[attempt]));
       return api(cfg);
     }
     return Promise.reject(err);
