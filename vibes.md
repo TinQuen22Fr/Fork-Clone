@@ -17,3 +17,8 @@
 - **Intention** : fiabiliser le client HTTP pour que le bandeau ne s'affiche que sur vraie panne, pas sur micro-coupure/réveil d'onglet.
 - **Friction** : causes réelles = aucun `timeout` axios (requêtes pendantes → ERR_NETWORK) + retry limité à 1 essai/600 ms (insuffisant au réveil). Non testable en live faute d'env preview fonctionnel.
 - **Suite** : `timeout: 20000` ajouté ; retry GET idempotent avec backoff [400,900,1800] ms + prise en compte `ECONNABORTED`/timeout ; POST/PATCH/DELETE jamais rejoués. Build vite OK (33.77s). → Enregistrer sur GitHub.
+
+## 2026-11-03 — Message de commit : anti-bruit + corps plafonne
+- **Intention** : eviter que `.forge-context`/`vibes.md` tirent le commit vers `chore` nu, et plafonner le corps a 3 lignes.
+- **Friction** : le resume multi-fichiers reste `met a jour N fichiers` (deterministe assume, pas de devinette fix/feat). Non teste en preview live.
+- **Suite** : attente arbitrage utilisateur pour resume descriptif cas "1 fichier code + bruit", sinon enregistrer sur GitHub.

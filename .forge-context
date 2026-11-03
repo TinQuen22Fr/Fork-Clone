@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-03T14:00:01.777357+00:00
+# Dernière mise à jour : 2026-11-03T14:54:13.407927+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 8562bd2 feat(github): bouton « Générer » le message de commit depuis le diff réel.
+- Git : branche claude-ai, dernier commit de58c77 chore: met a jour 3 fichiers.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -103,4 +103,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] oui mais quand tu dit ou confirme que je dois faire enregistrer sur github tu n'as visiblement toujours pas compris qu'il faut me donner aussi le message de commit pour cette enregistrement car c'est moi qui dois l'entrer ça ne se fais pas par défaut (pour le moment et c'est un peu chiant d'ailleur !
   [regle] donc dans le cas présent tu ne m'a pas toujours confirmer le enregistrement sur github et donc logique que deux code peuvent etre différent.
   [regle] en cas de modification de upgrade.sh ou install.sh ou autre IMPORTANT, il faut que je les récupere dans /var/www/forge avant en utilisant SSH.
-  [regle] donc là oui pour l'instant je ne vais p
+  [regle] donc là oui pour l'instant je ne vais pas tester quoi que ce soit en preview (logiqu

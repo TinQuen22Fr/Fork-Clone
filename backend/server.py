@@ -8142,10 +8142,24 @@ async def github_branches(
 # Analyse le git diff REEL du projet (pas d'appel LLM : gratuit, instantane,
 # aucune fuite du diff vers un tiers) et produit "type(scope): resume".
 
+# Fichiers de contexte/journal : ils ne doivent pas influencer le type ni le
+# scope du commit (sinon un vrai changement de code est noye dans du "chore").
+_NOISE_FILES = {".forge-context", "vibes.md"}
+
+
+def _is_noise(path: str) -> bool:
+    name = path.strip().strip('"').rsplit("/", 1)[-1]
+    if name in _NOISE_FILES:
+        return True
+    # Fichier cache a la racine (ex: .forge-context, .gitignore).
+    return "/" not in path.strip().strip('"') and name.startswith(".")
+
+
 def _commit_scope_from_paths(paths: list[str]) -> str:
-    """Deduit un scope conventionnel depuis les chemins modifies."""
+    """Deduit un scope conventionnel depuis les chemins modifies (bruit exclu)."""
     tops: list[str] = []
-    for raw in paths:
+    signal = [p for p in paths if not _is_noise(p)] or list(paths)
+    for raw in signal:
         pth = raw.strip()
         if not pth:
             continue
@@ -8200,7 +8214,11 @@ def _commit_message_from_diff(status_lines: list[str], diff: str) -> str:
         else:
             modified.append(path)
 
-    lower = [p.lower() for p in all_paths]
+    # Pour deduire le TYPE, on ignore les fichiers de contexte/journal : ils ne
+    # doivent pas tirer tout le commit vers "chore". Si tout est du bruit, on
+    # retombe sur l'ensemble complet (message honnete plutot que vide).
+    signal_paths = [p for p in all_paths if not _is_noise(p)] or list(all_paths)
+    lower = [p.lower() for p in signal_paths]
 
     def _all(pred) -> bool:
         return bool(lower) and all(pred(p) for p in lower)
@@ -8239,20 +8257,25 @@ def _commit_message_from_diff(status_lines: list[str], diff: str) -> str:
     if len(line1) > 72:
         line1 = line1[:69].rstrip() + "..."
 
-    # Corps : liste des fichiers par categorie.
-    body_lines: list[str] = []
-    if added:
-        for p in added:
-            body_lines.append(f"- ajout: {p}")
-    if modified:
-        for p in modified:
-            body_lines.append(f"- modif: {p}")
-    if renamed:
-        for p in renamed:
-            body_lines.append(f"- renomme: {p}")
-    if deleted:
-        for p in deleted:
-            body_lines.append(f"- suppr: {p}")
+    # Corps : liste des fichiers par categorie, plafonnee a 3 lignes max.
+    # Au-dela, une ligne de synthese evite le commit a rallonge.
+    entries: list[str] = []
+    for p in added:
+        entries.append(f"- ajout: {p}")
+    for p in modified:
+        entries.append(f"- modif: {p}")
+    for p in renamed:
+        entries.append(f"- renomme: {p}")
+    for p in deleted:
+        entries.append(f"- suppr: {p}")
+
+    MAX_BODY = 3
+    if len(entries) > MAX_BODY:
+        kept = entries[: MAX_BODY - 1]
+        kept.append(f"- ...et {len(entries) - (MAX_BODY - 1)} autres")
+        body_lines = kept
+    else:
+        body_lines = entries
 
     parts = [line1]
     if body_lines:
