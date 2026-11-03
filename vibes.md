@@ -22,3 +22,22 @@
 - **Intention** : eviter que `.forge-context`/`vibes.md` tirent le commit vers `chore` nu, et plafonner le corps a 3 lignes.
 - **Friction** : le resume multi-fichiers reste `met a jour N fichiers` (deterministe assume, pas de devinette fix/feat). Non teste en preview live.
 - **Suite** : attente arbitrage utilisateur pour resume descriptif cas "1 fichier code + bruit", sinon enregistrer sur GitHub.
+
+## 2026-11-03 — Fausses coupures reseau / reponses qui sautent
+- **Intention** : supprimer les fausses deconnexions du client (bandeau "Reseau indisponible" + reponses SSE qui sautent) alors que la liaison est bonne (SSH OK en arriere-plan).
+- **Friction** : cause racine probable = buffering Nginx sur la route SSE (hors perimetre projet, infra OS). Corrige cote applicatif seulement : watchdog SSE 10s->45s, timeout axios 20s->60s, Cache-Control global retire. Non verifie en preview live (pas d'env fonctionnel ici) — reprise reelle non testable.
+- **Suite** : si le symptome persiste apres deploiement, verifier `proxy_buffering off` + `proxy_read_timeout` sur la route /api/chat/stream cote Nginx (action utilisateur, hors projet).
+
+## 2026-11-03 (suite) — Deploiement JAMAIS fait + anti-regression affichage
+- **Intention** : comprendre pourquoi "timeout of 20000ms" s'affiche encore alors que api.js est a 60000.
+- **Friction** : `git status` montre api.js en `M` (NON commite). Dernier commit = c4f6ec0 (commit-msg), PAS le fix reseau. => la prod tourne avec l'ancien code 20s. Le fix n'a jamais ete enregistre sur GitHub ni deploye par upgrade.sh.
+- **Ajout** : reconcileMessages (Chat.jsx) protege contre l'ecrasement de l'affichage par une liste serveur partielle lors d'une resync (le "debut de message qui saute"). Build OK.
+- **Suite** : enregistrer sur GitHub (api.js + Chat.jsx) PUIS upgrade.sh. Sans ca, rien ne change cote prod.
+
+## 2026-11-03 (suite 2) — Vraie cause du "message qui saute" trouvee
+- **Intention** : eliminer la resync qui ecrase l'affichage pendant la generation.
+- **Diagnostic** : Nginx (prod+preview) a DEJA proxy_buffering off + X-Accel-Buffering:no cote backend → piste "buffering reseau" FAUSSE, retiree. Vrai defaut : pendant le polling de reprise, GET /messages renvoie une liste SANS le message assistant encore en cours (non persiste) → reconcileMessages ecrasait l'affichage → message qui saute.
+- **Fix** : polling ne recharge /messages et ne reconcilie QU'UNE FOIS stillRunning==false. Ordre des branches post-boucle corrige (!finished avant !lastList.length) pour ne plus afficher "connexion coupee" a tort quand la generation continue.
+- **Friction** : aucune redirection HUB dans le code → le "basculement HUB" vient du Ctrl+Shift+R manuel qui recharge sur la route par defaut, pas d'un bug de navigation.
+- **Verifie** : build vite OK (built in 31.11s). NON verifie en prod, NON deploye.
+- **Suite** : utilisateur enregistre sur GitHub (api.js + Chat.jsx) puis upgrade.sh.

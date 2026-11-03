@@ -30,10 +30,7 @@ const api = axios.create({
   withCredentials: true,
   // Un appel ne doit jamais rester pendu indefiniment : au-dela de ce delai,
   // on echoue proprement (et le retry ci-dessous prend le relais sur les GET).
-  timeout: 20000,
-  // Les donnees sont toujours fraiches cote serveur : on interdit tout cache
-  // navigateur/proxy qui renverrait un corps tronque ou perime.
-  headers: { "Cache-Control": "no-store" },
+  timeout: 60000,
 });
 
 // Also attach Bearer token if stored (fallback for cookie issues)
@@ -90,7 +87,10 @@ export default api;
 export const STREAM_INTERRUPTED = "STREAM_INTERRUPTED";
 
 // Delai max sans aucun paquet (evenement ou ping) avant de couper le flux.
-const SSE_WATCHDOG_MS = 10000;
+// Large (45 s) pour tolerer un modele lent a repondre ou un proxy (Nginx)
+// qui bufferise : le backend envoie un heartbeat toutes les 4 s, donc un
+// silence de 45 s signale une vraie coupure, pas un simple ralentissement.
+const SSE_WATCHDOG_MS = 45000;
 
 /**
  * Consomme un flux SSE renvoye par un POST (EventSource ne gere pas POST).
@@ -130,7 +130,7 @@ async function readSSEStream(resp, { onEvent, state }) {
   };
 
   // Watchdog : le backend emet un ping SSE toutes les 4 s. Si plus aucun octet
-  // (evenement OU ping) n'arrive pendant SSE_WATCHDOG_MS, la connexion est
+  // (evenement OU ping) n'arrive pendant SSE_WATCHDOG_MS (45 s), la connexion
   // consideree comme coupee : on annule la lecture (declenche la reprise).
   let timedOut = false;
   let watchdog = null;
@@ -146,7 +146,7 @@ async function readSSEStream(resp, { onEvent, state }) {
     armWatchdog();
     while (true) {
       const { value, done } = await reader.read();
-      if (timedOut) throw new Error("SSE watchdog: aucun paquet depuis 10 s");
+      if (timedOut) throw new Error("SSE watchdog: aucun paquet depuis 45 s");
       if (done) break;
       if (state.terminalSeen) {
         // Fin de flux explicite : on ferme proprement sans attendre que le

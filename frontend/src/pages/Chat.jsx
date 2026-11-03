@@ -484,6 +484,17 @@ export default function Chat() {
   const reconcileMessages = useCallback((prev, next) => {
     if (!Array.isArray(next)) return prev;
     if (!prev.length) return next;
+    // Anti-regression d'affichage : si la liste serveur (next) est plus courte
+    // que l'affichage courant (prev) et ne contient aucun des messages recents
+    // de prev, c'est une resync partielle (flux coupe en plein vol). On ne doit
+    // PAS ecraser le message deja affiche par une liste incomplete -> sinon le
+    // debut de reponse « saute » sous les yeux de l'utilisateur.
+    if (next.length < prev.length) {
+      const nextIds = new Set(next.map((m) => m.id));
+      const tail = prev.slice(next.length);
+      const tailMissing = tail.every((m) => !nextIds.has(m.id));
+      if (tailMissing) return prev;
+    }
     const prevById = new Map();
     for (const m of prev) prevById.set(m.id, m);
     let changed = prev.length !== next.length;
@@ -1000,18 +1011,24 @@ export default function Chat() {
             const stillRunning = (st.data?.running || []).some(
               (t) => String(t.conversation_id) === String(convId)
             );
-            const { data } = await api.get(`/conversations/${convId}/messages`);
-            const list = Array.isArray(data) ? data : data?.messages || [];
-            lastList = list;
             synced = true;
-            const hasUser = list.some((m) => m.role === "user");
-            setMessages((prev) => {
-              const cleaned = prev.filter(
-                (m) => !(m.id === optimisticUser.id && hasUser)
-              );
-              return reconcileMessages(cleaned, list.length ? list : cleaned);
-            });
-            finished = !stillRunning;
+            // Tant que le tour tourne encore cote serveur, la reponse assistant
+            // n'est PAS persistee : recharger /messages renverrait une liste
+            // sans elle et ferait "sauter" le message en cours d'affichage.
+            // On ne resynchronise donc l'affichage QU'UNE FOIS le tour termine.
+            if (!stillRunning) {
+              const { data } = await api.get(`/conversations/${convId}/messages`);
+              const list = Array.isArray(data) ? data : data?.messages || [];
+              lastList = list;
+              const hasUser = list.some((m) => m.role === "user");
+              setMessages((prev) => {
+                const cleaned = prev.filter(
+                  (m) => !(m.id === optimisticUser.id && hasUser)
+                );
+                return reconcileMessages(cleaned, list.length ? list : cleaned);
+              });
+              finished = true;
+            }
           } catch (_) {
             // Reseau encore coupe : on retente au prochain cycle.
           }
@@ -1021,14 +1038,17 @@ export default function Chat() {
           setError(
             "Réseau instable — impossible de resynchroniser. Recharge la page pour revoir la conversation."
           );
+        } else if (!finished) {
+          // Le tour n'est pas termine dans la fenetre de polling : ce n'est PAS
+          // une perte, la generation continue cote serveur. On informe sans
+          // crier a l'erreur (lastList peut etre vide, c'est normal ici).
+          setNotice(
+            "La génération est toujours en cours côté serveur — la réponse apparaîtra à sa fin."
+          );
         } else if (!lastList.length) {
           setNotice("");
           setError(
             "La connexion a été coupée avant tout enregistrement. Réessaie ton message."
-          );
-        } else if (!finished) {
-          setNotice(
-            "La génération est toujours en cours côté serveur — la réponse apparaîtra à sa fin."
           );
         } else {
           setNotice("");
