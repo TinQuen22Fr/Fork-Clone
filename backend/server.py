@@ -7002,6 +7002,12 @@ class GithubPushRequest(BaseModel):
     force: bool = False  # push --force-with-lease (ecrase la branche distante)
 
 
+class GithubCommitMessageRequest(BaseModel):
+    """Requete du bouton « generer le message de commit » (previsualisation)."""
+    project: Optional[str] = None
+    conversation_id: Optional[str] = None
+
+
 # =========================================================================
 # Chiffrement au repos du jeton GitHub (E4)
 # =========================================================================
@@ -8128,6 +8134,175 @@ async def github_branches(
         raise HTTPException(status_code=400, detail="Format attendu : owner/repo.")
     branches = await _gh_api(token, f"/repos/{repo}/branches", {"per_page": 100})
     return [b.get("name") for b in branches if b.get("name")]
+
+
+# =========================================================================
+# Generation deterministe d'un message de commit conventionnel (bouton UI)
+# =========================================================================
+# Analyse le git diff REEL du projet (pas d'appel LLM : gratuit, instantane,
+# aucune fuite du diff vers un tiers) et produit "type(scope): resume".
+
+def _commit_scope_from_paths(paths: list[str]) -> str:
+    """Deduit un scope conventionnel depuis les chemins modifies."""
+    tops: list[str] = []
+    for raw in paths:
+        pth = raw.strip()
+        if not pth:
+            continue
+        # Les chemins avec espaces peuvent etre entre guillemets (git -z non utilise).
+        pth = pth.strip('"')
+        parts = pth.split("/")
+        if parts and parts[0]:
+            tops.append(parts[0])
+    if not tops:
+        return ""
+    uniq = sorted(set(tops))
+    if len(uniq) == 1:
+        top = uniq[0]
+        mapping = {
+            "frontend": "frontend",
+            "backend": "backend",
+            "deploy": "deploy",
+            "agents": "agents",
+            "tests": "tests",
+        }
+        return mapping.get(top, top)
+    return ""
+
+
+def _commit_message_from_diff(status_lines: list[str], diff: str) -> str:
+    """Compose un message Conventional Commits a partir du diff reel.
+
+    status_lines : sortie de `git status --porcelain` (XY path).
+    diff         : texte du diff (staged ou worktree) pour le corps.
+    """
+    added: list[str] = []
+    modified: list[str] = []
+    deleted: list[str] = []
+    renamed: list[str] = []
+    all_paths: list[str] = []
+
+    for line in status_lines:
+        if not line or len(line) < 3:
+            continue
+        xy = line[:2]
+        rest = line[3:].strip()
+        # Renommage : "old -> new"
+        path = rest.split(" -> ")[-1].strip().strip('"') if "->" in rest else rest.strip('"')
+        all_paths.append(path)
+        code = xy.replace(" ", "")
+        if "R" in code:
+            renamed.append(path)
+        elif "D" in code:
+            deleted.append(path)
+        elif "A" in code or "?" in code:
+            added.append(path)
+        else:
+            modified.append(path)
+
+    lower = [p.lower() for p in all_paths]
+
+    def _all(pred) -> bool:
+        return bool(lower) and all(pred(p) for p in lower)
+
+    # Type conventionnel, deduit du diff reel.
+    if _all(lambda p: p.endswith(".md") or p.endswith(".txt") or "/docs/" in p or p.startswith("docs/")):
+        ctype = "docs"
+    elif _all(lambda p: "test" in p.split("/")[0] or "/tests/" in p or p.startswith("tests/") or "test_" in p.rsplit("/", 1)[-1]):
+        ctype = "test"
+    elif added and not modified and not deleted:
+        ctype = "feat"
+    elif deleted and not added and not modified:
+        ctype = "chore"
+    else:
+        ctype = "chore"
+
+    scope = _commit_scope_from_paths(all_paths)
+    head = f"{ctype}({scope})" if scope else ctype
+
+    n = len(all_paths)
+    if n == 1:
+        subject = all_paths[0].rsplit("/", 1)[-1]
+        if added:
+            summary = f"ajoute {subject}"
+        elif deleted:
+            summary = f"supprime {subject}"
+        elif renamed:
+            summary = f"renomme {subject}"
+        else:
+            summary = f"met a jour {subject}"
+    else:
+        summary = f"met a jour {n} fichiers"
+
+    # Resume <= 72 caracteres, impératif, sans point final.
+    line1 = f"{head}: {summary}"
+    if len(line1) > 72:
+        line1 = line1[:69].rstrip() + "..."
+
+    # Corps : liste des fichiers par categorie.
+    body_lines: list[str] = []
+    if added:
+        for p in added:
+            body_lines.append(f"- ajout: {p}")
+    if modified:
+        for p in modified:
+            body_lines.append(f"- modif: {p}")
+    if renamed:
+        for p in renamed:
+            body_lines.append(f"- renomme: {p}")
+    if deleted:
+        for p in deleted:
+            body_lines.append(f"- suppr: {p}")
+
+    parts = [line1]
+    if body_lines:
+        parts.append("\n".join(body_lines))
+    return "\n\n".join(parts)
+
+
+@api_router.post("/github/commit-message")
+async def github_commit_message(
+    payload: GithubCommitMessageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Previsualise un message de commit conventionnel depuis le diff reel.
+
+    N'ecrit rien, ne committe rien : sert uniquement a pre-remplir le champ
+    « Message de commit » de la boite « Enregistrer sur GitHub ».
+    """
+    work_dir, project_name = await resolve_project_dir(
+        payload.project, payload.conversation_id, current_user["id"]
+    )
+
+    def _run() -> dict:
+        work = Path(work_dir)
+        if not work.is_dir():
+            raise HTTPException(
+                status_code=500, detail=f"Repertoire projet introuvable: {work_dir}"
+            )
+        if not (work / ".git").exists():
+            # Aucun historique git encore : tout est "nouveau".
+            raise HTTPException(
+                status_code=400,
+                detail="Aucun depot git initialise dans ce projet.",
+            )
+        st = _git(["status", "--porcelain"], work_dir, timeout=30)
+        if st.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"git status: {st.stderr[:300]}")
+        status_lines = [l for l in st.stdout.splitlines() if l.strip()]
+        if not status_lines:
+            raise HTTPException(status_code=400, detail="Aucun changement a committer.")
+
+        # Diff pour le corps : worktree + nouveaux fichiers (tronque).
+        diff = _git(["diff"], work_dir, timeout=30).stdout
+        message = _commit_message_from_diff(status_lines, diff)
+        return {
+            "message": message,
+            "files": len(status_lines),
+            "project": project_name,
+        }
+
+    return await asyncio.to_thread(_run)
 
 
 @api_router.post("/github/push")

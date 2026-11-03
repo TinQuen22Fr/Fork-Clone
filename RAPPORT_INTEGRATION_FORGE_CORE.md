@@ -327,6 +327,25 @@ Les briques 4, 5, 6 sont le socle « stabilisation ». Les briques 7 à 11 sont 
 
 ---
 
+### Étape 12 — Bouton « Générer le message de commit » — FAIT le 2026-11-02 08:35:20 CET
+
+Fonctionnalité demandée : dans la boîte **« Enregistrer sur GitHub »**, un bouton **« Générer »** pré-remplit le champ *Message de commit* à partir du `git diff` **réel** du projet, juste avant de pousser. L'utilisateur reste libre d'éditer le message.
+
+- **Backend** (`backend/server.py`) :
+  - `GithubCommitMessageRequest` (`project`, `conversation_id`).
+  - `_commit_message_from_diff(status_lines, diff)` + `_commit_scope_from_paths(paths)` : génération **déterministe** (aucun appel LLM → gratuit, instantané, zéro fuite du diff vers un tiers). Type conventionnel déduit du diff réel (`docs` si uniquement `.md/.txt/docs`, `test` si uniquement tests, `feat` si uniquement des ajouts, sinon `chore`), scope depuis le dossier de tête, résumé impératif ≤ 72 caractères sans point final, corps listant les fichiers (ajout/modif/renomme/suppr).
+  - Endpoint `POST /api/github/commit-message` : résout le projet via `resolve_project_dir`, lit `git status --porcelain`, **refuse 400 si aucun changement** ou si pas de dépôt git, renvoie `{message, files, project}`. N'écrit rien, ne committe rien.
+- **Frontend** (`frontend/src/components/GithubSaveDialog.jsx`) :
+  - Bouton **« Générer »** (icône `Sparkles`, spinner `Loader2` pendant l'appel) à droite du label *Message de commit*.
+  - Handler `generateMessage()` → `api.post("/github/commit-message", {project, conversation_id})` → `setMessage(data.message)`. Désactivé si occupé, non configuré ou sans workspace. Erreurs via `formatApiError`.
+- **Tests** (`backend/tests/test_commit_message.py`) : 10 cas (docs/test/feat/mixte/longueur ≤ 72/scope mono/scope multi/corps/fichier unique/pas de point final) — **10 passés** sans réseau ni MongoDB.
+- **Vérifications** : `py_compile backend/server.py` OK ; `import server` OK ; `vite build` → **✓ built in 30.31s, 2025 modules transformés** (JSX valide) ; `git diff --check` propre.
+- **Non vérifié** : le bouton n'a pas été testé dans un navigateur réel (la preview Docker de ce projet ne démarre pas) ni le comportement `needs_project` multi-projets (nécessite exécution). À confirmer au premier usage.
+- **À pousser via « Enregistrer sur GitHub »** : `backend/server.py`, `frontend/src/components/GithubSaveDialog.jsx`, `backend/tests/test_commit_message.py`, `RAPPORT_INTEGRATION_FORGE_CORE.md`, `vibes.md`.
+  - Message de commit suggéré : `feat(github): bouton « Générer » le message de commit depuis le diff réel`
+
+---
+
 # 8. Annexe — Bascule des previews en conteneurs Docker isolés
 
 **Rédigé le 2026-10-19 21:54:25 CEST** — analyse de faisabilité et plan de mise en place.

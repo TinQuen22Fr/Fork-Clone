@@ -13,6 +13,7 @@ import {
   GitBranch,
   FolderGit2,
   UploadCloud,
+  Sparkles,
 } from "lucide-react";
 
 export const GithubSaveDialog = ({ onClose, conversationId }) => {
@@ -29,6 +30,7 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
   const [newRepoName, setNewRepoName] = useState("");
   const [privateRepo, setPrivateRepo] = useState(true);
   const [message, setMessage] = useState("");
+  const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
@@ -112,6 +114,22 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
       setError(formatApiError(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const generateMessage = async () => {
+    setGenerating(true);
+    setError("");
+    try {
+      const { data } = await api.post("/github/commit-message", {
+        project,
+        conversation_id: conversationId || null,
+      });
+      if (data?.message) setMessage(data.message);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -351,8 +369,25 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
               </label>
 
               <label className="block space-y-1">
-                <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
-                  Message de commit
+                <span className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+                    Message de commit
+                  </span>
+                  <button
+                    type="button"
+                    onClick={generateMessage}
+                    disabled={generating || busy || !status?.configured || !status?.workspace}
+                    data-testid="github-generate-message"
+                    title="Générer le message depuis les changements réels"
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-[0.15em] font-bold px-2 py-1 border-2 border-[#05d9e8]/50 text-[#05d9e8] hover:bg-[#05d9e8]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {generating ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
+                    Générer
+                  </button>
                 </span>
                 <textarea
                   value={message}
