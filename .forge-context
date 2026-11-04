@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-03T15:29:54.000695+00:00
+# Dernière mise à jour : 2026-11-04T21:57:43.670829+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit c4f6ec0 feat(commit-msg): scope anti-bruit + corps plafonne a 3 lignes.
+- Git : branche claude-ai, dernier commit db549f7 fix(client): stoppe les fausses coupures et le message qui saute. Ne resynchronise l'affichage qu'une fois le tour termine cote serveur (evite l'ecrasement du flux en cours); timeout axios 20s->60s, watchdog SSE 10s->45s, Cache-Control global retire..
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -85,6 +85,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] on va rester comme ça concernant les majeures pour ne pas tanter le diable.
   [regle] réponse en court, erreur de désynchronisation, début de message qui saute, sa fait croire que l'agent attend, Ctrl+Shift+R ne fonctionne pas ça râme, tu refait et là encore une nouvelle erreur sur le HUB alors que j'étais sur le chat/sujet Fork-Clone...
   [regle] // Les donnees sont toujours fraiches cote serveur : on interdit tout cache
   [regle] c'est déjà fait et upgrade.sh executer, mais toujours pareil.
@@ -102,5 +103,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Le gros hic c'est que tu interprete mal ce que je dit et te montre, tu extrapole sans réflechir vraiment ni vouloir comprendre à la vue des éléments qu'il y a un bug c'est sure mais surtout que l'installation est pourtant indiquer comme FINIS même si ton log ne retourne pas les choses jusqu'au bout !
   [regle] d'ailleur là c'est toujours en installation et journal vide !
   [regle] sauf que mêm au bout de 10 mn toujours installation et rien d'autre !
-  [regle] avant l'étape 2 il faut récuper en ssh le script upgrade.sh (dejà dit) .
-  [regle] oui mais quand tu dit ou confirme que je dois faire enregistrer sur github tu n'as visiblement toujours pas compris qu'il faut me donner aussi le message de commit pour cette enregistrement car c'est moi qui dois l'entrer ça ne se fais pas par 
+  [regle] avant l'étape 2 il faut récuper en ssh le script upgr

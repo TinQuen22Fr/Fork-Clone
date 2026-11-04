@@ -41,3 +41,27 @@
 - **Friction** : aucune redirection HUB dans le code → le "basculement HUB" vient du Ctrl+Shift+R manuel qui recharge sur la route par defaut, pas d'un bug de navigation.
 - **Verifie** : build vite OK (built in 31.11s). NON verifie en prod, NON deploye.
 - **Suite** : utilisateur enregistre sur GitHub (api.js + Chat.jsx) puis upgrade.sh.
+
+## 2026-11-03 (suite 3) — Migration React 19.0.0 -> 19.3.1 (frontend)
+- **Intention** : bump react + react-dom de 19.0.0 a 19.3.1 (mise a jour mineure, API additives : ViewTransition, Fragment Refs, Trusted Types ; aucun breaking change).
+- **Friction** : le backend n'est PAS en React (FastAPI/Python) -> migration cote frontend uniquement. Cache npm global /home/quentin/.npm inaccessible (droits, hors perimetre) -> contourne via --cache ./.npm-cache (puis supprime). Install scripts esbuild bloques (allowScripts) : sans effet, build OK.
+- **Suite** : verifie en preview apres deploiement ; enregistrer sur GitHub + upgrade.sh si validation.
+
+## 2026-11-03 (suite 3) — Migration React 19.0.0 -> 19.3.1 (frontend)
+- **Intention** : migrer React du frontend vers 19.3.1 ; clarifier la demande "backend React" (hors-sujet : backend = Python/FastAPI).
+- **Friction** : React 19.3.1 existe bien (npm latest) ; package.json/node_modules/lockfile deja alignes sur 19.3.1 (migration paquets deja effective). Backend sans React -> rien a migrer. Pas de reseau npm sortant.
+- **Verifs** : aucune API retiree React 19 dans src/ (pas de ReactDOM.render, defaultProps, propTypes) ; createRoot present dans main.jsx. Build vite OK (built in 45.02s, 2025 modules, 0 erreur).
+- **Suite** : enregistrer sur GitHub puis upgrade.sh pour deployer.
+
+## 2026-11-03 (suite 4) — MAJ dependances frontend (lot sur, compatibles React 19.3.1 + Node 26)
+- **Intention** : mettre a jour les deps frontend vers les dernieres versions COMPATIBLES entre elles, sans breaking change ; laisser les majeures risquees de cote.
+- **Fait** : bump de ~45 paquets (tout Radix, @tanstack/react-query 5.106, react-router-dom 7.18.5, react-hook-form 7.91, @hookform/resolvers 5.2.2, recharts 3.10.1, axios 1.21, sonner/swr/date-fns/dayjs/input-otp/tailwind-merge/postcss/autoprefixer/@types/lodash/eslint-plugin-react). Aucun ERESOLVE. Build vite OK (built in 31.60s, 0 erreur, 2035 modules). Backup dans /tmp/*.bak.
+- **Friction** : cache npm global /home/quentin/.npm inaccessible (droits) -> contourne avec --cache ./.npm-cache (supprime apres). Majeures NON appliquees (breaking) : tailwindcss 3->4, zod 3->4, framer-motion 11->14, react-day-picker 8->10, react-resizable-panels 3->4, vite 6->8, eslint 9->10, @eslint/js 10, eslint-plugin-react-hooks 7, globals 17, lucide-react 0->1, @vitejs/plugin-react 6, @hookform/resolvers 7. Non verifie en runtime navigateur, non deploye.
+- **Suite** : attendre l'arbitrage de l'utilisateur sur les majeures, puis enregistrer sur GitHub + upgrade.sh.
+
+## 2026-11-03 (suite 5) — Modernisation forwardRef -> ref prop (React 19)
+- **Intention** : supprimer les 135 `forwardRef` des 38 composants `src/components/ui/*` (deprecie React 19), `ref` devenant une prop normale.
+- **Methode** : script Node AST (@babel/parser+traverse+generator deja dans node_modules), applique par 4 lots avec build vite de controle apres chaque lot. Preuve prealable sur switch.jsx validee.
+- **Resultat** : 0 forwardRef restant dans src/. Build final `✓ built in 28.61s`, 0 erreur. 38 fichiers ui modifies. Script temporaire supprime (non tracke). Backup /tmp/ui.bak.
+- **Friction** : lint eslint inexploitable (config v9 flat absente du projet, pre-existant) -> build vite = reference. Babel reformate le style JSX (reflow + `;`), fonctionnel identique. Non verifie : runtime navigateur reel. Non deploye.
+- **Suite** : attendre arbitrage utilisateur -> fournir message de commit, enregistrer sur GitHub, lancer upgrade.sh sur Dedibox.
