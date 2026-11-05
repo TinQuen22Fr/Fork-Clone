@@ -65,3 +65,16 @@
 - **Resultat** : 0 forwardRef restant dans src/. Build final `✓ built in 28.61s`, 0 erreur. 38 fichiers ui modifies. Script temporaire supprime (non tracke). Backup /tmp/ui.bak.
 - **Friction** : lint eslint inexploitable (config v9 flat absente du projet, pre-existant) -> build vite = reference. Babel reformate le style JSX (reflow + `;`), fonctionnel identique. Non verifie : runtime navigateur reel. Non deploye.
 - **Suite** : attendre arbitrage utilisateur -> fournir message de commit, enregistrer sur GitHub, lancer upgrade.sh sur Dedibox.
+
+## 2026-11-03 (suite 6) — Code-splitting / optimisation temps de chargement
+- Intention : reduire le bundle unique de 474 K pour accelerer la 1ere charge (plainte wifi/ordi).
+- Mesure initiale : index 474 K + markdown 117 K + react 50 K, tout charge d'un bloc meme sur /login.
+- Leviers appliques :
+  * App.jsx : React.lazy + Suspense sur les pages Login et Chat (fallback = spinner typing-dots).
+  * vite.config.js : manualChunks(id) affine -> react / router / markdown / motion / radix / tanstack / vendor.
+  * Correction warning "Circular chunk vendor->react->vendor" : react pur + scheduler isoles, react-router separe en chunk "router".
+- Levier ECARTE (volontaire) : lazy sur ChatMessage inutile (page Chat affiche toujours des messages -> gain nul, UX degradee).
+- Resultat build : react 223K / markdown 128K / vendor 121K / Chat 102K / router 38K / tanstack 29K / index 10K / Login 4K. 0 erreur, 0 warning circulaire.
+- Gain : /login ne charge plus Chat (102K) ni markdown (128K) ; ~55% plus leger avant connexion ; meilleur cache par chunk apres upgrade.sh.
+- Friction : runtime navigateur non verifie (a confirmer apres deploiement). Backups /tmp/App.jsx.bak, /tmp/vite.config.js.bak.
+- Suite : commit + push GitHub + upgrade.sh sur la Dedibox.

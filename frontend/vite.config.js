@@ -37,10 +37,15 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1200,
       rollupOptions: {
         output: {
-          manualChunks: {
-            react: ["react", "react-dom", "react-router-dom"],
-            markdown: ["react-markdown"],
-            motion: ["framer-motion"],
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return;
+            if (/[\\/]react[\\/]/.test(id) || /[\\/]react-dom[\\/]/.test(id) || /[\\/]scheduler[\\/]/.test(id)) return "react";
+            if (/[\\/]react-router/.test(id) || /[\\/]@remix-run[\\/]/.test(id)) return "router";
+            if (id.includes("react-markdown") || id.includes("remark") || id.includes("mdast") || id.includes("micromark") || id.includes("unist") || id.includes("hast") || id.includes("vfile") || id.includes("unified")) return "markdown";
+            if (id.includes("framer-motion")) return "motion";
+            if (id.includes("@radix-ui")) return "radix";
+            if (id.includes("@tanstack")) return "tanstack";
+            return "vendor";
           },
         },
       },

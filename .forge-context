@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-04T21:57:43.670829+00:00
+# Dernière mise à jour : 2026-11-05T00:38:15.940220+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit db549f7 fix(client): stoppe les fausses coupures et le message qui saute. Ne resynchronise l'affichage qu'une fois le tour termine cote serveur (evite l'ecrasement du flux en cours); timeout axios 20s->60s, watchdog SSE 10s->45s, Cache-Control global retire..
+- Git : branche claude-ai, dernier commit 76def25 chore(frontend): maj dependances compatibles + modernisation React 19 (forwardRef -> ref prop).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -103,4 +103,5 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Le gros hic c'est que tu interprete mal ce que je dit et te montre, tu extrapole sans réflechir vraiment ni vouloir comprendre à la vue des éléments qu'il y a un bug c'est sure mais surtout que l'installation est pourtant indiquer comme FINIS même si ton log ne retourne pas les choses jusqu'au bout !
   [regle] d'ailleur là c'est toujours en installation et journal vide !
   [regle] sauf que mêm au bout de 10 mn toujours installation et rien d'autre !
-  [regle] avant l'étape 2 il faut récuper en ssh le script upgr
+  [regle] avant l'étape 2 il faut récuper en ssh le script upgrade.sh (dejà dit) .
+  [regle] oui mais quand tu dit ou confirme que je dois faire enregistrer sur github tu n'as visiblement toujours pas compris qu'il faut
