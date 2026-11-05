@@ -2774,6 +2774,31 @@ async def load_history_docs(
         .to_list(max(1, settings.history_load_limit))
     )
     docs.reverse()
+    # --- Allegement payload : resume leger des outils ---
+    # Les details complets (output, input) sont charges a la demande via
+    # GET /messages/{id}/details quand l'utilisateur ouvre l'accordeon.
+    for doc in docs:
+        ts = doc.get("tool_steps") or []
+        if ts:
+            doc["tool_steps_count"] = len(ts)
+            doc["tool_steps_summary"] = [
+                {"tool": t.get("tool", "?")} for t in ts
+            ]
+            doc["tool_steps"] = []
+        st = doc.get("steps") or []
+        if st:
+            doc["steps_count"] = len(st)
+            doc["steps_summary"] = []
+            for step in st:
+                tools = step.get("tools") or []
+                doc["steps_summary"].append({
+                    "index": step.get("index"),
+                    "intention": step.get("intention"),
+                    "status": step.get("status"),
+                    "tool_count": len(tools),
+                    "tool_names": [t.get("tool", "?") for t in tools],
+                })
+            doc["steps"] = []
     return docs
 
 
@@ -5033,6 +5058,7 @@ async def get_messages(
     conv_id: str,
     limit: int = Query(MESSAGES_PAGE_DEFAULT, ge=1, le=MESSAGES_PAGE_MAX),
     before: Optional[str] = Query(None, max_length=64),
+    after: Optional[str] = Query(None, max_length=64),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -5042,8 +5068,12 @@ async def get_messages(
     """
     database = get_db()
     flt: dict = {"conversation_id": conv_id}
-    if before:
+    if before and after:
+        flt["created_at"] = {"$lt": before, "$gt": after}
+    elif before:
         flt["created_at"] = {"$lt": before}
+    elif after:
+        flt["created_at"] = {"$gt": after}
     # Verification d'appartenance et lecture des messages en parallele (au lieu
     # de deux aller-retours Mongo successifs). Rien n'est renvoye si la
     # conversation n'est pas a l'utilisateur.
@@ -5061,7 +5091,45 @@ async def get_messages(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     docs.reverse()
+    # --- Allegement payload : on retire les output lourds des outils ---
+    # Les details complets sont disponibles via GET /messages/{id}/details.
+    for doc in docs:
+        for ts in doc.get("tool_steps") or []:
+            if "output" in ts:
+                ts["output"] = None
+        for step in doc.get("steps") or []:
+            for tool in step.get("tools") or []:
+                if "output" in tool:
+                    tool["output"] = None
     return docs
+
+
+
+@api_router.get("/messages/{message_id}/details")
+async def get_message_details(
+    message_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Renvoie un message unique avec tous ses champs (tool_steps.output,
+    steps.tools.output inclus).  Utilise par le frontend quand l'utilisateur
+    ouvre l'accordeon d'un message pour consulter les sorties d'outils.
+    """
+    database = get_db()
+    doc = await database.messages.find_one(
+        {"id": message_id},
+        {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Message not found")
+    # Verification d'appartenance via la conversation
+    conv = await database.conversations.find_one(
+        {"id": doc.get("conversation_id"), "user_id": current_user["id"]},
+        {"_id": 1},
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return doc
 
 
 @api_router.patch("/conversations/{conv_id}")

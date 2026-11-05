@@ -507,8 +507,12 @@ export default function Chat() {
       // Champs dont un changement doit forcer le re-rendu du message.
       const same =
         old.content === m.content &&
-        old.tool_steps === m.tool_steps &&
-        old.steps === m.steps &&
+        (old.tool_steps === m.tool_steps ||
+          (Array.isArray(old.tool_steps) && !old.tool_steps.length &&
+           Array.isArray(m.tool_steps) && !m.tool_steps.length)) &&
+        (old.steps === m.steps ||
+          (Array.isArray(old.steps) && !old.steps.length &&
+           Array.isArray(m.steps) && !m.steps.length)) &&
         old.feedback === m.feedback &&
         old.role === m.role &&
         old.updated_at === m.updated_at;

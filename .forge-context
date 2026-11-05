@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-05T00:38:15.940220+00:00
+# Dernière mise à jour : 2026-11-05T22:40:13.612275+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 76def25 chore(frontend): maj dependances compatibles + modernisation React 19 (forwardRef -> ref prop).
+- Git : branche claude-ai, dernier commit f42f7a6 perf(frontend): code-splitting pour accelerer la premiere charge.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -85,6 +85,9 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
+  [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
+  [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
   [regle] on va rester comme ça concernant les majeures pour ne pas tanter le diable.
   [regle] réponse en court, erreur de désynchronisation, début de message qui saute, sa fait croire que l'agent attend, Ctrl+Shift+R ne fonctionne pas ça râme, tu refait et là encore une nouvelle erreur sur le HUB alors que j'étais sur le chat/sujet Fork-Clone...
   [regle] // Les donnees sont toujours fraiches cote serveur : on interdit tout cache
@@ -101,7 +104,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] je viens de te dire que je l'ai fait et que c'était à la suite de ça que ça mettait toujours en installation...
   [regle] bref pour l'instant ça indique toujours en installations.
   [regle] Le gros hic c'est que tu interprete mal ce que je dit et te montre, tu extrapole sans réflechir vraiment ni vouloir comprendre à la vue des éléments qu'il y a un bug c'est sure mais surtout que l'installation est pourtant indiquer comme FINIS même si ton log ne retourne pas les choses jusqu'au bout !
-  [regle] d'ailleur là c'est toujours en installation et journal vide !
-  [regle] sauf que mêm au bout de 10 mn toujours installation et rien d'autre !
-  [regle] avant l'étape 2 il faut récuper en ssh le script upgrade.sh (dejà dit) .
-  [regle] oui mais quand tu dit ou confirme que je dois faire enregistrer sur github tu n'as visiblement toujours pas compris qu'il faut
+  [regle] d'ailleur là c'est tou

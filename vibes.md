@@ -78,3 +78,35 @@
 - Gain : /login ne charge plus Chat (102K) ni markdown (128K) ; ~55% plus leger avant connexion ; meilleur cache par chunk apres upgrade.sh.
 - Friction : runtime navigateur non verifie (a confirmer apres deploiement). Backups /tmp/App.jsx.bak, /tmp/vite.config.js.bak.
 - Suite : commit + push GitHub + upgrade.sh sur la Dedibox.
+
+## 2026-11-03 (suite 7) — Diagnostic "chargement conversations hyper long"
+- **Intention** : trouver pourquoi le chargement des conversations est très lent.
+- **Friction** : `api.js` n'était pas le bon chemin (c'est `src/lib/api.js`). Mongo local interrogé en lecture seule via pymongo pour mesurer sans lire de contenu.
+- **Suite** : corriger get_messages (ne plus renvoyer tool_steps/steps intégraux), activer gzip nginx, puis limiter le poll 8s.
+
+## 2026-11-03 (suite 8) — Allègement payload conversations (correctif perf)
+
+- **Intention** : réduire le payload JSON de `GET /conversations/{id}/messages` de 1-2 Mo à ~100-300 Ko en strippant les `output`+`input` des outils du listing, chargement à la demande via nouvel endpoint `/messages/{id}/details`.
+- **Friction** : gzip Nginx (`application/json`) non activable sans sudo — instructions manuelles fournies. Runtime navigateur non vérifiable en preview.
+- **Suite** : déploiement via GitHub + `upgrade.sh`, activation gzip Nginx manuellement.
+
+### Fichiers modifiés
+- `backend/server.py` : strip agressif dans `get_messages` (tool_steps/steps vidés, résumé léger conservé) + nouvel endpoint `GET /messages/{id}/details` + param `after` sur get_messages
+- `frontend/src/components/ChatMessage.jsx` : import api, state `detailData`/`detailLoading`, `fetchDetails` appelé à l'ouverture accordéon, merge données résumées/complètes, loading indicators
+- `frontend/src/pages/Chat.jsx` : reconcileMessages comparateur corrigé pour empty arrays stables
+
+### Mesures réelles (base prod, 60 messages par conv)
+- conv 4ddce329 : 1958 Ko → 187 Ko (-90%)
+- conv fc0f29f9 : 1437 Ko → 181 Ko (-87%)
+- conv a0c4c62c : 1242 Ko → 137 Ko (-89%)
+- conv a97939ec : 1027 Ko → 300 Ko (-71%)
+- Moyenne : ~85% de réduction du payload
+
+### Gzip Nginx (à faire manuellement en SSH)
+```
+sudo sed -i 's/# gzip_vary on;/gzip_vary on;/' /etc/nginx/nginx.conf
+sudo sed -i 's/# gzip_proxied any;/gzip_proxied any;/' /etc/nginx/nginx.conf
+sudo sed -i 's/# gzip_comp_level 6;/gzip_comp_level 6;/' /etc/nginx/nginx.conf
+sudo sed -i 's/# gzip_types/gzip_types/' /etc/nginx/nginx.conf
+sudo nginx -t && sudo systemctl reload nginx
+```

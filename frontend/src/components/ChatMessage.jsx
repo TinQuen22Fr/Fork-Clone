@@ -8,7 +8,8 @@
  * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
+import api from "@/lib/api";
 import { speak, stopSpeech } from "@/lib/tts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -145,6 +146,28 @@ function ChatMessage({
   // conversation riche en sorties d'outils.
   const [toolsOpen, setToolsOpen] = useState(false);
   const [openSteps, setOpenSteps] = useState({});
+  // --- Chargement paresseux des sorties d'outils ---
+  // Le listing renvoie tool_steps/steps SANS output (allegement payload).
+  // On charge le detail complet du message uniquement a l'ouverture.
+  const [detailData, setDetailData] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const fetchDetails = useCallback(async () => {
+    if (detailData || detailLoading) return;
+    setDetailLoading(true);
+    try {
+      const { data } = await api.get(`/messages/${message.id}/details`);
+      setDetailData(data);
+    } catch (_) {
+      // En cas d'echec, on laisse les output a null (texte « Chargement… » reste)
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [message.id, detailData, detailLoading]);
+
+  // Merge : si les details sont charges, on utilise leurs tool_steps/steps
+  // (avec output complet) ; sinon on garde ceux du listing (output=null).
+  const toolSteps = detailData?.tool_steps ?? message.tool_steps;
+  const steps = detailData?.steps ?? message.steps;
 
   const copyUser = async () => {
     try {
@@ -273,7 +296,7 @@ function ChatMessage({
   const copyTools = async () => {
     try {
       await navigator.clipboard.writeText(
-        (message.tool_steps || []).map(formatStep).join("\n\n")
+        (toolSteps || []).map(formatStep).join("\n\n")
       );
       setCopiedTools(true);
       setTimeout(() => setCopiedTools(false), 1500);
@@ -354,12 +377,15 @@ function ChatMessage({
           )}
         </div>
 
-        {Array.isArray(message.steps) && message.steps.length > 0 && (
+        {(steps.length > 0 || message.steps_count > 0) && (
           <div
             className="mb-3 space-y-2"
             data-testid={`steps-${message.id}`}
           >
-            {message.steps.map((st, i) => {
+            {!steps.length && detailLoading && (
+              <div className="text-center text-gray-400 text-xs py-4 animate-pulse">Chargement des étapes…</div>
+            )}
+            {steps.map((st, i) => {
               const toolCount = Array.isArray(st.tools) ? st.tools.length : 0;
               const isDone = st.status === "done";
               return (
@@ -371,6 +397,7 @@ function ChatMessage({
                     const k = st.index ?? i;
                     const o = e.currentTarget.open;
                     setOpenSteps((prev) => (!!prev[k] === o ? prev : { ...prev, [k]: o }));
+                    if (o) fetchDetails();
                   }}
                 >
                   <summary className="px-3 py-1.5 flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
@@ -467,7 +494,7 @@ function ChatMessage({
                             </button>
                           </div>
                           <pre className="bg-black/50 p-2 text-[11px] text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
-                            {s.output}
+                            {s.output ?? (detailLoading ? "Chargement…" : "")}
                           </pre>
                         </div>
                       ))}
@@ -479,15 +506,19 @@ function ChatMessage({
           </div>
         )}
 
-        {Array.isArray(message.tool_steps) && message.tool_steps.length > 0 && (
+        {(toolSteps.length > 0 || message.tool_steps_count > 0) && (
           <details
             className="mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
             data-testid={`tool-steps-${message.id}`}
-            onToggle={(e) => setToolsOpen(e.currentTarget.open)}
+            onToggle={(e) => {
+              const open = e.currentTarget.open;
+              setToolsOpen(open);
+              if (open) fetchDetails();
+            }}
           >
             <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 text-[#ffd700] font-mono text-xs uppercase tracking-wider">
               <Terminal className="w-4 h-4" />
-              {message.tool_steps.length} outil(s) utilisé(s)
+              {(toolSteps.length || message.tool_steps_count || 0)} outil(s) utilisé(s)
               <span
                 role="button"
                 tabIndex={0}
@@ -515,7 +546,10 @@ function ChatMessage({
             </summary>
             {toolsOpen && (
             <div className="px-3 pb-3 space-y-3">
-              {message.tool_steps.map((s, i) => (
+              {!toolSteps.length && detailLoading && (
+                <div className="text-center text-gray-400 text-xs py-4 animate-pulse">Chargement des détails…</div>
+              )}
+              {toolSteps.map((s, i) => (
                 <div key={i} className="border-l-2 border-[#05d9e8]/50 pl-3">
                   <div className="text-[#05d9e8] font-mono text-xs mb-1 flex items-start gap-2">
                     <span className="flex-1 break-all">
@@ -536,7 +570,7 @@ function ChatMessage({
                     </button>
                   </div>
                   <pre className="bg-black/50 p-2 text-[11px] text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
-                    {s.output}
+                    {s.output ?? (detailLoading ? "Chargement…" : "")}
                   </pre>
                 </div>
               ))}
