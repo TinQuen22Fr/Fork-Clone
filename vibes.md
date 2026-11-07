@@ -249,3 +249,8 @@ Deux défauts nommés :
 - esbuild parse `Chat.jsx` + `api.js` → OK.
 - `test_reality_checks.py` → passe. `test_regression.py` → échecs 404 = intégration live hors scope.
 - **Non vérifié** : build Vite complet (cache npm root-owned, droits insuffisants) et rendu runtime réel.
+
+## 2026-11-07 — Tâche 1 (vibe-coder) : test parallélisation GET /models
+- **Intention** : lever le MAJEUR de l'audit a93184d — créer un test versionné prouvant le parallélisme de `_fetch_catalog`.
+- **Friction** : pas de `pytest-asyncio` dans le projet → suivi du pattern maison `asyncio.run()` dans un test sync (cf. test_tool_loop.py). Route HTTP non appelée (auth+providers réels) : la logique parallélisée est reproduite à l'identique du bloc server.py l.6875.
+- **Suite** : `backend/tests/test_models_parallel.py` créé, 4 tests PASSED en 3.04s. Lot a93184d clos côté dette de couverture. Reste en réserve : Tâche 2 (timeout 15→8s / préchauffe cache) conditionnée au ressenti prod.
