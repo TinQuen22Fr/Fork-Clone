@@ -6864,9 +6864,21 @@ async def list_models(current_user: dict = Depends(get_current_user)):
     catalogs: dict[str, list[str]] = {}
     # Claude expose un catalogue statique : on l'inclut explicitement pour que
     # le selecteur de modele precis s'affiche aussi pour ce provider.
-    for pid in ("claude", "gemini", "opencode", "ollama_cloud", *FREE_PROVIDER_IDS):
-        if _provider_available(pid):
-            catalogs[pid] = await _fetch_catalog(pid)
+    # Les catalogues sont recuperes EN PARALLELE : un provider externe lent ou
+    # injoignable (vu depuis le serveur) ne doit plus bloquer les autres ni faire
+    # pendre la requete jusqu'au timeout du client. Temps total = max, pas somme.
+    _catalog_ids = [
+        pid
+        for pid in ("claude", "gemini", "opencode", "ollama_cloud", *FREE_PROVIDER_IDS)
+        if _provider_available(pid)
+    ]
+    if _catalog_ids:
+        _results = await asyncio.gather(
+            *(_fetch_catalog(pid) for pid in _catalog_ids),
+            return_exceptions=True,
+        )
+        for pid, res in zip(_catalog_ids, _results):
+            catalogs[pid] = res if isinstance(res, list) else []
 
     providers = [
         {

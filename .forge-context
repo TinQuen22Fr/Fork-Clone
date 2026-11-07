@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-05T22:40:13.612275+00:00
+# Dernière mise à jour : 2026-11-07T20:48:54.627766+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit f42f7a6 perf(frontend): code-splitting pour accelerer la premiere charge.
+- Git : branche claude-ai, dernier commit c75dc54 perf: alleger le chargement des conversations (~85% de payload en moins).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -17,6 +17,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   .emergent/markers/.restore-complete
   .emergent/emergent.yml
   .emergent/system_deps.txt
+  PROJETS_AMELIORATIONS/
+  PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md
   Taches finalisées entièrement/
   Taches finalisées entièrement/forge-core.md
   agents/
@@ -64,8 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/docker/install-d1.sh
   deploy/docker/install-d10.sh
   deploy/docker/install-d2.sh
-  deploy/docker/install-d4.sh
-  deploy/docker/install-d5.sh
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
@@ -85,6 +85,13 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] - **Intention** : consigner que le bug `timeout of 60000ms exceeded` était fortement aggravé par des DNS défaillants côté box Free ; archiver le sujet « rendu blocs façon Emergent » hors du périmètre du correctif timeout.
+  [regle] au mieux consigne la chose cette fois ci dans un .md dans un répertoire "PROJETS_AMELIORATIONS" et on verra ensuite.
+  [regle] c'est usant tu corrige soit disant telle ou telle chose mais au final rien ça continue d'etre lent, ne pas fonctionner convenablement...
+  [regle] d'ailleurs je m'étonne que pour éviter un fichier genre server.py tu écrit toujours dedans sans par exemple écrire un nouveau .py pour ensuite coder dans server.py comme quoi sur telle passage pour telle outils, fonctionnalités etc...
+  [regle] il faut que telle ou telle fichier .py s’exécute...
+  [regle] même si X ou Y outils et que la réponse est toujours en court ça doit serte continuer même avec une interruption mais afficher le dernier retour connu avant l'actualisation et surtout compléter en allant à la suite de ce qui à était fait...
+  [regle] RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit.
   [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
   [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
   [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
@@ -96,12 +103,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] 11 - Interdiction de dire « ce n'est pas nécessaire », « le projet a déjà ce qu'il faut » ou équivalent.
   [regle] 161:- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
   [regle] 204: - Garantie terminale : à la reprise d'un tour **déjà clos**, l'événement `finished` est **toujours** livré, même si `after_seq` dépasse le dernier `seq` du tampon (sinon le client resterait bloqué sans savoir que le tour est fini).
-  [regle] la forge dans le workspace est ton ateliers, upgrade.sh est le script pour faire toute mise à jour de la forge (commande à faire dans /var/www/forge) de nouveau je rappel que ce script récupére le code enregistrer dans github EN LIGNE PAS EN LOCAL !
-  [regle] par contre toujours erreur 502 en preview au moment de vouloir se connecter !
-  [regle] Le journal devient (journal vide) sans rien d'autre et ça indique toujours preview dans le header en jaune avec le petit cercle qui tourne.
-  [regle] Retour icone header forge sur le projet Fork-Clone : il y a eu une fois un retour de log directement indiquant sois disant installation finit, mais d'une l'icone Backend est toujours en jaune et le mot Installation en jaune en haut.
-  [regle] il faut que ça fonctionne directement désormais, nous nous somme que trop attarder sur ce truc !
-  [regle] je viens de te dire que je l'ai fait et que c'était à la suite de ça que ça mettait toujours en installation...
-  [regle] bref pour l'instant ça indique toujours en installations.
-  [regle] Le gros hic c'est que tu interprete mal ce que je dit et te montre, tu extrapole sans réflechir vraiment ni vouloir comprendre à la vue des éléments qu'il y a un bug c'est sure mais surtout que l'installation est pourtant indiquer comme FINIS même si ton log ne retourne pas les choses jusqu'au bout !
-  [regle] d'ailleur là c'est tou
+  [regle] la forge dans le workspace est ton ateliers, upgrade.sh est le script pour faire toute mise à jour de la forge (commande à faire dans /

@@ -260,7 +260,9 @@ export default function Chat() {
     }
     lastStatusFetchRef.current = now;
     api
-      .get("/chat/status")
+      // Endpoint secondaire non bloquant : timeout court (8 s) pour qu'il ne
+      // pende jamais jusqu'au timeout global (60 s). Un echec reste silencieux.
+      .get("/chat/status", { timeout: 8000 })
       .then(({ data }) => {
         const seen = loadSeenTurns();
         const turns = data?.turns || [];
@@ -560,7 +562,21 @@ export default function Chat() {
         return reconcileMessages(prev, older.length ? [...older, ...list] : list);
       });
     } catch (e) {
-      setError(formatApiError(e));
+      // GET idempotent : un echec PUREMENT reseau (timeout axios 60 s,
+      // micro-coupure, reveil d'onglet) ne doit PAS afficher de bandeau rouge.
+      // Le retry axios a deja tente sa chance ; on resynchronisera au prochain
+      // poll. Seules les vraies erreurs metier (404, 500, auth) sont affichees.
+      const isNetwork =
+        e?.code === "ERR_NETWORK" ||
+        e?.code === "ECONNABORTED" ||
+        e?.message === "Network Error" ||
+        (typeof e?.message === "string" &&
+          (e.message.includes("timeout") || e.message.includes("Failed to fetch")));
+      if (isNetwork) {
+        console.warn("[loadMessages] echec reseau silencieux, resync au prochain poll:", e?.message);
+      } else {
+        setError(formatApiError(e));
+      }
     } finally {
       setLoadingMsgs(false);
     }

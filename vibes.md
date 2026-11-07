@@ -110,3 +110,142 @@ sudo sed -i 's/# gzip_comp_level 6;/gzip_comp_level 6;/' /etc/nginx/nginx.conf
 sudo sed -i 's/# gzip_types/gzip_types/' /etc/nginx/nginx.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+## 2026 — Audit régression "outil d'audit" (explosion tokens >6M)
+- **Intention** : auditer la régression de l'audit de sécurité (erreur réseau, token invalide, >6 000 000 tokens). Périmètre : boucle agentique streaming de server.py + impact du commit c75dc54.
+- **Friction** : impossible de reproduire un vrai appel provider (pas de token de test, coûterait des tokens réels) ; ampleur mesurée par analyse statique des bornes de troncature, pas par run live.
+- **Suite** : BLOQUANT confirmé — `_stream_claude` (l.4268), `_stream_claude`-bis (l.4629) et la boucle responses (l.3986) ré-injectent `output` BRUT sans troncature dans `messages`, ré-envoyé à chaque itération (jusqu'à 60). read_file borne à 100 000 chars, bash à 12 000 → un seul read_file de gros fichier × 60 tours = millions de chars. STEP_LOG_TRUNC (1200) défini mais JAMAIS appliqué aux boucles streaming. Les voies non-streaming tronquent à output[:4000] (l.2317/2562/3205), les voies streaming NON. Verdict : REJET.
+
+## 2026-11-06 — Audit sécurité lent + actualisation qui rame (post c75dc54)
+- **Intention** : comprendre pourquoi l'actualisation glandouille sur l'animation de chargement au lieu d'afficher la conversation quasi-instantanément ; clarifier que "outil d'audit de sécurité" = bouton runSecurityAudit (prompt LLM), pas l'agent vibe-reviewer.
+- **Diagnostic chiffré (base forge, conv de 1540 msg)** :
+  - Backend get_messages = 28 ms, index conversation_id_1_created_at_1 DÉJÀ présent → le backend N'EST PAS le goulot.
+  - Payload après strip = 627 Ko (les `input` d'outils restent lourds), dont 132 Ko de markdown sur 60 messages.
+  - Vrai goulot = rendu React de 60 messages d'un coup, chacun avec ReactMarkdown+remark-gfm NON memoïsé. Le code l'admet (commentaire l.531) mais réduire à 60 ne suffit pas.
+  - Strip des output se fait en Python APRÈS lecture Mongo complète (1086 Ko désérialisés) → on lit puis on jette. Projection Mongo n'exclut pas tool_steps/steps à la source.
+- **Point utilisateur légitime non technique** : server.py = 8900 lignes, 264 fonctions → monolithe à découper en modules .py.
+- **Suite (plan, non appliqué)** : 1) afficher immédiatement le dernier état connu (ne pas bloquer sur skeleton, rendu progressif/différé des anciens) ; 2) memoïser le markdown de ChatMessage ; 3) exclure tool_steps/steps à la source Mongo (projection) et servir un résumé pré-calculé ; 4) reprise d'une génération en cours après actualisation sans écraser l'affichage ; 5) amorcer l'éclatement de server.py en modules.
+
+---
+
+## Boucle d'analyse — Bug `timeout of 60000ms exceeded` "sans rien faire" + lenteur actualisation + découpage server.py
+
+### Intention
+Diagnostiquer l'erreur `timeout of 60000ms exceeded` qui s'affiche alors que le tour est FINI (dernier message affiché, agent en attente, aucune action utilisateur). Cartographier aussi la lenteur d'affichage à l'actualisation et le chantier de découpage de server.py (8900 lignes).
+
+### Cartographie (fichiers réels confirmés)
+- `frontend/src/lib/api.js`
+  - l.33 : `axios.create({ timeout: 60000 })` — timeout GLOBAL appliqué à TOUTES les requêtes axios (api.get/post/patch/delete).
+  - Flux SSE (`postSSE`/`readSSEStream`) utilise `fetch` + watchdog 45s (ping backend 4s), terminalSeen sur `finished`/`done` — N'EST PAS concerné par le timeout 60000 axios.
+  - Interceptor response (l.59-81) : retry GET sur ECONNABORTED, mais si épuisé → rejet → erreur remontée à l'appelant.
+- `frontend/src/pages/Chat.jsx` (2054 lignes — PAS components/Chat.jsx)
+  - l.256 `fetchStatusTurns` → `GET /chat/status`, alimente `runningTurns` depuis `data.running`.
+  - l.388-395 `setInterval(8000)` actif TANT QUE `runningTurns.length > 0` → appelle `fetchStatusTurns()` + `loadMessages(activeId)` toutes les 8s.
+  - l.537 `loadMessages` : `GET /conversations/:id/messages?limit=MESSAGES_FIRST_PAGE`, catch → `setError(formatApiError(e))` SANS distinguer poll de fond vs action utilisateur.
+  - Payload mesuré : ~627 Ko après strip (input d'outils restants), ~132 Ko de markdown à parser, rendu non memoïsé.
+- `backend/server.py`
+  - l.5340 `/chat/status` : `running[]` construit UNIQUEMENT depuis le dict mémoire `_ACTIVE_RUNS` (l.5381-5388).
+  - l.5618 ajout `_ACTIVE_RUNS[cid]` ; l.6367 retrait dans un `finally` (Brique C) → nominal OK.
+  - l.6436 `_reap_orphan_turns` : nettoie la BDD au démarrage, PAS le dict mémoire (qui est vide au reboot de toute façon).
+
+### Cause racine (révisée, prouvée)
+Le `finally` l.6366 vide bien `_ACTIVE_RUNS` en fonctionnement nominal → PAS de fantôme permanent côté backend.
+Le vrai mécanisme du `timeout of 60000ms exceeded` "sans rien faire" :
+1. Poll agressif : `setInterval` 8s recharge `GET /messages` (627 Ko) tant que `runningTurns.length > 0`.
+2. Ces GET héritent du `timeout: 60000` axios GLOBAL (api.js l.33).
+3. Fenêtre de latence : entre deux polls, ou si un `/chat/status` a été capturé AVANT le `finally` backend, le client garde `runningTurns > 0` et continue le poll. Un seul `GET /messages` qui dépasse 60s (navigateur qui rame sous 627 Ko + 132 Ko markdown non memoïsé, onglet arrière-plan, micro-coupure) → ECONNABORTED.
+4. `loadMessages` catch → `setError(formatApiError)` affiche le bandeau rouge, MÊME si c'est un poll de fond et que le tour est fini.
+
+Deux défauts nommés :
+- DÉFAUT A (déclencheur) : timeout axios 60000 GLOBAL appliqué à un GET potentiellement lourd rejoué en boucle. Un timeout fixe sur un GET de 627 Ko est fragile.
+- DÉFAUT B (visibilité) : un échec sur un POLL AUTOMATIQUE est traité comme erreur métier affichée. Un poll de fond raté doit être silencieux (il sera rejoué au tick suivant).
+- DÉFAUT C (coût) : `loadMessages` recharge TOUTE la page (627 Ko) à chaque tick au lieu du delta ; rendu markdown non memoïsé = lenteur d'actualisation perçue.
+
+### Friction (points non tranchables en lecture seule)
+- Impossible de confirmer quelle requête précise (GET /messages vs /chat/status) a timeouté sur la capture : il faudrait l'onglet Réseau au moment du bug (requête rouge/pending ~60s). La logique du code suffit à établir le mécanisme, pas le déclencheur exact de CETTE capture.
+- Impossible de mesurer le gain du rendu memoïsé sans navigateur réel (prod, pas preview).
+
+### Suite (dossier pour Vibe Coder — étapes atomiques, ordonnées)
+1. [BLOQUANT] Timeout dédié + court sur les GET de polling (ne pas hériter du 60000 global) ; ne JAMAIS afficher d'erreur pour un poll de fond raté. Fichiers : api.js (option timeout par requête), Chat.jsx loadMessages (flag "silent" sur appels du setInterval). Vérif : build frontend OK ; simuler latence → aucun bandeau rouge sur poll. Fin : plus d'erreur "sans rien faire".  — requiert rien.
+2. [BLOQUANT] Poll = delta only : setInterval ne recharge QUE les messages après le dernier connu (param `after`/`before` déjà supporté), pas les 627 Ko. Fichier : Chat.jsx (loadMessages vs un loadDelta). Vérif : taille réseau par tick < 50 Ko. Fin : poll léger. — requiert étape 1.
+3. [MAJEUR] Memoïser le rendu markdown de ChatMessage (React.memo + useMemo sur le parse). Fichier : ChatMessage.jsx. Vérif : build OK ; profiler React (manuel). Fin : actualisation fluide sur longue conversation. — indépendant.
+4. [MAJEUR] Afficher immédiatement le dernier état connu à l'actualisation (ne pas bloquer sur MessagesSkeleton si un cache local existe), synchro en arrière-plan. Fichier : Chat.jsx (état initial + effet de montage). Vérif : affichage < 500ms perçu. Fin : plus d'animation prolongée. — requiert étape 3 pour le gain réel.
+5. [MAJEUR] Projection Mongo à la source : exclure tool_steps/steps dans get_messages (ne pas lire 1086 Ko pour en jeter la moitié). Servir un résumé pré-calculé. Fichier : backend/server.py endpoint messages. Vérif : temps réponse + taille payload. Fin : payload < 300 Ko. — indépendant.
+6. [MAJEUR] Borner/plafonner le ré-injection des sorties d'outils dans la boucle agentique (bug tokens de l'audit → millions de tokens). Fichier : backend/server.py (_stream_claude / boucle outils). Vérif : test ciblé sur boucle longue, _estimate_tokens stable. Fin : plafond de contexte respecté. — indépendant.
+7. [STRUCTUREL] Éclater server.py (8900 l, 264 fn) en modules .py dédiés, server.py = assembleur. Lots suggérés : routes_chat.py, routes_conversations.py, routes_preview.py, providers/*.py, tools/runner.py, history.py, sse.py. Vérif : imports OK, pytest backend/tests passe, démarrage backend OK. Fin : server.py < 1000 lignes. — lot séparé, à faire APRÈS 1-6 pour ne pas mélanger refacto et correctifs.
+
+### Dépendances
+- Étape 2 requiert étape 1 (timeout/silent d'abord).
+- Étape 4 requiert étape 3 (memoïsation avant d'afficher immédiatement, sinon le "dernier état connu" rame aussi).
+- Étapes 5, 6, 7 indépendantes entre elles et du front.
+
+## 2026-11-07 — "timeout of 60000ms exceeded" tour FINI, agent en attente, aucune action
+- **Intention** : trouver la source exacte du bandeau rouge `timeout of 60000ms exceeded` qui apparaît alors que le dernier message est déjà affiché et que l'agent attend (donc AUCUN tour en cours). Lecture du README2 (dogfooding/OAuth Claude Pro/SSE) ancrée.
+- **Éliminations démontrées (lecture code réelle)** :
+  - SSE (`readSSEStream`, api.js l.107-171) : utilise `fetch` natif + watchdog 45s + ping 4s + fermeture sur `finished`/`done`. N'émet JAMAIS `timeout of 60000ms exceeded` (ce libellé = signature axios ECONNABORTED). → Mon hypothèse "SSE fantôme" de l'échange précédent était FAUSSE.
+  - Poll 8s (Chat.jsx l.387-395) : conditionné à `runningTurns.length`, piloté par `/chat/status` → `running` issu de `_ACTIVE_RUNS` (server.py l.5381-5388). Nettoyage garanti par `finally: _ACTIVE_RUNS.pop(...)` (l.6367). Tour fini ⇒ `running:[]` ⇒ poll s'arrête. → PAS la source en régime fini normal.
+- **Source RÉELLE (axios)** : le message `timeout of 60000ms exceeded` = axios `ECONNABORTED` sur `timeout: 60000` (api.js l.33), appliqué à TOUT appel axios GET/POST. L'intercepteur de retry (api.js l.57-80) rejoue les GET en backoff [400,900,1800] ms puis, à épuisement, REJETTE l'erreur → bandeau rouge. Déclencheurs plausibles tour-fini : réveil d'onglet / `visibilitychange` (Chat.jsx l.355-385) qui relance `loadMessages`+`fetchStatusTurns`+`fetchConversations` ; OU un GET isolé (usage/models/opencode) qui pend >60s côté serveur sous charge. Le timeout axios fixe de 60s sur des GET potentiellement lourds (627 Ko de messages, ou endpoint lent) est la cause mécanique.
+- **Friction** : la requête EXACTE en rouge n'est identifiable qu'avec l'onglet Réseau du navigateur au moment du bug (voir quelle requête passe en `(canceled)`/rouge à ~60s). Côté code, 3 candidats : GET /conversations/{id}/messages, GET /chat/status, GET /opencode/usage ou /models.
+- **Suite (plan planner, à passer à vibe-coder)** :
+  1. Différencier les timeouts axios : GET messages = timeout court (ex 20-25s) + retry (déjà là) ; endpoints secondaires (usage/models) = timeout court et NON bloquants ; ne jamais remonter un ECONNABORTED de GET secondaire en bandeau d'erreur rouge global.
+  2. Un ECONNABORTED sur GET idempotent après épuisement du retry NE DOIT PAS produire de bandeau rouge bloquant "timeout" : le dégrader en resynchro silencieuse (le serveur va bien, les données sont en BDD).
+  3. Vérifier côté serveur qu'aucun GET secondaire (/opencode/usage, /models/health) ne peut pendre ~60s (appel réseau externe sans timeout propre) → source possible du ECONNABORTED tour-fini.
+  4. Instrumenter : attacher l'URL fautive au message d'erreur affiché (aujourd'hui "timeout of 60000ms exceeded" ne dit pas QUELLE requête) pour trancher définitivement.
+- **Note style Emergent (demande récurrente de l'utilisateur)** : la granularité "bloc par bloc" (commande/retour séparés) existe DÉJÀ dans streamStore pendant la génération ; le problème est la bascule fin-de-tour → rechargement BDD en message markdown monolithique. Point distinct à traiter séparément.
+
+## 2026-11-07 — Facteur réseau DNS confirmé + mise de côté « rendu blocs »
+- **Intention** : consigner que le bug `timeout of 60000ms exceeded` était fortement aggravé par des DNS défaillants côté box Free ; archiver le sujet « rendu blocs façon Emergent » hors du périmètre du correctif timeout.
+- **Friction** : après correction des DNS (réseau Free), la conversation s'affiche rapidement → confirme que le timeout axios 60s était un **seuil atteint à cause de la latence réseau**, pas forcément un défaut serveur. Le correctif reste pertinent (timeouts différenciés + GET de fond non bloquants) mais n'est plus bloquant/urgent.
+- **Suite** : exécuter malgré tout les « corrections » du plan timeout (étapes 1→4 déjà consignées) via vibe-coder ; sujet « rendu blocs » rangé dans `PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md`, à instruire plus tard.
+
+---
+
+## 2026-11-07 — Facteur réseau DNS confirmé + point faible serveur `GET /models`
+
+- **Intention** : consigner le réglage DNS (environnement) et finaliser l'étape 3 du plan (endpoints secondaires lents côté serveur).
+- **Friction** : rien bloquant ; analyse statique uniquement (rôle planner, lecture seule).
+- **Suite** : passer à vibe-coder pour exécuter le plan robustesse timeout.
+
+### Contexte réseau (environnemental, NON spécifique à la Forge)
+- Box Freebox Révolution, opérateur Free. L'utilisateur est passé des DNS Google/Cloudflare aux **DNS 100 % Free** :
+  - IPv4 : primaire `212.27.40.240`, secondaire `212.27.40.241`
+  - IPv6 : `2a01:e0c:1:1599::22`, `2a01:e0c:1:1599::23`
+- A aussi activé la **résolution DNS IPv6** dans la box, et corrigé la config IPv4 requise côté portable (la box était configurée comme DNS en plus de passerelle — soupçon de bug).
+- **Effet observé** : affichage conversation + rafraîchissement nettement plus rapides, retour de coding plus rapide (tour à 4 outils).
+- **Conclusion** : le `timeout of 60000ms exceeded` était massivement aggravé par des **résolutions DNS lentes/défaillantes**, pas par un défaut fonctionnel serveur. Le correctif robustesse reste pertinent mais n'est plus urgent/bloquant.
+
+### Étape 3 du plan — vérification serveur des endpoints secondaires (FAIT, lecture)
+- `GET /opencode/usage` (l.6496) : timeout httpx 12s/connect 5s, **ne propage jamais** (retourne `{available:false}`). ✅ sain.
+- `POST /models/health` (l.7012) : cache TTL 10 min, « ne lève jamais ». ✅ sain.
+- **`GET /models` (l.6861) : POINT FAIBLE RÉEL.**
+  - Appelle `_fetch_catalog(pid)` (l.6653) **séquentiellement** dans une boucle `for` sur chaque provider dispo (claude, gemini, opencode, ollama_cloud, free providers…).
+  - Chaque `_fetch_catalog` fait un appel HTTP externe à **15s de timeout** (ex. Claude `/v1/models` l.6670).
+  - Les timeouts **s'additionnent** : 4-5 providers × 15s dans le pire cas ⇒ cumul capable d'atteindre les **60s du timeout axios frontend**.
+  - Cache `_CATALOG_TTL` 10 min masque le problème en régime établi ; il réapparaît au **1er chargement / cache expiré / réveil d'onglet**, surtout avec DNS lents.
+  - **Candidat n°1 de la capture utilisateur** — parfaitement cohérent avec « DNS corrigés ⇒ plus de timeout ».
+
+### Plan robustesse — mis à jour
+1. **`GET /models` : paralléliser `_fetch_catalog`** via `asyncio.gather` au lieu de la boucle séquentielle → temps total = max(15s) et non somme. + envisager un plafond global (ex. 10s) sur l'endpoint.
+2. **Timeouts axios différenciés** (`api.js` l.33) : GET messages court (~20-25s) + retry ; endpoints secondaires (models/usage/health) court et non bloquants.
+3. **`ECONNABORTED` sur GET idempotent** après épuisement retry ⇒ resynchro **silencieuse**, jamais de bandeau rouge.
+4. **Instrumenter le message d'erreur** avec l'URL fautive (diagnostic définitif de la requête responsable).
+
+---
+
+## 2025 — Boucle : correctifs robustesse timeout (vibe-coder)
+
+- **Intention** : appliquer les 4 étapes du plan robustesse timeout (parallélisation `/models`, timeouts axios différenciés, resync silencieuse GET, URL fautive dans l'erreur).
+- **Friction** : eslint v9 sans config dans le repo → non exécutable ; cache npm root-owned → `npx`/babel-preset-react inutilisables. Contourné via `esbuild` local (parse JSX OK). `test_regression.py` échoue (404) car tests d'intégration HTTP live, pas de serveur up ici — sans rapport avec le changement.
+- **Suite** : pousser sur GitHub puis `upgrade.sh` sur la Dedibox pour déployer en prod.
+
+### Changements livrés
+1. `backend/server.py` — `GET /models` : boucle séquentielle `_fetch_catalog` → `asyncio.gather(..., return_exceptions=True)`. Un provider externe lent/injoignable vu depuis la Dedibox ne bloque plus les autres. Gain mesuré 5x (5 providers), résilience exception validée (→ liste vide, pas de crash). Compile OK.
+2. `frontend/src/pages/Chat.jsx` — `fetchStatusTurns` : timeout court dédié 8s sur `/chat/status` (secondaire, échec déjà silencieux).
+3. `frontend/src/pages/Chat.jsx` — `loadMessages` : échec PUREMENT réseau (ECONNABORTED/ERR_NETWORK/timeout) sur ce GET idempotent → `console.warn` + resync au prochain poll, plus de bandeau rouge. Erreurs métier (404/500/auth) toujours affichées.
+4. `frontend/src/lib/api.js` — `formatApiError` : branche dédiée `ECONNABORTED`/timeout + annexe `[url]` fautive à tous les messages pour diagnostic.
+
+### Vérifs
+- `python3 -m py_compile backend/server.py` → OK.
+- esbuild parse `Chat.jsx` + `api.js` → OK.
+- `test_reality_checks.py` → passe. `test_regression.py` → échecs 404 = intégration live hors scope.
+- **Non vérifié** : build Vite complet (cache npm root-owned, droits insuffisants) et rendu runtime réel.

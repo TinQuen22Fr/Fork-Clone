@@ -258,6 +258,17 @@ export function formatApiError(err) {
     if (detail && typeof detail.msg === "string") return detail.msg;
     return String(detail);
   }
+  // URL fautive : on l'annexe au diagnostic pour reperer immediatement quel
+  // endpoint a echoue (ex. GET /models, /conversations/.../messages).
+  const faultyUrl = err?.config?.url || "";
+  const urlHint = faultyUrl ? ` [${faultyUrl}]` : "";
+  // Timeout axios (ECONNABORTED) : message explicite distinct du reseau coupe.
+  if (
+    err?.code === "ECONNABORTED" ||
+    (typeof err?.message === "string" && err.message.includes("timeout"))
+  ) {
+    return `Délai dépassé — le serveur a mis trop de temps à répondre. Réessaie.${urlHint}`;
+  }
   // Erreurs reseau brutes (axios "Network Error", fetch "Failed to fetch") :
   // message explicite en francais plutot que l'anglicisme cryptique.
   if (
@@ -265,7 +276,7 @@ export function formatApiError(err) {
     err?.code === "ERR_NETWORK" ||
     err?.message === "Failed to fetch"
   ) {
-    return "Réseau indisponible — le serveur ne répond pas. Vérifie ta connexion puis réessaie.";
+    return `Réseau indisponible — le serveur ne répond pas. Vérifie ta connexion puis réessaie.${urlHint}`;
   }
-  return err?.message || "Une erreur est survenue.";
+  return (err?.message || "Une erreur est survenue.") + urlHint;
 }
