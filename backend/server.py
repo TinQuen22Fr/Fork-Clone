@@ -558,6 +558,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_autostart_previews())
         asyncio.create_task(_reap_idle_previews())
         asyncio.create_task(_preview_housekeeping())
+        asyncio.create_task(_warm_catalog_cache())
 
     logger.info("Origines CORS autorisées : %s", settings.frontend_urls or "(aucune)")
     logger.info(
@@ -601,6 +602,30 @@ async def _seed_admin() -> None:
         logger.info("Compte admin créé : %s", settings.admin_email)
     else:
         logger.info("Compte admin déjà présent : %s", settings.admin_email)
+
+
+async def _warm_catalog_cache() -> None:
+    """Prechauffe le cache des catalogues au demarrage, en arriere-plan.
+
+    Objectif : le premier GET /models d'un client tape deja le cache au lieu
+    de declencher la decouverte distante (plusieurs appels HTTP). Les appels
+    sont paralleles et tolerants : un provider lent/injoignable n'empeche pas
+    les autres de se remplir. N'interrompt jamais le demarrage (best effort)."""
+    pids = [
+        pid
+        for pid in ("claude", "gemini", "opencode", "ollama_cloud", *FREE_PROVIDER_IDS)
+        if _provider_available(pid)
+    ]
+    if not pids:
+        return
+    try:
+        await asyncio.gather(
+            *(_fetch_catalog(pid) for pid in pids),
+            return_exceptions=True,
+        )
+        logger.info("Cache catalogue prechauffe : %d provider(s)", len(pids))
+    except Exception:  # noqa: BLE001
+        logger.exception("Prechauffe du cache catalogue impossible")
 
 
 app = FastAPI(title="Claude Unchained Forge API", lifespan=lifespan)
@@ -6668,7 +6693,7 @@ async def _fetch_catalog(pid: str) -> list[str]:
         if settings.claude_token:
             try:
                 async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(15.0, connect=5.0)
+                    timeout=httpx.Timeout(8.0, connect=5.0)
                 ) as http:
                     resp = await http.get(
                         "https://api.anthropic.com/v1/models",
@@ -6716,7 +6741,7 @@ async def _fetch_catalog(pid: str) -> list[str]:
 
     ids: list[str] = []
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as http:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as http:
             if pid == "gemini":
                 # Catalogue Gemini decouvert dynamiquement via l'API officielle
                 # (GET /v1beta/models). On ne garde que les modeles supportant

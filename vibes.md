@@ -254,3 +254,8 @@ Deux défauts nommés :
 - **Intention** : lever le MAJEUR de l'audit a93184d — créer un test versionné prouvant le parallélisme de `_fetch_catalog`.
 - **Friction** : pas de `pytest-asyncio` dans le projet → suivi du pattern maison `asyncio.run()` dans un test sync (cf. test_tool_loop.py). Route HTTP non appelée (auth+providers réels) : la logique parallélisée est reproduite à l'identique du bloc server.py l.6875.
 - **Suite** : `backend/tests/test_models_parallel.py` créé, 4 tests PASSED en 3.04s. Lot a93184d clos côté dette de couverture. Reste en réserve : Tâche 2 (timeout 15→8s / préchauffe cache) conditionnée au ressenti prod.
+
+## 2026-11-07 — Tâche 2 : optimisation chargement à froid /models
+- **Intention** : baisser le timeout unitaire des catalogues (15→8 s) et préchauffer le cache au démarrage pour que le 1er `GET /models` tape déjà le cache.
+- **Friction** : `test_regression.py` échoue (404) = tests d'intégration HTTP sur serveur live absent de l'atelier, hors périmètre. Préchauffe non observable en runtime depuis l'atelier (pas de backend up) → validée par test isolé (0,303 s parallèle, échec provider toléré).
+- **Suite** : commit + push GitHub, puis `upgrade.sh` en prod (manœuvre utilisateur). Observer un chargement à froid réel.
