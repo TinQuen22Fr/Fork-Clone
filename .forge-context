@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-10T18:43:23.737338+00:00
+# Dernière mise à jour : 2026-11-10T23:15:46.202907+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 2449bcc perf(models): timeout catalogue 15->8s + préchauffe du cache au démarrage.
+- Git : branche claude-ai, dernier commit 861d9bc fix(security/github): messages d'erreur génériques sur /github/* + log serveur du détail (F6).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -86,6 +86,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] au risque de vexer, désoler ça ne fonctionne pas : j'ai crer une erreur (capture) mais "journalctl -u forge-backend --since "$(systemctl show forge-backend -p ActiveEnterTimestamp --value)" | grep -i "git .* echec" " dans /var/www/forge (prod) nada rien n'est retourner...
   [regle] ne pas oublier que mon serveur est dans un datacenter en région parisienne et que pour communiquer avec les serveur nationaux de free ça utilise les backbone en 100% fibre !
   [regle] 7418: desormais les appels par type et on les parallelise via asyncio.gather.
   [regle] - **Intention** : consigner que le bug `timeout of 60000ms exceeded` était fortement aggravé par des DNS défaillants côté box Free ; archiver le sujet « rendu blocs façon Emergent » hors du périmètre du correctif timeout.
@@ -103,5 +104,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] c'est déjà fait et upgrade.sh executer, mais toujours pareil.
   [regle] Le gros probléme chez moi c'est que tu te crois TOUJOURS dans ton ecosystéme et tes propres applicatifs et plateforme en tout cas quand je prends Claude comme provider et un modéles dessus, mais ce n'est le cas tu n'ai pas sur claude.ai même si je passe par mon compte "pro"
   [regle] 11 - Interdiction de dire « ce n'est pas nécessaire », « le projet a déjà ce qu'il faut » ou équivalent.
-  [regle] 161:- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
-  [regle] 204: - Garantie terminale : à la reprise d'un tour **déjà clos**, l'événement `finished` est **touj
+  [regle] 161:- **Suite complète** : `pytest bac
