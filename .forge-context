@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-10T23:15:46.202907+00:00
+# Dernière mise à jour : 2026-11-10T23:26:22.852413+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 861d9bc fix(security/github): messages d'erreur génériques sur /github/* + log serveur du détail (F6).
+- Git : branche claude-ai, dernier commit 20c86a3 1526544546.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -104,4 +104,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] c'est déjà fait et upgrade.sh executer, mais toujours pareil.
   [regle] Le gros probléme chez moi c'est que tu te crois TOUJOURS dans ton ecosystéme et tes propres applicatifs et plateforme en tout cas quand je prends Claude comme provider et un modéles dessus, mais ce n'est le cas tu n'ai pas sur claude.ai même si je passe par mon compte "pro"
   [regle] 11 - Interdiction de dire « ce n'est pas nécessaire », « le projet a déjà ce qu'il faut » ou équivalent.
-  [regle] 161:- **Suite complète** : `pytest bac
+  [regle] 161:- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()
