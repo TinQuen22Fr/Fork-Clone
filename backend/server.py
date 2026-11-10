@@ -8406,7 +8406,7 @@ async def github_commit_message(
         work = Path(work_dir)
         if not work.is_dir():
             raise HTTPException(
-                status_code=500, detail=f"Repertoire projet introuvable: {work_dir}"
+                status_code=500, detail="Repertoire projet introuvable."
             )
         if not (work / ".git").exists():
             # Aucun historique git encore : tout est "nouveau".
@@ -8416,7 +8416,8 @@ async def github_commit_message(
             )
         st = _git(["status", "--porcelain"], work_dir, timeout=30)
         if st.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"git status: {st.stderr[:300]}")
+            logger.error("git status echec (%s): %s", work_dir, st.stderr[:500])
+            raise HTTPException(status_code=500, detail="Echec de la lecture de l'etat git.")
         status_lines = [l for l in st.stdout.splitlines() if l.strip()]
         if not status_lines:
             raise HTTPException(status_code=400, detail="Aucun changement a committer.")
@@ -8481,18 +8482,20 @@ async def github_push(
         work = Path(work_dir)
         if not work.is_dir():
             raise HTTPException(
-                status_code=500, detail=f"Repertoire projet introuvable: {work_dir}"
+                status_code=500, detail="Repertoire projet introuvable."
             )
         if not (work / ".git").exists():
             init = _git(["init", "-b", branch], work_dir)
             if init.returncode != 0:
+                logger.error("git init echec (%s): %s", work_dir, init.stderr[:500])
                 raise HTTPException(
-                    status_code=500, detail=f"git init: {init.stderr[:300]}"
+                    status_code=500, detail="Echec de l'initialisation du depot git."
                 )
 
         add = _git(["add", "-A"], work_dir)
         if add.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"git add: {add.stderr[:300]}")
+            logger.error("git add echec (%s): %s", work_dir, add.stderr[:500])
+            raise HTTPException(status_code=500, detail="Echec de l'indexation des fichiers (git add).")
 
         # Remote 'origin' sans jeton (le push utilise une URL authentifiee jetable).
         clean_remote = f"https://github.com/{repo}.git"
@@ -8512,8 +8515,9 @@ async def github_push(
                 "commit", "-m", message,
             ], work_dir)
             if commit.returncode != 0:
+                logger.error("git commit echec (%s): %s", work_dir, commit.stderr[:500])
                 raise HTTPException(
-                    status_code=500, detail=f"git commit: {commit.stderr[:300]}"
+                    status_code=500, detail="Echec de la creation du commit."
                 )
         rev = _git(["rev-parse", "--short", "HEAD"], work_dir)
         commit_sha = rev.stdout.strip()
@@ -8542,10 +8546,11 @@ async def github_push(
                         "Push refuse : la branche distante a des commits que le "
                         "workspace n'a pas. Choisis une autre branche, cree-en "
                         "une nouvelle, ou coche \"Forcer l'enregistrement\" "
-                        "pour ecraser la branche distante. Detail : " + err
+                        "pour ecraser la branche distante."
                     ),
                 )
-            raise HTTPException(status_code=502, detail=f"git push: {err}")
+            logger.error("git push echec (%s): %s", work_dir, err)
+            raise HTTPException(status_code=502, detail="Echec du push vers GitHub.")
 
         return {
             "ok": True,
@@ -8553,7 +8558,6 @@ async def github_push(
             "repo_created": created_repo,
             "branch": branch,
             "project": project_name,
-            "workspace": work_dir,
             "commit": commit_sha,
             "files_committed": len(files),
             "url": f"https://github.com/{repo}/tree/{branch}",

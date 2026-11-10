@@ -143,7 +143,22 @@ _Aucun risque moyen ouvert à ce jour._
 
 ## 🟢 Risques FAIBLES
 
-_Aucun risque faible ouvert à ce jour._
+### F6. Fuite de chemin absolu et de stderr git dans les erreurs des endpoints `/github/*` — ✅ RÉSOLU
+- **Fichier** : `backend/server.py`, endpoints `POST /github/commit-message` (l. ~8409, ~8419) et `POST /github/push` (l. ~8484, ~8490, ~8495, ~8516, ~8548).
+- **Constat** : plusieurs `HTTPException` renvoient au client le chemin système absolu du workspace et/ou la sortie d'erreur brute de git :
+  - `detail=f"Repertoire projet introuvable: {work_dir}"` (expose l'arborescence serveur, ex. `/var/www/forge/workspace/...`).
+  - `detail=f"git status: {st.stderr[:300]}"`, `git init`, `git add`, `git commit`, `git push` — renvoient la stderr git tronquée (chemins, config locale, détails d'infra) directement dans la réponse HTTP.
+  - La stderr de `git push` est bien passée par `_redact(..., token)` (le jeton n'y fuit pas — pas de régression E4), mais `_redact` ne masque que le token, **pas** les chemins ni les détails d'environnement.
+- **Impact** : fuite d'informations internes (arborescence, configuration git locale) à un client authentifié. Nature identique à F1 (déjà corrigé pour les endpoints de génération IA), mais F1 ne couvrait **pas** les endpoints GitHub, introduits/modifiés après son arbitrage (commits `8562bd2`, `e42a290` du 31/10–03/11). Ce n'est donc **pas une régression sur F1** mais une **nouvelle surface** du même type.
+- **Gravité** : FAIBLE. Instance mono-utilisateur authentifié ; la fuite reste bornée à l'administrateur légitime. Néanmoins incohérent avec la politique F1 déjà actée.
+- **Correctif à appliquer** : aligner ces endpoints sur la politique F1 — renvoyer au client un `detail` générique (ex. `"Echec de l'operation git. Consultez les logs du serveur."`) et tracer le détail complet (`work_dir`, `stderr`) via `logger.error(...)`/`logger.exception(...)` côté serveur uniquement. Conserver les messages métier utiles non sensibles (ex. « Aucun changement a committer », « Nom de branche invalide », le message 409 de push refusé reste acceptable mais devrait masquer les chemins du `err`).
+- **Statut** : identifié le 08/11/2026, **✅ RÉSOLU le 08/11/2026**.
+- **Correctif appliqué le 08/11/2026** (`backend/server.py`) :
+  - `POST /github/commit-message` et `POST /github/push` : tous les `HTTPException` qui exposaient `work_dir` ou la `stderr` git renvoient désormais un `detail` générique côté client (« Repertoire projet introuvable. », « Echec de la lecture de l'etat git. », « Echec de l'initialisation du depot git. », « Echec de l'indexation des fichiers (git add). », « Echec de la creation du commit. », « Echec du push vers GitHub. »).
+  - Le détail complet (`work_dir` + `stderr` tronquée à 500) est désormais tracé **côté serveur uniquement** via `logger.error("git <op> echec (%s): %s", work_dir, ...)`.
+  - Message 409 de push refusé : suppression du suffixe `" Detail : " + err` (qui pouvait contenir des chemins) ; le message métier d'orientation est conservé.
+  - Réponse de succès de `/github/push` : retrait de la clé `"workspace": work_dir` (chemin absolu, non consommée par le frontend `GithubSaveDialog.jsx`) pour ne plus exposer l'arborescence dans une réponse réseau.
+  - Aucune régression : logique métier, codes HTTP et messages non sensibles (« Aucun changement a committer », « Nom de branche invalide ») inchangés ; `_redact(..., token)` toujours en place (E4 intact) ; `logger` défini globalement (l. 153) ; `python3 -m py_compile backend/server.py` OK ; `pytest backend/tests/test_commit_message.py` 10/10 OK.
 
 ---
 

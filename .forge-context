@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-07T22:00:39.122565+00:00
+# Dernière mise à jour : 2026-11-10T18:43:23.737338+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 285bb28 test(models): couvre la parallélisation de _fetch_catalog (GET /models).
+- Git : branche claude-ai, dernier commit 2449bcc perf(models): timeout catalogue 15->8s + préchauffe du cache au démarrage.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -75,6 +75,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
   [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
   [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
+  [regle] RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit.
   [regle] en même temps je n'ai jamais rien demander de la sorte pour RAPPORT_PREVIEWS_DOCKER.md la dernière version en date sur mon GitHub où tout jusqu'à maintenant est à consigner est la version commit 1fb9980 Repartir de celle-là, la completer en conséquence sans reécrire celui-ci de bout en bout !
   [regle] OK l image ne tourne pas en root
   [regle] OK le wrapper ne mentionne pas docker.sock == D2 : règle sudoers ==
@@ -85,6 +86,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] ne pas oublier que mon serveur est dans un datacenter en région parisienne et que pour communiquer avec les serveur nationaux de free ça utilise les backbone en 100% fibre !
   [regle] 7418: desormais les appels par type et on les parallelise via asyncio.gather.
   [regle] - **Intention** : consigner que le bug `timeout of 60000ms exceeded` était fortement aggravé par des DNS défaillants côté box Free ; archiver le sujet « rendu blocs façon Emergent » hors du périmètre du correctif timeout.
   [regle] au mieux consigne la chose cette fois ci dans un .md dans un répertoire "PROJETS_AMELIORATIONS" et on verra ensuite.
@@ -92,7 +94,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] d'ailleurs je m'étonne que pour éviter un fichier genre server.py tu écrit toujours dedans sans par exemple écrire un nouveau .py pour ensuite coder dans server.py comme quoi sur telle passage pour telle outils, fonctionnalités etc...
   [regle] il faut que telle ou telle fichier .py s’exécute...
   [regle] même si X ou Y outils et que la réponse est toujours en court ça doit serte continuer même avec une interruption mais afficher le dernier retour connu avant l'actualisation et surtout compléter en allant à la suite de ce qui à était fait...
-  [regle] RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit.
   [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
   [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
   [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
@@ -103,5 +104,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Le gros probléme chez moi c'est que tu te crois TOUJOURS dans ton ecosystéme et tes propres applicatifs et plateforme en tout cas quand je prends Claude comme provider et un modéles dessus, mais ce n'est le cas tu n'ai pas sur claude.ai même si je passe par mon compte "pro"
   [regle] 11 - Interdiction de dire « ce n'est pas nécessaire », « le projet a déjà ce qu'il faut » ou équivalent.
   [regle] 161:- **Suite complète** : `pytest backend/tests` ne passe pas la collecte : `test_kokoro_optional.py` appelle `.rstrip()` sur `REACT_APP_BACKEND_URL` absent. Les tests préexistants n’ont donc pas été exécutés dans cette tentative.
-  [regle] 204: - Garantie terminale : à la reprise d'un tour **déjà clos**, l'événement `finished` est **toujours** livré, même si `after_seq` dépasse le dernier `seq` du tampon (sinon le client resterait bloqué sans savoir que le tour est fini).
-  [regle] la forge dans le workspace est ton ate
+  [regle] 204: - Garantie terminale : à la reprise d'un tour **déjà clos**, l'événement `finished` est **touj

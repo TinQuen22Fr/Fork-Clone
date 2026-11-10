@@ -259,3 +259,13 @@ Deux défauts nommés :
 - **Intention** : baisser le timeout unitaire des catalogues (15→8 s) et préchauffer le cache au démarrage pour que le 1er `GET /models` tape déjà le cache.
 - **Friction** : `test_regression.py` échoue (404) = tests d'intégration HTTP sur serveur live absent de l'atelier, hors périmètre. Préchauffe non observable en runtime depuis l'atelier (pas de backend up) → validée par test isolé (0,303 s parallèle, échec provider toléré).
 - **Suite** : commit + push GitHub, puis `upgrade.sh` en prod (manœuvre utilisateur). Observer un chargement à froid réel.
+
+## 2026-11-08 — Audit sécurité défensif (fenêtre 01/10 → 07/11)
+- **Intention** : auditer le code applicatif ajouté/modifié depuis le 01/10/2026 (server.py +3359/-336, preview_runtime.py +1140, tools/web_search.py nouveau), sur base AUDIT_SECURITE.md (tous points C1-F5 clos). Vérifier injection, secrets, failles web, permissions, erreurs ; détecter toute régression sur points clos.
+- **Friction** : 2FA (totp.py/auth_2fa.py) ajouté puis reverté (32d5ba1) → hors périmètre (code absent de HEAD). git attributes global non lisible (warning bénin). AUDIT_SECURITE.md non accessible en chemin relatif via read_file (lu via bash/absolu).
+- **Suite** : aucune régression détectée (E4 token toujours redacté+header, E1 verrou bash intact, XSS/CORS/JWT inchangés, _git sans shell=True, branch/repo validés regex, web_search/fetch_url passent par redact_secrets). 1 constat FAIBLE nouveau : fuite de chemin absolu (work_dir) et stderr git dans les detail HTTP des endpoints /github/* (pattern analogue à F1, non couvert par F1). Consigné F6. Verdict : CORRECTIONS REQUISES (1 faible).
+
+## 2026-11-08 — Correctif F6 (fuite chemin/stderr git dans /github/*)
+- **Intention** : aligner les endpoints `/github/commit-message` et `/github/push` sur la politique F1 — messages d'erreur génériques côté client, détail tracé côté serveur ; retirer la clé `workspace` (chemin absolu) de la réponse push.
+- **Friction** : tests `test_deps_regression.py` échouent sous `cd backend` (imports `backend.*` cassés + tests nécessitant un serveur live) — préexistant, hors périmètre ; vérifié via `test_commit_message.py` lancé depuis la racine (10/10 OK). `git` émet des warnings `~/.config/git/attributes` Permission denied (droits hôte, sans impact).
+- **Suite** : commit/push GitHub de la branche `claude-ai` puis déploiement prod via `upgrade.sh` (à la main de l'utilisateur).
