@@ -373,3 +373,8 @@ Deux défauts nommés :
 - **Intention** : renommer le sous-dossier `Finis/` interne au chantier en « Améliorations possibles après fin de chantier » (le `Finis/` interne était redondant avec le `Finis/` global).
 - **Friction** : warning git bénin (accès refusé à `~/.config/git/attributes`, hors projet, sans impact sur le `git mv`).
 - **Suite** : règle de cycle verrouillée — chantier terminé = déplacer le dossier entier de `En cours/` vers `PROJETS_AMELIORATIONS/Finis/`. Attente feu vert pour Phase B étape 4.
+
+## 2026-11-11 — Absorption du dossier "Taches finalisées entièrement"
+- **Intention** : ranger le chantier `forge-core.md` (ex-"Taches finalisées entièrement/") comme chantier terminé dans `PROJETS_AMELIORATIONS/Finis/forge-core/` et supprimer le dossier obsolète.
+- **Friction** : warnings `Permission denied` sur `~/.config/git/*` (config git globale hors projet) — sans impact, `git mv` et `rmdir` réussis.
+- **Suite** : feu vert attendu pour Phase B — étape 4 (alimentation backend de `blocks[]`).

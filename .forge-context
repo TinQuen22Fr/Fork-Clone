@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T17:13:35.096260+00:00
+# Dernière mise à jour : 2026-11-11T17:38:26.808327+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit c584767 Fix "Phase A" de PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md.
+- Git : branche claude-ai, dernier commit 54c2312 chore(projets-améliorations): réorganise le suivi des chantiers + cadre l'étape 3 (Phase B).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -105,4 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] d'ailleurs je m'étonne que pour éviter un fichier genre server.py tu écrit toujours dedans sans par exemple écrire un nouveau .py pour ensuite coder dans server.py comme quoi sur telle passage pour telle outils, fonctionnalités etc...
   [regle] il faut que telle ou telle fichier .py s’exécute...
   [regle] même si X ou Y outils et que la réponse est toujours en court ça doit serte continuer même avec une interruption mais afficher le dernier retour connu avant l'actualisation et surtout compléter en allant à la suite de ce qui à était fait...
-  [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, qu
+  [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que
