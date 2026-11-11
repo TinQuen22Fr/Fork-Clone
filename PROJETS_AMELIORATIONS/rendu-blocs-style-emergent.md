@@ -1,6 +1,6 @@
 # Amélioration — Rendu en blocs façon Emergent (fin de tour)
 
-> Statut : **idée à instruire** (non planifiée, non exécutée). Consignée à la demande de l'utilisateur, à traiter plus tard, séparément du bug timeout.
+> Statut : **Phase A exécutée côté code et tests automatisés** ; validation visuelle finale après déploiement prod.
 > Créé le : 2026-11-07
 
 ## Contexte
@@ -144,7 +144,7 @@ L'idée ci-dessus suppose un « markdown monolithique rechargé ». En réalité
 
 ## Décision (mise à jour)
 
-En attente du choix de périmètre (A ou B) par l'utilisateur. Aucun code modifié à ce stade — cartographie et plan seulement.
+Phase A (`1 → 2 → 8`) réalisée. Phase B reste en attente d'une décision après validation visuelle en production.
 
 ---
 
@@ -168,10 +168,10 @@ En attente du choix de périmètre (A ou B) par l'utilisateur. Aucun code modifi
   ```
   (cd frontend && npx vite build)
   ```
-  **Résultat : built in 27,97s**, 2037 modules transformés, chunk `Chat-Vp3RGyl1.js` (correctif C1) généré, aucune erreur.
+  **Résultat : build réussi en 31,84s**, 2037 modules transformés, chunk `Chat-xAFVKVqV.js` généré, aucune erreur.
 
 **Critère de fin Phase A** : suite verte + build OK ✅. Reste la **vérification manuelle d'un tour complet en preview** — à faire **après déploiement prod** (la preview ne contient aucun workspace), par l'utilisateur.
 
-### Statut Phase A : `1 → 2 → 8` terminée côté code et tests automatisés.
+### Statut Phase A : `1 → 2 → 8` terminée côté code et tests automatisés ✅
 - Validation visuelle finale déléguée à l'utilisateur après déploiement (GitHub → `sudo ./upgrade.sh` en prod).
 - Décision Phase B (structurelle, migration BDD) : **en attente** du retour utilisateur « A suffit-il ? ».

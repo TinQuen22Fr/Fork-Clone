@@ -1498,20 +1498,36 @@ export default function Chat() {
                 </button>
               </div>
             )}
-            {messages.map((m) => (
-              <ChatMessage
-                key={m.id === lastAssistantId ? STREAMING_SLOT_KEY : m.id}
-                message={m}
-                isLast={m.id === lastAssistantId}
-                onRegenerate={regenerate}
-                onReplay={(msg) => sendMessage(null, { text: msg.content })}
-                onFeedback={submitFeedback}
-                onDelete={deleteMessage}
-                regenerating={regenerating}
-                project={activeConv?.project}
-                onRollbackStep={handleRollbackStep}
-              />
-            ))}
+            {messages.map((m) =>
+              m.id === lastAssistantId ? (
+                <LiveMessage
+                  key={STREAMING_SLOT_KEY}
+                  message={m}
+                  provider={provider}
+                  model={modelOverride || activeModel?.model}
+                  project={activeConv?.project}
+                  onRegenerate={regenerate}
+                  onReplay={(msg) => sendMessage(null, { text: msg.content })}
+                  onFeedback={submitFeedback}
+                  onDelete={deleteMessage}
+                  regenerating={regenerating}
+                  onRollbackStep={handleRollbackStep}
+                />
+              ) : (
+                <ChatMessage
+                  key={m.id === lastAssistantId ? STREAMING_SLOT_KEY : m.id}
+                  message={m}
+                  isLast={m.id === lastAssistantId}
+                  onRegenerate={regenerate}
+                  onReplay={(msg) => sendMessage(null, { text: msg.content })}
+                  onFeedback={submitFeedback}
+                  onDelete={deleteMessage}
+                  regenerating={regenerating}
+                  project={activeConv?.project}
+                  onRollbackStep={handleRollbackStep}
+                />
+              )
+            )}
             {lastAssistantId && !sending && (
               <div className="mt-4 mb-2 flex flex-wrap gap-2">
                 <button
@@ -1541,17 +1557,22 @@ export default function Chat() {
                 </button>
               </div>
             )}
-            {sending && (
-              <>
-                <LiveMessage
-                  key={STREAMING_SLOT_KEY}
-                  provider={provider}
-                  model={modelOverride || activeModel?.model}
-                  project={activeConv?.project}
-                  onRollbackStep={handleRollbackStep}
-                />
-                {!streamingHasContent && (
-                  <div className="flex gap-4 mb-6">
+            {sending && !lastAssistantId && (
+              <LiveMessage
+                key={STREAMING_SLOT_KEY}
+                provider={provider}
+                model={modelOverride || activeModel?.model}
+                project={activeConv?.project}
+                onRegenerate={regenerate}
+                onReplay={(msg) => sendMessage(null, { text: msg.content })}
+                onFeedback={submitFeedback}
+                onDelete={deleteMessage}
+                regenerating={regenerating}
+                onRollbackStep={handleRollbackStep}
+              />
+            )}
+            {sending && !streamingHasContent && (
+              <div className="flex gap-4 mb-6">
                     <div className="w-10 h-10 border-2 border-white/30 bg-[var(--bg-dock)] flex items-center justify-center flex-shrink-0">
                       <img src="/logo-64.png" alt="" className="w-7 h-7 pulse-glow" />
                     </div>
@@ -1571,8 +1592,6 @@ export default function Chat() {
                       </button>
                     </div>
                   </div>
-                )}
-              </>
             )}
             <div ref={messagesEndRef} />
           </div>

@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T03:26:02.006439+00:00
+# Dernière mise à jour : 2026-11-11T13:16:52.119916+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 393b07c fix(upgrade): préserve Chromium/Playwright à chaque upgrade (dogfooding).
+- Git : branche claude-ai, dernier commit f02077b docs(rendu-blocs): clôture étape 8 phase A — non-régression verte.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -69,13 +69,13 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
+  [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
   [regle] 2. Backoff obligatoire entre deux démarrages du même projet (ex. 30 s).
   [regle] 2. Workspace en bind mount → push GitHub toujours possible après arrêt.
   [regle] bon je sais pas ce à quoi tu joue mais la preview ne fonctionne pas !
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
   [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
   [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
-  [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
   [regle] RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit.
   [regle] en même temps je n'ai jamais rien demander de la sorte pour RAPPORT_PREVIEWS_DOCKER.md la dernière version en date sur mon GitHub où tout jusqu'à maintenant est à consigner est la version commit 1fb9980 Repartir de celle-là, la completer en conséquence sans reécrire celui-ci de bout en bout !
   [regle] OK l image ne tourne pas en root
@@ -106,4 +106,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
   [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
   [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
-  [regle] on va rester comme ça conce
+  [regle] on va rester comme ça concernant l

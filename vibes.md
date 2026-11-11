@@ -331,3 +331,30 @@ Deux défauts nommés :
 - **Intention** : clôturer l'étape 8 (non-régression globale) du chantier rendu-blocs-style-emergent, phase A (1→2→8).
 - **Friction** : build Vite ~28s > timeout bash 30s à la 1re tentative → relancé en nohup détaché, lu via /tmp/vite_build.log (normal sur ce serveur, pas une anomalie). Validation VISUELLE impossible ici (preview sans workspace) → déléguée à l'utilisateur après déploiement prod.
 - **Suite** : commit + sauvegarde GitHub ; attendre retour utilisateur « Phase A suffit-elle ? » avant d'envisager la Phase B (structurelle, migration BDD).
+
+## Journal de boucle — 2026-11-11 (vérif phase A rendu-blocs)
+
+- **Intention** : confirmer par la preuve que les étapes 1, 2, 8 de la phase A sont réellement faites (pas par simple lecture des docs).
+- **Friction** : les docs (etape-2 + useStreamingMessage.js) affirment « LiveMessage rendu DANS la liste » ; le code réel (Chat.jsx) montre le contraire.
+- **Suite** : constat MAJEUR — LiveMessage toujours hors de messages.map → clé stable inefficace → C1 non résolu.
+## 2026-11-11 — Boucle 1
+- **Intention** : inspecter le rendu actuel de Chat.jsx et les tests associés avant de corriger la position de LiveMessage.
+- **Friction** : la clé stable existe déjà, mais la structure JSX doit être vérifiée pour éviter une régression de rendu.
+- **Suite** : lire les fichiers ciblés et l’état Git.
+## 2026-11-11 — Boucle 2
+- **Intention** : placer LiveMessage comme enfant direct du même conteneur de messages que le futur message persistant.
+- **Friction** : le bloc précédent ajoutait un fragment intermédiaire, empêchant la réconciliation malgré la clé stable.
+- **Suite** : lancer lint et build frontend, puis les tests backend ciblés.
+## 2026-11-11 — Boucle 3
+- **Intention** : faire porter le slot stable par un unique enfant du conteneur commun, y compris au moment où le message BDD arrive.
+- **Friction** : un simple déplacement hors fragment laissait encore LiveMessage frère de messages.map et créait un doublon de clé au done.
+- **Suite** : vérifier la syntaxe, le lint, le build et les tests backend de non-régression.
+## 2026-11-11 — Boucle 4
+- **Intention** : aligner la documentation Phase A sur la correction structurelle vérifiée et consigner les résultats.
+- **Friction** : le lint frontend ne démarre pas, car ESLint 9 ne trouve aucune configuration eslint.config.*.
+- **Suite** : mettre à jour les sections de suivi du chantier, puis contrôler le diff final.
+
+## 2026-11-11 — Boucle 5
+- **Intention** : préserver le message final reçu dans le même composant et la même clé au passage `done` → état persistant, puis actualiser le suivi Phase A.
+- **Friction** : ESLint est inexécutable sans configuration ESLint 9 ; build et tests restent vérifiables.
+- **Suite** : relancer build/tests après la correction finale et contrôler le diff.

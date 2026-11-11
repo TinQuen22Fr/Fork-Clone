@@ -13,12 +13,30 @@ import { useStreamingMessage } from "@/hooks/useStreamingMessage";
 //     et apres la cloture : React reconcilie au lieu de remonter.
 //
 // Ce composant ne touche ni au flux SSE ni a la persistance.
-export default function LiveMessage({ provider, model, project, onRollbackStep }) {
-  const message = useStreamingMessage({ provider, model });
+export default function LiveMessage({
+  message: persistedMessage,
+  provider,
+  model,
+  project,
+  onRegenerate,
+  onReplay,
+  onFeedback,
+  onDelete,
+  regenerating,
+  onRollbackStep,
+}) {
+  const streamingMessage = useStreamingMessage({ provider, model });
+  const message = persistedMessage || streamingMessage;
 
   return (
     <ChatMessage
       message={message}
+      isLast
+      onRegenerate={onRegenerate}
+      onReplay={onReplay}
+      onFeedback={onFeedback}
+      onDelete={onDelete}
+      regenerating={regenerating}
       project={project}
       onRollbackStep={onRollbackStep}
     />
