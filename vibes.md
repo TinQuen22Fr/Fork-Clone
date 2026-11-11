@@ -269,3 +269,13 @@ Deux défauts nommés :
 - **Intention** : aligner les endpoints `/github/commit-message` et `/github/push` sur la politique F1 — messages d'erreur génériques côté client, détail tracé côté serveur ; retirer la clé `workspace` (chemin absolu) de la réponse push.
 - **Friction** : tests `test_deps_regression.py` échouent sous `cd backend` (imports `backend.*` cassés + tests nécessitant un serveur live) — préexistant, hors périmètre ; vérifié via `test_commit_message.py` lancé depuis la racine (10/10 OK). `git` émet des warnings `~/.config/git/attributes` Permission denied (droits hôte, sans impact).
 - **Suite** : commit/push GitHub de la branche `claude-ai` puis déploiement prod via `upgrade.sh` (à la main de l'utilisateur).
+
+## Boucle — Instruction "rendu-blocs-style-emergent" (2026-11-08)
+- **Intention** : établir les tâches pour conserver, après fin de tour, un rendu en blocs cohérent avec le streaming (piste du .md PROJETS_AMELIORATIONS), sans écrire de code.
+- **Friction** : le .md suppose une "bascule markdown monolithique" à la clôture, MAIS la cartographie montre que `ChatMessage` rend DÉJÀ les mêmes blocs (steps/tool_steps structurés + markdown) en live ET en relecture ; les `steps`/`tool_steps` structurés SONT persistés en BDD (`_persist_step`, `_ensure_assistant_doc`) et restitués en version allégée par le listing (`steps_summary`/`tool_steps_summary`), détail complet via `GET /messages/{id}/details`. L'écart réel est donc étroit : ordre d'affichage (texte vs blocs), granularité du streaming texte non persistée, et transition live→BDD au `done`. Point non vérifiable en lecture seule : le ressenti visuel exact de la transition.
+- **Suite** : livrer le plan d'étapes atomiques ; confirmer avant exécution si l'utilisateur veut la persistance d'une structure de blocs ordonnée (texte intercalé entre étapes) ou seulement la stabilité visuelle de la transition.
+
+## 2026-11-07 — Plan rendu-blocs façon Emergent
+- **Intention** : écrire cartographie réelle + plan 8 tâches + ordre conseillé dans PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md sans réécrire l'existant.
+- **Friction** : hypothèse initiale du .md (markdown monolithique) inexacte — ChatMessage rend déjà les blocs ; vrais écarts = ordre figé + texte non segmenté + micro-bascule. Parité visuelle non vérifiable en lecture seule (preview requise).
+- **Suite** : attendre le choix de périmètre A (léger) ou B (structurel+migration BDD) avant tout code.
