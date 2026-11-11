@@ -145,3 +145,33 @@ L'idée ci-dessus suppose un « markdown monolithique rechargé ». En réalité
 ## Décision (mise à jour)
 
 En attente du choix de périmètre (A ou B) par l'utilisateur. Aucun code modifié à ce stade — cartographie et plan seulement.
+
+---
+
+## Étape 8 — Non-régression globale (Phase A) : exécutée ✅
+
+> Daté : 2026-11-11
+
+**Vérifications lancées depuis la racine du projet (jamais `cd backend`).**
+
+- Backend — suite de non-régression ciblée :
+  ```
+  backend/.venv/bin/python -m pytest \
+    backend/tests/test_tool_lifecycle.py \
+    backend/tests/test_action_chain.py \
+    backend/tests/test_sse_finish.py \
+    backend/tests/test_sse_replay.py
+  ```
+  **Résultat : 35 passed, 0 failed** (streaming, cycle d'outils, chaîne d'actions, SSE finish/replay).
+
+- Frontend — build de production :
+  ```
+  (cd frontend && npx vite build)
+  ```
+  **Résultat : built in 27,97s**, 2037 modules transformés, chunk `Chat-Vp3RGyl1.js` (correctif C1) généré, aucune erreur.
+
+**Critère de fin Phase A** : suite verte + build OK ✅. Reste la **vérification manuelle d'un tour complet en preview** — à faire **après déploiement prod** (la preview ne contient aucun workspace), par l'utilisateur.
+
+### Statut Phase A : `1 → 2 → 8` terminée côté code et tests automatisés.
+- Validation visuelle finale déléguée à l'utilisateur après déploiement (GitHub → `sudo ./upgrade.sh` en prod).
+- Décision Phase B (structurelle, migration BDD) : **en attente** du retour utilisateur « A suffit-il ? ».

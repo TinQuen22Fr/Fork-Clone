@@ -326,3 +326,8 @@ Deux défauts nommés :
 - **Intention** : mémoriser que `upgrade.sh` modifié dans le workspace doit être RÉCUPÉRÉ depuis le workspace puis COPIÉ dans `/var/www/forge` (prod) avant d'être exécuté. Le script s'exécute depuis la prod, pas depuis le workspace.
 - **Friction** : oublié à plusieurs reprises malgré consignation antérieure.
 - **Suite** : à chaque modif d'`upgrade.sh`, fournir le message de commit ET rappeler le circuit copie-vers-prod.
+
+## 2026-11-11 — Phase A rendu-blocs (étape 8)
+- **Intention** : clôturer l'étape 8 (non-régression globale) du chantier rendu-blocs-style-emergent, phase A (1→2→8).
+- **Friction** : build Vite ~28s > timeout bash 30s à la 1re tentative → relancé en nohup détaché, lu via /tmp/vite_build.log (normal sur ce serveur, pas une anomalie). Validation VISUELLE impossible ici (preview sans workspace) → déléguée à l'utilisateur après déploiement prod.
+- **Suite** : commit + sauvegarde GitHub ; attendre retour utilisateur « Phase A suffit-elle ? » avant d'envisager la Phase B (structurelle, migration BDD).

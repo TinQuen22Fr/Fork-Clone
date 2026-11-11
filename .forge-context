@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T01:51:24.419609+00:00
+# Dernière mise à jour : 2026-11-11T03:26:02.006439+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 3ffe204 Add infos doc rendu-blocs-style-emergent.md.
+- Git : branche claude-ai, dernier commit 393b07c fix(upgrade): préserve Chromium/Playwright à chaque upgrade (dogfooding).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -106,4 +106,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
   [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
   [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
-  [regle] on va rester comme ça concernant les majeures pour ne pa
+  [regle] on va rester comme ça conce
