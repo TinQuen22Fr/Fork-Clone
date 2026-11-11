@@ -111,6 +111,63 @@ L'idée ci-dessus suppose un « markdown monolithique rechargé ». En réalité
 - **Précaution** : conserver la mémoïsation (`React.memo` l. 548 de `ChatMessage`) — ne pas régresser la perf de streaming (règle connue : fenêtre de chat lente).
 - **Critère de fin** : parité visuelle live/relecture sur un tour multi-étapes.
 
+#### Découpage de l'étape 6 en sous-étapes (Phase B)
+
+> Daté : 2026-11-12
+> **Motif** : l'étape 6 en un seul passage est trop lourde (câblage relecture **et** live + build + parité) et épuise le budget d'outils avant d'aboutir. Elle est découpée en 5 sous-étapes atomiques, chacune vérifiable et commitable seule. Ordre **linéaire strict** : `6.1 → 6.2 → 6.3 → 6.4 → 6.5`.
+
+**Cartographie du code concerné**
+| Fichier | Rôle | État au découpage |
+|---|---|---|
+| `frontend/src/components/MarkdownBody.jsx` | Rendu markdown partagé (GFM, code copiable, images, tables) | Créé, non vérifié (build), non commité |
+| `frontend/src/components/MessageBlocks.jsx` | Rendu « liste de blocs typés » (`text`/`thinking`/`tool_call`/`tool_output`, tri par `seq`) | Créé, non vérifié, pas de caret de streaming |
+| `frontend/src/components/ChatMessage.jsx` | Branche conditionnelle `blocks[]` vs legacy | Modifié, build non vérifié, mélange étape 6+7 à nettoyer |
+| `frontend/src/store/streamStore.js` | État live (`text`/`tools`/`steps`) | **Ne construit pas `blocks[]`** — cœur du travail restant |
+| `frontend/src/hooks/useStreamingMessage.js` | Expose le message live à `ChatMessage` | N'expose pas `blocks` → live tombe dans le legacy |
+| `frontend/src/components/LiveMessage.jsx` | Rend le `<ChatMessage/>` live | Transparent, pas de changement requis |
+
+**Diagnostic** : après reload, un tour s'affiche via `MessageBlocks` (grâce aux étapes 4-5) ; **en live**, il s'affiche encore via l'ancien chemin. La parité live/relecture — objectif n°1 de l'étape 6 — **n'est pas atteinte** tant que le store ne reconstruit pas `blocks[]` côté client.
+
+---
+
+##### 6.1 — Verrouiller la base visuelle partagée (`MarkdownBody`)
+- **Objectif** : valider que l'extraction du rendu markdown vers `MarkdownBody.jsx` ne régresse pas l'affichage existant, et stabiliser le comparateur `React.memo` de `ChatMessage` pour qu'il prenne `message.blocks` en compte.
+- **Fichiers** : `frontend/src/components/MarkdownBody.jsx` (déjà créé), `frontend/src/components/ChatMessage.jsx` (import + comparateur `React.memo`).
+- **Vérification** : `cd frontend && npx vite build` passe ; `MdCodeBlock`, `img`, `table` présents dans `MarkdownBody`.
+- **Critère de fin** : build vert, aucun import cassé, comparateur mémo couvre `blocks`.
+- **Risque** : nul (extraction + build).
+
+##### 6.2 — Figer `MessageBlocks` comme rendu de relecture
+- **Objectif** : rendre `blocks[]` dans l'ordre `seq` pour un message **persisté** (relecture uniquement), et préparer le caret de streaming optionnel (prop `streaming`) sans encore toucher au live.
+- **Fichiers** : `frontend/src/components/MessageBlocks.jsx`.
+- **Dépendance** : 6.1.
+- **Vérification** : build vert ; relecture d'une conversation récente (déjà dotée de `blocks[]`) → ordre texte/outil correct.
+- **Critère de fin** : relecture structurellement correcte d'un tour multi-étapes.
+
+##### 6.3 — Construire `blocks[]` live dans `streamStore` (cœur)
+- **Objectif** : ajouter au store un `blocks[]` ordonné (`seq` monotone), coalescence des deltas texte en bloc `text`, création d'une paire `tool_call`/`tool_output` à chaque outil — **miroir exact** de la logique backend de l'étape 4 (`_run_generation`).
+- **Fichiers** : `frontend/src/store/streamStore.js` (état `blocks`, mutations `setStreamText`/`appendStreamText`/`addStreamTool`/`reset`).
+- **Dépendance** : 6.2.
+- **Vérification** : test front (Vitest) simulant `delta → tool → delta` → `blocks` conformes au schéma §2 ; invariant `Σ blocks(text).text == content`.
+- **Critère de fin** : `blocks[]` live cohérent avec le schéma, sans casser le double stockage `steps`/`tools` existant.
+- **Risque R1** : couplage avec `addStreamTool` (rattache déjà l'outil à `steps`) — ne pas le régresser.
+
+##### 6.4 — Alimenter le message live avec `blocks[]`
+- **Objectif** : `useStreamingMessage` expose `message.blocks = state.blocks` → la bulle live emprunte **le même** `MessageBlocks` que la relecture ; caret de streaming sur le dernier bloc texte.
+- **Fichiers** : `frontend/src/hooks/useStreamingMessage.js`, `frontend/src/components/MessageBlocks.jsx` (prop `streaming`).
+- **Dépendance** : 6.3.
+- **Vérification** : build vert ; relecture du chemin ; test du hook si faisable.
+- **Critère de fin** : live et relecture passent par le même composant.
+- **Risque R2** : perf — l'ajout de `blocks` ne doit pas multiplier les `emit()` ni casser `React.memo` (règle connue : fenêtre de chat lente).
+
+##### 6.5 — Isoler l'étape 6 de l'étape 7 et valider la parité
+- **Objectif** : nettoyer la branche conditionnelle de `ChatMessage` pour qu'elle relève strictement de l'étape 6 (choix blocs vs legacy), en laissant le **fallback complet** à l'étape 7 ; confirmer la parité visuelle.
+- **Fichiers** : `frontend/src/components/ChatMessage.jsx`.
+- **Dépendance** : 6.4.
+- **Vérification** : `npx vite build` vert ; mémoïsation intacte ; parité live/relecture sur un tour multi-étapes.
+- **Critère de fin** : parité visuelle live/relecture.
+- **Risque R3 (non vérifiable en lecture seule)** : la parité visuelle réelle (ordre, caret, absence de flash au `done`) ne se valide qu'au navigateur en preview, pas au build. À confirmer manuellement après déploiement.
+
 ### 7. `[A+B]` Fallback rétrocompatible pour les anciens messages
 - **Objectif** : les messages **sans** `blocks[]` continuent de s'afficher via l'ancien chemin (`content` + `steps` + `tool_steps`).
 - **Fichiers** : `ChatMessage.jsx` (branche conditionnelle).
@@ -192,3 +249,65 @@ Cadrage livré dans **`etape-3-schema-blocs-ordonnes.md`** (ce dossier). Aucune
 
 **Jalon de décision** : valider ce schéma avant l'étape 4 (première écriture BDD).
 Prochaine étape : **4** (alimenter `blocks[]` côté backend) — en attente de feu vert.
+
+---
+
+## Phase B — Étape 4 (alimenter `blocks[]` côté backend) : exécutée ✅
+
+> Daté : 2026-11-12
+
+Implémentation backend conforme au contrat [`etape-3-schema-blocs-ordonnes.md`](./etape-3-schema-blocs-ordonnes.md) :
+
+- **`_ensure_assistant_doc`** (`backend/server.py`) : ajoute `"blocks": []` au document initial (à côté de `content`, `steps`, `tool_steps`).
+- **Helpers de blocs** (`backend/server.py`) :
+  - `_block_exit_code(output)` : extrait l'`exit_code` d'une sortie `bash` via `_BASH_EXIT_RE`.
+  - `_make_tool_blocks(seq_call, seq_out, tool_step, step_index)` : construit la paire ordonnée `tool_call` + `tool_output` (sortie tronquée à `STEP_LOG_TRUNC` = 4000 car., champ `truncated`, `exit_code` optionnel, `step_index` de liaison).
+  - `_push_blocks(database, message_id, blocks)` : persistance incrémentale via `$push: {"blocks": {"$each": blocks}}`.
+- **Boucle `_run_generation`** :
+  - Compteur `_block_seq` strictement croissant dans la closure du tour.
+  - Coalescence des deltas de texte consécutifs dans un tampon `_text_block` (`type: "text"`), flushé en BDD dès qu'un outil arrive, en fin de flux (`done`), ou en sortie anticipée (`CancelledError` / `Exception`).
+  - Garantit la création de `assist_doc` dès le premier `delta` (même si aucun événement `start` n'a précédé) pour qu'aucun `_flush_text_block` ne soit perdu.
+- **Tests autonomes** (`backend/tests/test_ordered_blocks.py`, 5 tests) :
+  - Schéma initial `blocks: []`.
+  - Paire `tool_call` + `tool_output` (`exit_code`, `step_index`, troncature `STEP_LOG_TRUNC`).
+  - Tour complet intercalé `text → tool_call → tool_output → text → tool_call → tool_output → text`.
+  - **Invariant §2.4 vérifié** : `content == "".join(b["text"] for b in blocks if b["type"] == "text")` et `seq == [0..N-1]`.
+  - Cas limite flux texte seul sans événement `start`.
+- **Vérification** (depuis la racine) :
+  ```
+  backend/.venv/bin/python -m pytest \
+    backend/tests/test_ordered_blocks.py \
+    backend/tests/test_tool_lifecycle.py \
+    backend/tests/test_action_chain.py \
+    backend/tests/test_sse_finish.py \
+    backend/tests/test_sse_replay.py
+  ```
+  **Résultat : 40 passed in 2.75s**.
+
+**Prochaine étape** : **5** (exposer `blocks[]` au détail `/messages/{id}/details` et alléger le listing `/messages` avec `blocks_count` sans alourdir le payload).
+
+---
+
+## Phase B — Étape 5 (exposer `blocks[]` au détail, alléger le listing) : exécutée ✅
+
+> Daté : 2026-11-12
+
+- **`_build_messages_pipeline(flt, limit)`** (`backend/server.py`) : nouveau pipeline d'agrégation pour le listing `/conversations/{conv_id}/messages`.
+  - `$match` / `$sort created_at:-1` / `$limit` (même ordre qu'avant).
+  - `$set: blocks_count = $size($ifNull["$blocks", []])`.
+  - `$unset` de `blocks`, `image_b64`, `file_text`, `images_b64`, `prompt_override`, `_id`.
+- **`get_messages`** : remplace le `find` par `database.messages.aggregate(...)`. L'allègement des sorties d'outils (`tool_steps.output` / `steps.tools.output`) reste fait en Python après coup, identique à avant.
+- **`get_message_details`** : renvoyait déjà le document entier, donc `blocks[]` est bien exposé au détail. Docstring précisée.
+- **Payload listing inchangé en poids** : `blocks[]` n'est plus embarqué ; seul `blocks_count` (entier) est ajouté.
+- **Tests** (`backend/tests/test_ordered_blocks.py`, +2 tests) :
+  - pipeline expose `blocks_count` et n'expose jamais `blocks[]` ;
+  - sémantique réelle : `blocks_count == len(blocks)` (2), ancien message sans blocs → `blocks_count == 0`, champs lourds retirés.
+- **Vérification** :
+  ```
+  backend/.venv/bin/python -m pytest backend/tests/test_ordered_blocks.py \
+    backend/tests/test_tool_lifecycle.py backend/tests/test_action_chain.py \
+    backend/tests/test_sse_finish.py backend/tests/test_sse_replay.py
+  ```
+  **Résultat : 42 passed in 2.68s**.
+
+**Prochaine étape** : **6** (rendu front des blocs ordonnés, avec mémoïsation — en attente de feu vert).
