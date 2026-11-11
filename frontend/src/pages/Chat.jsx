@@ -20,7 +20,8 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError, postSSE } from "@/lib/api";
 import ChatMessage from "@/components/ChatMessage";
-import StreamingBubble from "@/components/StreamingBubble";
+import LiveMessage from "@/components/LiveMessage";
+import { STREAMING_SLOT_KEY } from "@/hooks/useStreamingMessage";
 import {
   resetStream,
   setStreamText,
@@ -1499,7 +1500,7 @@ export default function Chat() {
             )}
             {messages.map((m) => (
               <ChatMessage
-                key={m.id}
+                key={m.id === lastAssistantId ? STREAMING_SLOT_KEY : m.id}
                 message={m}
                 isLast={m.id === lastAssistantId}
                 onRegenerate={regenerate}
@@ -1542,7 +1543,8 @@ export default function Chat() {
             )}
             {sending && (
               <>
-                <StreamingBubble
+                <LiveMessage
+                  key={STREAMING_SLOT_KEY}
                   provider={provider}
                   model={modelOverride || activeModel?.model}
                   project={activeConv?.project}

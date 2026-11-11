@@ -6,7 +6,7 @@
 // la page (sidebar, header, liste complete des messages, composer...).
 //
 // En sortant cet etat dans un store externe, seul le composant qui s'y abonne
-// (<StreamingBubble />) se re-rend a chaque token. Le parent passe au travers.
+// (<LiveMessage />) se re-rend a chaque token. Le parent passe au travers.
 //
 // API basee sur useSyncExternalStore (React 18+), sans dependance externe.
 

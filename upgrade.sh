@@ -210,12 +210,29 @@ with sync_playwright() as pw:
 PYCHROME
 )"
     CHROMIUM_FOUND=""
+    # Emplacement du cache navigateur reellement utilise par le binaire trouve.
+    # Sert a reparer le .env quand Chromium vit ailleurs que le chemin attendu
+    # (ex. installation historique dans ~/.cache/ms-playwright au lieu de
+    # $APP_DIR/.playwright). Sans cette reparation, le service redemarre avec
+    # un PLAYWRIGHT_BROWSERS_PATH pointant sur un dossier vide et Playwright
+    # casse au premier usage apres chaque upgrade.
+    CHROMIUM_CACHE=""
     if [ "$CHROMIUM_OK" = "1" ]; then
       CHROMIUM_FOUND="$PLAYWRIGHT_BROWSERS_PATH"
+      CHROMIUM_CACHE="$PLAYWRIGHT_BROWSERS_PATH"
     else
-      for _cdir in "$APP_DIR/.playwright" "$HOME/.cache/ms-playwright" "/root/.cache/ms-playwright"; do
-        if [ -d "$_cdir" ] && find "$_cdir" -maxdepth 3 -type f \( -name chrome -o -name headless_shell -o -name chromium \) 2>/dev/null | grep -q .; then
+      # On balaie tous les emplacements plausibles (cache applicatif, cache
+      # utilisateur du compte de service, cache root) et on retient le PREMIER
+      # qui contient reellement un binaire Chromium exploitable.
+      for _cdir in \
+        "$APP_DIR/.playwright" \
+        "$HOME/.cache/ms-playwright" \
+        "$(getent passwd "$SERVICE_USER" 2>/dev/null | cut -d: -f6)/.cache/ms-playwright" \
+        "/root/.cache/ms-playwright"; do
+        [ -n "$_cdir" ] || continue
+        if [ -d "$_cdir" ] && find "$_cdir" -maxdepth 4 -type f \( -name chrome -o -name headless_shell -o -name chromium \) 2>/dev/null | grep -q .; then
           CHROMIUM_FOUND="$_cdir"
+          CHROMIUM_CACHE="$_cdir"
           export PLAYWRIGHT_BROWSERS_PATH="$_cdir"
           break
         fi
@@ -226,6 +243,22 @@ PYCHROME
         elif command -v google-chrome >/dev/null 2>&1; then
           CHROMIUM_FOUND="$(command -v google-chrome)"
         fi
+      fi
+    fi
+    # Reparation idempotente du .env : si un cache navigateur valable a ete
+    # localise et qu'il differe de la valeur enregistree, on met PLAYWRIGHT_
+    # BROWSERS_PATH a jour (sans jamais dupliquer la cle) pour que le service
+    # redemarre sur le bon dossier. C'est ce qui garantit que Playwright
+    # SURVIT a chaque upgrade.sh, meme apres un pull du code sandbox.
+    if [ -n "$CHROMIUM_CACHE" ] && [ -d "$CHROMIUM_CACHE" ] && [ -f "$APP_DIR/backend/.env" ]; then
+      CURRENT_ENV_PATH="$(grep -oE '^PLAYWRIGHT_BROWSERS_PATH=.*' "$APP_DIR/backend/.env" | head -n1 | cut -d= -f2-)"
+      if [ "$CURRENT_ENV_PATH" != "$CHROMIUM_CACHE" ]; then
+        if grep -q '^PLAYWRIGHT_BROWSERS_PATH=' "$APP_DIR/backend/.env"; then
+          sed -i "s|^PLAYWRIGHT_BROWSERS_PATH=.*|PLAYWRIGHT_BROWSERS_PATH=$CHROMIUM_CACHE|" "$APP_DIR/backend/.env"
+        else
+          printf '\nPLAYWRIGHT_BROWSERS_PATH=%s\n' "$CHROMIUM_CACHE" >> "$APP_DIR/backend/.env"
+        fi
+        c_ok "PLAYWRIGHT_BROWSERS_PATH recale sur $CHROMIUM_CACHE (le service retrouvera Chromium)"
       fi
     fi
     if [ -n "$CHROMIUM_FOUND" ]; then

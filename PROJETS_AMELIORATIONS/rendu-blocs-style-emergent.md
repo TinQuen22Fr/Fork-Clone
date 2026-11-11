@@ -72,8 +72,10 @@ L'idée ci-dessus suppose un « markdown monolithique rechargé ». En réalité
 - **Vérification** : capture avant/après `done` sur un tour avec étapes + texte.
 - **Critère de fin** : liste écrite des différences réelles (ordre, espacement, caret).
 - **Non vérifiable en lecture seule** : le ressenti visuel exact ; nécessite la preview lancée.
+- **Détail / livrable** : sous-fichier module [`etape-1-micro-bascule.md`](./etape-1-micro-bascule.md) (analyse de code faite ✅ ; grille de capture à remplir une fois la preview lancée).
 
 ### 2. `[A]` Garantir la continuité de clôture sans reload markdown
+- **Détail / livrable** : sous-fichier module [`etape-2-continuite-cloture.md`](./etape-2-continuite-cloture.md) (correctif C1 appliqué ✅, build OK ; capture visuelle preview à confirmer).
 - **Objectif** : à `done`, remplacer `StreamingBubble` par le message BDD **sans reflow visible**.
 - **Fichiers** : `Chat.jsx` (handler `done`).
 - **Dépendance** : étape 1.

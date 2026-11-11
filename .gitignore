@@ -93,3 +93,6 @@ backend/models/
 *.bak_*
 *.bak
 *.bak.*
+
+# Captures Playwright/Chromium — ne jamais commiter ni relancer depuis le backend prod
+.captures/

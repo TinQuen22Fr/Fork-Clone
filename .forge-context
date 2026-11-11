@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T00:04:34.991899+00:00
+# Dernière mise à jour : 2026-11-11T01:51:24.419609+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 8f3ea43 13235465656.
+- Git : branche claude-ai, dernier commit 3ffe204 Add infos doc rendu-blocs-style-emergent.md.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -18,6 +18,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   .emergent/emergent.yml
   .emergent/system_deps.txt
   PROJETS_AMELIORATIONS/
+  PROJETS_AMELIORATIONS/etape-1-micro-bascule.md
+  PROJETS_AMELIORATIONS/etape-2-continuite-cloture.md
   PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md
   Taches finalisées entièrement/
   Taches finalisées entièrement/forge-core.md
@@ -64,8 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/docker/forge-docker-modules.conf
   deploy/docker/forge-preview
   deploy/docker/forge-preview.sudoers
-  deploy/docker/install-d1.sh
-  deploy/docker/install-d10.sh
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
@@ -75,6 +75,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
   [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
   [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
+  [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
   [regle] RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit.
   [regle] en même temps je n'ai jamais rien demander de la sorte pour RAPPORT_PREVIEWS_DOCKER.md la dernière version en date sur mon GitHub où tout jusqu'à maintenant est à consigner est la version commit 1fb9980 Repartir de celle-là, la completer en conséquence sans reécrire celui-ci de bout en bout !
   [regle] OK l image ne tourne pas en root
@@ -86,7 +87,13 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
-  [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
+  [regle] ça à déjà était consigner ça aussi je te rappel...
+  [regle] autre chose il faut que quand les preview sont lancer que tu sache lire et trouver le l'url.
+  [regle] il faut que tu adapte upgrade.sh pour qu'il détecte Playwright en prod et le laisse même en faisant l'upgrade.
+  [regle] c'est logique au bout de 5mn environs la preview dans le docker stop et il faut la relancer.
+  [regle] Recommence pas à ne pas savoir que la forge est une API dogfooding
+  [regle] pour l'url voyons : https://fork-clone.preview.quentin-astro.fr/ (hallucinant d'ailleurs vue que le systeme de preview à pourtant était revu totalement par toi...) et oui c'esrt en contener docker pour ne pas surcharger le server et "sanctuarisé" la chose.
+  [regle] ça me parait mieux même pour l'avenir.
   [regle] au risque de vexer, désoler ça ne fonctionne pas : j'ai crer une erreur (capture) mais "journalctl -u forge-backend --since "$(systemctl show forge-backend -p ActiveEnterTimestamp --value)" | grep -i "git .* echec" " dans /var/www/forge (prod) nada rien n'est retourner...
   [regle] ne pas oublier que mon serveur est dans un datacenter en région parisienne et que pour communiquer avec les serveur nationaux de free ça utilise les backbone en 100% fibre !
   [regle] 7418: desormais les appels par type et on les parallelise via asyncio.gather.
@@ -99,10 +106,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
   [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
   [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
-  [regle] on va rester comme ça concernant les majeures pour ne pas tanter le diable.
-  [regle] réponse en court, erreur de désynchronisation, début de message qui saute, sa fait croire que l'agent attend, Ctrl+Shift+R ne fonctionne pas ça râme, tu refait et là encore une nouvelle erreur sur le HUB alors que j'étais sur le chat/sujet Fork-Clone...
-  [regle] // Les donnees sont toujours fraiches cote serveur : on interdit tout cache
-  [regle] c'est déjà fait et upgrade.sh executer, mais toujours pareil.
-  [regle] Le gros probléme chez moi c'est que tu te crois TOUJOURS dans ton ecosystéme et tes propres applicatifs et plateforme en tout cas quand je prends Claude comme provider et un modéles dessus, mais ce n'est le cas tu n'ai pas sur claude.ai même si je passe par mon compte "pro"
-  [regle] 11 - Interdiction de dire « ce n'est pas nécessaire », « le projet a déjà ce qu'il faut » ou équivalent.
-  [regle] 161
+  [regle] on va rester comme ça concernant les majeures pour ne pa

@@ -279,3 +279,50 @@ Deux défauts nommés :
 - **Intention** : écrire cartographie réelle + plan 8 tâches + ordre conseillé dans PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md sans réécrire l'existant.
 - **Friction** : hypothèse initiale du .md (markdown monolithique) inexacte — ChatMessage rend déjà les blocs ; vrais écarts = ordre figé + texte non segmenté + micro-bascule. Parité visuelle non vérifiable en lecture seule (preview requise).
 - **Suite** : attendre le choix de périmètre A (léger) ou B (structurel+migration BDD) avant tout code.
+
+## 2026-11-11 01:13 — Phase A / Étape 1
+- **Intention** : documenter la micro-bascule visuelle StreamingBubble→message BDD au `done`, en sous-fichier module dédié lié au plan.
+- **Friction** : capture visuelle réelle impossible — preview Fork-Clone non lancée (seuls tournent prod/forge-dev/autres projets, hors périmètre) ; grille de capture laissée à remplir.
+- **Suite** : attendre lancement preview pour remplir la grille, puis valider l'hypothèse C1 (remount par changement d'id) → étape 2.
+
+## 2026-11-11 01:21 — Étape 2 (Phase A) : continuité de clôture sans remount
+- **Intention** : supprimer la micro-bascule au `done` (cause C1) via clé stable partagée entre bulle live et message BDD, sans fichier à rallonge (hook + composant module).
+- **Friction** : React remonte le dernier slot car le type racine de la bulle (`LiveMessage`) diffère de `ChatMessage` ; la clé stable `STREAMING_SLOT_KEY` + le même sous-arbre `ChatMessage` atténuent le reflow, mais la confirmation visuelle exige la preview (non atteignable en localhost → URL publique requise). Build Vite OK (2037 modules).
+- **Suite** : capture avant/après `done` en preview pour remplir la grille de `etape-2-continuite-cloture.md` ; si validé, jalon de décision « Phase A suffit-elle ? » avant d'engager la Phase B.
+
+## 2026-10-02 — Étape 2 : vérif preview Docker
+- **Intention** : confirmer que la preview publique sert le build de l'étape 2 et obtenir une capture avant/après `done`.
+- **Friction** : Chromium Playwright non installé sur le backend du projet + pas de binaire local → `screenshot_url` inopérant, pas de droits sudo pour l'installer. Capture visuelle déléguée à l'utilisateur. Vérifié par HTTP : chunk `Chat-Vp3RGyl1.js` (étape 2) répond HTTP 200 sur https://fork-clone.preview.quentin-astro.fr/ → nouveau build bien en ligne.
+- **Suite** : attendre le retour visuel utilisateur (flash au `done` disparu ou non) → poser le jalon de décision Phase A vs Phase B.
+
+## 2026-11-11 — Capture preview (étape 2)
+- **Intention** : capturer le rendu réel du chat avant/après `done` pour vérifier C1.
+- **Friction** : Playwright accessible via venv prod ; Chromium absent des caches lisibles → téléchargé proprement DANS le projet (`.captures/browsers/`, profil/tmp cloisonnés). Capture OK mais la preview renvoie **502 Bad Gateway** (conteneur Docker arrêté depuis le test 200 précédent) → vérif visuelle du chat impossible pour l'instant.
+- **Suite** : attendre le redémarrage du conteneur preview par l'utilisateur, puis 2 captures ciblées (pendant streaming / après done) et remplir la grille de `etape-2-continuite-cloture.md`.
+
+## 2026-11-11 — Nettoyage Playwright/Chromium (incident réseau prod)
+- **Intention** : supprimer tout l'attirail de capture (Chromium 658 Mo + `shot.py`) que j'avais installé dans `.captures/`, car lancé depuis le backend **prod** il saturait CPU/réseau du serveur qui sert la fenêtre de chat → streaming SSE buggé côté client + réseau portable planté.
+- **Friction** : la capture d'un site en preview depuis le même backend prod est incompatible avec le service du chat live. Playwright techniquement opérationnel mais **inutilisable ici** sans dégrader la prod → abandonné.
+- **Suite** : correctif C1 (étape 2) à vérifier **sans navigateur** (HTTP 200 OK, build servi). Validation visuelle du flash/reflow déléguée à l'utilisateur dans son propre navigateur. Ne plus jamais lancer de navigateur headless depuis ce backend.
+
+## 2025 — upgrade.sh : survie de Playwright + memos capture
+
+- Intention : rendre upgrade.sh resilient pour que Chromium/Playwright SURVIVE a chaque upgrade (le pull du code sandbox ne doit pas casser la capture en prod).
+- Correctif applique (upgrade.sh, bloc Navigateur Chromium) :
+  - Balayage elargi des caches navigateur : APP_DIR/.playwright, cache utilisateur courant, cache du compte de service (via getent passwd), cache root.
+  - Reparation idempotente de la config : si Chromium est localise a un emplacement different de PLAYWRIGHT_BROWSERS_PATH enregistre, la cle est recalee automatiquement (sed si presente, append sinon, jamais de doublon) -> le service redemarre sur le bon dossier et Playwright ne casse plus apres upgrade.
+  - Verifie : bash -n upgrade.sh -> SYNTAXE OK.
+- Friction : la desynchro d'origine venait d'une install historique de Chromium dans le cache utilisateur alors que le runtime attend APP_DIR/.playwright. Le correctif la rattrape automatiquement au prochain upgrade.
+- Suite : laisser l'etape 2 (correctif C1 chat) a valider visuellement via l'outil screenshot_url du backend (pas de lancement manuel de Chromium).
+
+### MEMOS PERMANENTS (exiges par l'utilisateur)
+1. La fenetre de chat tourne EN PROD. Mes commandes bash s'executent dans l'environnement prod (dogfooding : la Forge est une API utilisee par elle-meme). Ne jamais raisonner comme un sandbox tiers isole.
+2. Playwright doit s'executer EN PROD, via l'outil backend screenshot_url (fonction _tool_screenshot_url, backend/server.py). Jamais lancer Chromium a la main depuis bash -> ca sature CPU/reseau du serveur qui sert le chat et fait planter le streaming SSE.
+3. Capturer une preview = meme logique qu'Emergent : (a) s'assurer que la preview est up, (b) faire la capture via screenshot_url, (c) eteindre la preview ensuite. La capture ne vise JAMAIS la sandbox, mais l'URL publique de la preview.
+4. URL de preview deductible seul : _default_preview_url(name) = https://{name}.{PREVIEW_DOMAIN_SUFFIX}. Suffixe par defaut preview.quentin-astro.fr. Pour ce projet -> https://fork-clone.preview.quentin-astro.fr/. Ne plus demander l'URL a l'utilisateur.
+5. Pas de "ca depasse 30s" comme argument : ce n'est pas un standard universel. Sur ce serveur le build Vite prend ~40s. Le timeout bash de 30s est une limite d'OUTIL, pas une anomalie serveur -> enchainer/relancer plutot que conclure a un probleme.
+
+## 2026 — Rappel upgrade.sh (consigné, ne plus zapper)
+- **Intention** : mémoriser que `upgrade.sh` modifié dans le workspace doit être RÉCUPÉRÉ depuis le workspace puis COPIÉ dans `/var/www/forge` (prod) avant d'être exécuté. Le script s'exécute depuis la prod, pas depuis le workspace.
+- **Friction** : oublié à plusieurs reprises malgré consignation antérieure.
+- **Suite** : à chaque modif d'`upgrade.sh`, fournir le message de commit ET rappeler le circuit copie-vers-prod.
