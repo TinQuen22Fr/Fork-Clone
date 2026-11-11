@@ -383,3 +383,12 @@ Deux défauts nommés :
 - **Intention** : empêcher GitHub d'afficher `En cours/rendu-blocs-style-emergent` replié sur une seule ligne.
 - **Friction** : GitHub replie tout dossier n'ayant qu'un unique enfant-dossier ; `En cours/` ne contenait que `rendu-blocs-style-emergent/`.
 - **Suite** : ajout de `PROJETS_AMELIORATIONS/En cours/.gitkeep` → `En cours/` a 2 enfants directs, s'affiche seul ; se cliquera pour révéler les chantiers en cours (actuels et futurs). À enregistrer sur GitHub puis upgrade.sh.
+
+## 2026-11-11 19:13 — Éclatement du registre d'évolutions (option B)
+- **Intention** : sortir `evolutions-futures-possibles.md` de la racine et le ventiler par état dans PROJETS_AMELIORATIONS/ (option B validée).
+- **Friction** : `En prévision/` n'existait pas sur disque (le .gitkeep + fiche module annoncés dans un tour antérieur n'avaient jamais persisté) → recréés ; 1re découpe mal bornée (section RETENU rangée à tort côté Finis) → recoupée sur la frontière exacte (Finis = l.1-13+15-90, Prévision = l.93-151).
+- **Suite** : attendre feu vert Phase B étape 4 ; ne PAS accoler systématiquement upgrade.sh à un enregistrement GitHub.
+
+### Règles actées ce tour
+- « Enregistrer sur GitHub » ≠ `upgrade.sh`. Enregistrer publie le dépôt distant ; upgrade.sh ne se lance QUE pour un vrai déploiement prod voulu.
+- Quasi toute modif du dépôt doit passer par la Forge (workspace → Enregistrer), sinon les modifs faites ailleurs sont écrasées par le workspace local non modifié (erreurs git, bouton force = écrasement inutile).
