@@ -175,3 +175,20 @@ Phase A (`1 → 2 → 8`) réalisée. Phase B reste en attente d'une décision a
 ### Statut Phase A : `1 → 2 → 8` terminée côté code et tests automatisés ✅
 - Validation visuelle finale déléguée à l'utilisateur après déploiement (GitHub → `sudo ./upgrade.sh` en prod).
 - Décision Phase B (structurelle, migration BDD) : **en attente** du retour utilisateur « A suffit-il ? ».
+
+---
+
+## Phase B — Étape 3 (cadrage schéma `blocs[]`) : exécutée ✅
+
+> Daté : 2026-11-11
+
+Cadrage livré dans **`etape-3-schema-blocs-ordonnes.md`** (ce dossier). Aucune
+écriture de code (consigne « pas d'écriture » respectée).
+
+- Schéma `blocks[]` typé/ordonné spécifié : `text` / `thinking` / `tool_call` / `tool_output`, clé `seq` chronologique, `step_index` de liaison.
+- Persisté **à côté** de `content` (jamais en remplacement) ; `content` reste source markdown.
+- Rétrocompatibilité écrite : fallback **binaire** (`blocks` vide/absent → ancien chemin), **aucun backfill**, aucune migration imposée.
+- Invariant posé : `content == concat(blocks.type=="text")` (à vérifier étape 4).
+
+**Jalon de décision** : valider ce schéma avant l'étape 4 (première écriture BDD).
+Prochaine étape : **4** (alimenter `blocks[]` côté backend) — en attente de feu vert.

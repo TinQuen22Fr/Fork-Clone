@@ -358,3 +358,18 @@ Deux défauts nommés :
 - **Intention** : préserver le message final reçu dans le même composant et la même clé au passage `done` → état persistant, puis actualiser le suivi Phase A.
 - **Friction** : ESLint est inexécutable sans configuration ESLint 9 ; build et tests restent vérifiables.
 - **Suite** : relancer build/tests après la correction finale et contrôler le diff.
+
+## 2026-11-11 — Vérification code/prod après Phase A
+- **Intention** : vérifier le commit GitHub, le build, la structure du slot C1 et l’état preview/prod avant de confirmer le déploiement.
+- **Friction** : preview HTTP 502 ; aucun workspace exploitable pour le test visuel. Le build initial lancé depuis la racine était invalide (package.json sous frontend), puis le build frontend ciblé a réussi.
+- **Suite** : correction requise : en envoi normal, LiveMessage reste frère de messages.map tant que lastAssistantId est absent ; ne pas confirmer la Phase A ni lancer le déploiement comme validé.
+
+## 2026-11-11 — Réorg PROJETS_AMELIORATIONS + Phase B étape 3
+- **Intention** : créer l'arbo `En cours`/`Finis` (racine + par chantier), y déplacer `rendu-blocs-style-emergent` et ses étapes ; livrer le cadrage de l'étape 3 (schéma `blocks[]`, sans code).
+- **Friction** : dossiers vides non versionnés par git → ajout `.gitkeep` ; warnings `~/.config/git/attributes` (accès refusé, hors projet, sans impact).
+- **Suite** : attendre le feu vert utilisateur pour l'étape 4 (écriture BDD `blocks[]` côté backend).
+
+## 2025-11-11 — Réorganisation PROJETS_AMELIORATIONS (règle actée)
+- **Intention** : renommer le sous-dossier `Finis/` interne au chantier en « Améliorations possibles après fin de chantier » (le `Finis/` interne était redondant avec le `Finis/` global).
+- **Friction** : warning git bénin (accès refusé à `~/.config/git/attributes`, hors projet, sans impact sur le `git mv`).
+- **Suite** : règle de cycle verrouillée — chantier terminé = déplacer le dossier entier de `En cours/` vers `PROJETS_AMELIORATIONS/Finis/`. Attente feu vert pour Phase B étape 4.

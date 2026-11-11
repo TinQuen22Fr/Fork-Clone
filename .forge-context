@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T13:16:52.119916+00:00
+# Dernière mise à jour : 2026-11-11T17:13:35.096260+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit f02077b docs(rendu-blocs): clôture étape 8 phase A — non-régression verte.
+- Git : branche claude-ai, dernier commit c584767 Fix "Phase A" de PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -18,9 +18,10 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   .emergent/emergent.yml
   .emergent/system_deps.txt
   PROJETS_AMELIORATIONS/
-  PROJETS_AMELIORATIONS/etape-1-micro-bascule.md
-  PROJETS_AMELIORATIONS/etape-2-continuite-cloture.md
-  PROJETS_AMELIORATIONS/rendu-blocs-style-emergent.md
+  PROJETS_AMELIORATIONS/En cours/
+  PROJETS_AMELIORATIONS/En cours/rendu-blocs-style-emergent/
+  PROJETS_AMELIORATIONS/Finis/
+  PROJETS_AMELIORATIONS/Finis/.gitkeep
   Taches finalisées entièrement/
   Taches finalisées entièrement/forge-core.md
   agents/
@@ -65,11 +66,10 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/docker/daemon.json
   deploy/docker/forge-docker-modules.conf
   deploy/docker/forge-preview
-  deploy/docker/forge-preview.sudoers
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
-  [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
+  [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] 2. Backoff obligatoire entre deux démarrages du même projet (ex. 30 s).
   [regle] 2. Workspace en bind mount → push GitHub toujours possible après arrêt.
   [regle] bon je sais pas ce à quoi tu joue mais la preview ne fonctionne pas !
@@ -87,6 +87,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] Et tout ce qui est fait concernant ce travail en cour doit aller et être mis dans le répertoires adéquat et ne pas rester sous PROJETS_AMELIORATIONS
+  [regle] Que la preview ne fonctionne pas est NORMALE et en rien que le code modifier n'est pas mis en place en prod en faisant les manipulations citer ci dessus...
   [regle] ça à déjà était consigner ça aussi je te rappel...
   [regle] autre chose il faut que quand les preview sont lancer que tu sache lire et trouver le l'url.
   [regle] il faut que tu adapte upgrade.sh pour qu'il détecte Playwright en prod et le laisse même en faisant l'upgrade.
@@ -103,7 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] d'ailleurs je m'étonne que pour éviter un fichier genre server.py tu écrit toujours dedans sans par exemple écrire un nouveau .py pour ensuite coder dans server.py comme quoi sur telle passage pour telle outils, fonctionnalités etc...
   [regle] il faut que telle ou telle fichier .py s’exécute...
   [regle] même si X ou Y outils et que la réponse est toujours en court ça doit serte continuer même avec une interruption mais afficher le dernier retour connu avant l'actualisation et surtout compléter en allant à la suite de ce qui à était fait...
-  [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, que les messages de conversation seront toujours consultables vue qu'il sont en BDD ???
-  [regle] 305: # Nombre de messages recents toujours transmis mot pour mot.
-  [regle] la fenetre de chat est toujours aussi lent voir même plus qu'avant les correctifs
-  [regle] on va rester comme ça concernant l
+  [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que le dernier message, qu
