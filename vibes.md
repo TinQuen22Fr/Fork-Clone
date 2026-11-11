@@ -12,3 +12,8 @@
 - **Friction** : passage précédent laissé non vérifié (MarkdownBody/MessageBlocks créés non commités, ChatMessage mélange étape 6+7, live non câblé).
 - **Suite** : exécuter 6.1 — vérifier MarkdownBody, ajuster le comparateur React.memo de ChatMessage, valider `vite build`.
 - **6.1 FAITE** : comparateur `React.memo` de ChatMessage étendu à `message.blocks` ; `MarkdownBody.jsx` vérifié complet ; `vite build` vert (2040 modules, 32.7 s). Build valide.
+
+## 2026-11-11 — 6.2 MessageBlocks (relecture + caret live préparé)
+- **Intention** : figer `MessageBlocks` comme rendu de relecture ; ajouter prop `streaming` + caret sur le dernier bloc texte (préparation 6.4).
+- **Friction** : `read_file` échouait sur un cache de chemin → relecture via `cat`. Parité visuelle réelle non vérifiable au build (preview requise).
+- **Suite** : 6.3 — construire `blocks[]` live dans `streamStore` (miroir backend étape 4).
