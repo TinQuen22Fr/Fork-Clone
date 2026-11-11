@@ -1,4 +1,4 @@
-// Hook module — Etape 2 (rendu blocs facon Emergent).
+// Hook module — Etape 2 (rendu blocs facon Emergent), etendu Etape 6.
 //
 // But : supprimer la micro-bascule visuelle au `done` (cause C1 documentee
 // dans PROJETS_AMELIORATIONS/etape-1-micro-bascule.md).
@@ -14,9 +14,12 @@
 // stable. Au `done`, la cle de l'emplacement ne change pas -> React reconcilie
 // au lieu de remonter -> aucune bascule visible.
 //
-// Ce hook ne touche ni au flux SSE ni a la persistance : il se contente de
-// derouter la construction du message live hors de Chat.jsx (pas de fichier a
-// rallonge) et de fournir l'identite de cle a reutiliser.
+// Etape 6 : le message live expose `blocks` (liste ordonnee) au lieu d'un
+// simple `content`, afin de passer par le meme composant de rendu que les
+// messages persistes (MessageBlocks). `content` reste calcule en derive pour
+// les chemins qui en ont besoin (copie TTS, recherche).
+//
+// Ce hook ne touche ni au flux SSE ni a la persistance.
 
 import { useMemo, useSyncExternalStore } from "react";
 import { getStreamState, subscribe } from "@/lib/streamStore";
@@ -36,13 +39,19 @@ export function useStreamingMessage({ provider, model }) {
     () => ({
       id: "streaming",
       role: "assistant",
-      content: state.text,
+      // `content` derive (invariant backend) : somme des blocs texte.
+      content: state.blocks
+        .filter((b) => b.type === "text")
+        .map((b) => b.text || "")
+        .join(""),
+      // Etape 6 : le rendu vit dans `blocks`, ordonne comme le backend.
+      blocks: state.blocks,
       provider: state.info?.provider || provider,
       model: state.info?.model || model,
       tool_steps: state.tools,
       steps: state.steps,
       streaming: true,
     }),
-    [state.text, state.info, state.tools, state.steps, provider, model]
+    [state.blocks, state.info, state.tools, state.steps, provider, model]
   );
 }

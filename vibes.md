@@ -22,3 +22,8 @@
 - **Intention** : reconstruire cote client la meme sequence ordonnee que le backend (deltas coalesces en bloc text, outil -> paire tool_call/tool_output, seq monotone, step_index).
 - **Friction** : pas d'infra de test front (ni script test, ni vitest) -> test autonome Node pur (streamStore.test.mjs), 19 assertions. Parite visuelle reelle non verifiable au build (reportee 6.5/preview).
 - **Suite** : 6.4 exposer blocks + streaming via useStreamingMessage.
+
+## 6.4 — $(date +%F)
+- **Intention** : exposer `blocks`+`streaming` via `useStreamingMessage`, câbler la bulle live sur `MessageBlocks` (parité composant live/relecture).
+- **Friction** : hook `useStreamingMessage` déjà complet (blocks dérivés + content dérivé + streaming:true). Seule lacune réelle : `ChatMessage` ne passait pas `streaming` à `MessageBlocks` → caret live (6.2) jamais affiché en flux par blocs. Corrigé. Parité visuelle non vérifiée (preview, reportée 6.5).
+- **Suite** : 6.5 — isoler étape 6/7 dans ChatMessage + parité, puis commit final + protocole test preview/prod.

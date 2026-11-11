@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T18:43:35.844357+00:00
+# Dernière mise à jour : 2026-11-11T22:09:52.359707+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 115ae7f refactor(projets-améliorations): éclate le registre d'évolutions par état.
+- Git : branche claude-ai, dernier commit 3f541bf feat(stream): blocks[] live dans streamStore — miroir backend (6.3).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -41,6 +41,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/test_deps_regression.py
   backend/tests/test_kokoro_optional.py
   backend/tests/test_models_parallel.py
+  backend/tests/test_ordered_blocks.py
   backend/tests/test_reality_checks.py
   backend/tests/test_regression.py
   backend/tests/test_session_resume.py
@@ -65,10 +66,10 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/test_rollback.txt
   deploy/
   deploy/docker/
-  deploy/docker/99-forge-docker.conf
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
+  [regle] - **Précaution** : conserver la mémoïsation (`React.memo` l. 548 de `ChatMessage`) — ne pas régresser la perf de streaming (règle connue : fenêtre de chat lente).
   [regle] - **Socket Docker** : ne jamais le monter dans une preview, sous aucun prétexte (outil, debug, script de projet).
   [regle] 2. Backoff obligatoire entre deux démarrages du même projet (ex. 30 s).
   [regle] 2. Workspace en bind mount → push GitHub toujours possible après arrêt.
@@ -76,6 +77,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] On continue toujours avec RAPPORT_PREVIEWS_DOCKER.md, après avoir fait D1 et D2 applique D3 désormais.
   [regle] 3. **Ne pas** ajouter `quentin` au groupe `docker` (équivalent root total).
   [regle] ab981f7 feat(sse): fin de flux explicite — événement terminal unique `finished` + fermeture propre (Brique B) test(backend): couvre l'événement terminal unique de _SSEQueue (Brique B) docs: consigne l'étape 4 (fin de flux explicite) dans le rapport d'intégration forge-core
+  [regle] - **Risque** : migration de données — fallback obligatoire (étape 7).
+  [regle] 90:- **Risque** : migration de données — fallback obligatoire (étape 7).
   [regle] écarté et **pourquoi**, pour ne pas réouvrir dix fois le même débat.
   [regle] RÈGLE DE PERSISTANCE OBLIGATOIRE : le fichier AUDIT_SECURITE.md à la racine du projet est la base de référence exclusive de tout audit.
   [regle] en même temps je n'ai jamais rien demander de la sorte pour RAPPORT_PREVIEWS_DOCKER.md la dernière version en date sur mon GitHub où tout jusqu'à maintenant est à consigner est la version commit 1fb9980 Repartir de celle-là, la completer en conséquence sans reécrire celui-ci de bout en bout !
@@ -88,6 +91,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] - **Niveau B (structurel, avec migration BDD)** : persister une **liste de blocs typés ordonnés** (texte / réflexion / appel outil / sortie) pour intercaler texte et actions comme Emergent. Impact schéma messages + fallback rétrocompatible obligatoire.
   [regle] par contre Ctrl+E ne fonctionne pas actuellement avant le déploiement de la chose en prod (en tout cas dans brave-broswer)
   [regle] 5 écarté et **pourquoi**, pour ne pas réouvrir dix fois le même débat.
   [regle] M-CM-)cartM-CM-) et **pourquoi**, pour ne pas rM-CM-)ouvrir dix fois le mM-CM-*me dM-CM-)bat.$
@@ -103,7 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] ça me parait mieux même pour l'avenir.
   [regle] au risque de vexer, désoler ça ne fonctionne pas : j'ai crer une erreur (capture) mais "journalctl -u forge-backend --since "$(systemctl show forge-backend -p ActiveEnterTimestamp --value)" | grep -i "git .* echec" " dans /var/www/forge (prod) nada rien n'est retourner...
   [regle] ne pas oublier que mon serveur est dans un datacenter en région parisienne et que pour communiquer avec les serveur nationaux de free ça utilise les backbone en 100% fibre !
-  [regle] 7418: desormais les appels par type et on les parallelise via asyncio.gather.
-  [regle] - **Intention** : consigner que le bug `timeout of 60000ms exceeded` était fortement aggravé par des DNS défaillants côté box Free ; archiver le sujet « rendu blocs façon Emergent » hors du périmètre du correctif timeout.
-  [regle] au mieux consigne la chose cette fois ci dans un .md dans un répertoire "PROJETS_AMELIORATIONS" et on verra ensuite.
-  [regle] c'est usant tu corrige soit disant telle ou telle chose mais au final rien ça continue d'etre lent, ne pas fonctionner convenablement...

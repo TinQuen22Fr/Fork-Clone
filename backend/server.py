@@ -5078,6 +5078,26 @@ MESSAGES_PAGE_DEFAULT = 150
 MESSAGES_PAGE_MAX = 500
 
 
+def _build_messages_pipeline(flt: dict, limit: int) -> list:
+    """Pipeline d'agregation du listing `/messages`.
+
+    Remplace le `find` initial pour exposer `blocks_count` sans embarquer
+    `blocks[]` complet (le detail complet reste servi par
+    GET /messages/{id}/details). L'allegement des sorties d'outils continue
+    d'etre fait en Python apres coup (meme comportement qu'avant).
+    """
+    return [
+        {"$match": flt},
+        {"$sort": {"created_at": -1}},
+        {"$limit": limit},
+        {"$set": {"blocks_count": {"$size": {"$ifNull": ["$blocks", []]}}}},
+        {"$unset": [
+            "blocks", "image_b64", "file_text", "images_b64",
+            "prompt_override", "_id",
+        ]},
+    ]
+
+
 @api_router.get("/conversations/{conv_id}/messages")
 async def get_messages(
     conv_id: str,
@@ -5106,12 +5126,9 @@ async def get_messages(
         database.conversations.find_one(
             {"id": conv_id, "user_id": current_user["id"]}, {"_id": 1}
         ),
-        database.messages.find(
-            flt,
-            {"_id": 0, "image_b64": 0, "file_text": 0, "images_b64": 0, "prompt_override": 0},
-        )
-        .sort("created_at", -1)
-        .to_list(limit),
+        database.messages.aggregate(
+            _build_messages_pipeline(flt, limit)
+        ).to_list(limit),
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -5137,8 +5154,9 @@ async def get_message_details(
 ):
     """
     Renvoie un message unique avec tous ses champs (tool_steps.output,
-    steps.tools.output inclus).  Utilise par le frontend quand l'utilisateur
-    ouvre l'accordeon d'un message pour consulter les sorties d'outils.
+    steps.tools.output inclus), dont le tableau ordonne `blocks[]` (s'il
+    existe).  Utilise par le frontend quand l'utilisateur ouvre l'accordeon
+    d'un message pour consulter les sorties d'outils.
     """
     database = get_db()
     doc = await database.messages.find_one(
@@ -6115,6 +6133,8 @@ async def _ensure_assistant_doc(database, conversation_id: str) -> dict:
         "has_image": False,
         "tool_steps": [],
         "steps": [],
+        # Etape 4 (chantier rendu-blocs) : flux ordonne des blocs chronologiques.
+        "blocks": [],
         "provider": None,
         "model": None,
         "requested_provider": None,
@@ -6147,6 +6167,67 @@ async def _persist_step(database, message_id: str, step: dict) -> dict:
     )
     return finished
 
+
+
+# ---------------------------------------------------------------------------
+# Etape 4 (chantier rendu-blocs-style-emergent) : flux ordonne de `blocks[]`.
+# On persiste, A COTE de `content`, la suite chronologique reelle des blocs
+# (texte / reflexion / appel outil / sortie outil) afin de restituer en
+# relecture l'enchainement exact « texte -> outil -> texte » du streaming.
+# `content` reste la source de verite markdown (compat, recherche, exports).
+# ---------------------------------------------------------------------------
+
+def _block_exit_code(output: str) -> Optional[int]:
+    """Extrait le code de sortie d'une sortie `bash`, sinon None."""
+    try:
+        m = _BASH_EXIT_RE.search(output or "")
+        return int(m.group(1)) if m is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _make_tool_blocks(seq_call: int, seq_out: int, tool_step: dict, step_index: int) -> list:
+    """Construit les blocs `tool_call` + `tool_output` d'une entree d'outil.
+
+    La sortie est tronquee a la meme limite que `tool_steps` (STEP_LOG_TRUNC) :
+    le detail complet reste servi par GET /messages/{id}/details (etape 5).
+    """
+    name = tool_step.get("tool")
+    raw_out = tool_step.get("output") or ""
+    truncated = len(raw_out) > STEP_LOG_TRUNC
+    out = raw_out[:STEP_LOG_TRUNC] + (
+        f"\n... [sortie tronquee : {len(raw_out)} caracteres au total]"
+        if truncated else ""
+    )
+    call = {
+        "type": "tool_call",
+        "seq": seq_call,
+        "tool": name,
+        "input": tool_step.get("input") or {},
+        "step_index": step_index,
+    }
+    output_block = {
+        "type": "tool_output",
+        "seq": seq_out,
+        "tool": name,
+        "output": out,
+        "truncated": truncated,
+        "step_index": step_index,
+    }
+    ec = _block_exit_code(raw_out)
+    if ec is not None:
+        output_block["exit_code"] = ec
+    return [call, output_block]
+
+
+async def _push_blocks(database, message_id: Optional[str], blocks: list) -> None:
+    """Persiste immediatement (incrementalement) une salve de blocs ordonnes."""
+    if not message_id or not blocks:
+        return
+    await database.messages.update_one(
+        {"id": message_id},
+        {"$push": {"blocks": {"$each": blocks}}},
+    )
 
 
 async def _run_generation(
@@ -6192,6 +6273,15 @@ async def _run_generation(
     step_index = 0
     current: Optional[dict] = None
 
+    # Etape 4 (rendu-blocs) : flux ordonne des blocs chronologiques.
+    # `_block_seq` est un entier strictement croissant (ordre d'arrivee).
+    # Les deltas de texte consecutifs sont coalesces dans un seul bloc
+    # `text` tampon (`_text_block`), flush des qu'un outil arrive ou a la
+    # cloture : ainsi la concatenation des blocs `text` reste egale a
+    # `content` (invariant content == sum(blocks.text)).
+    _block_seq = 0
+    _text_block: Optional[dict] = None
+
     async def _finalize_step(final_status: str = "done") -> None:
         """Persiste en base l'etape courante et previent le client."""
         nonlocal current
@@ -6219,6 +6309,28 @@ async def _run_generation(
         channel.publish({"type": "step_start", "index": step_index})
         step_index += 1
 
+    def _next_seq() -> int:
+        nonlocal _block_seq
+        n = _block_seq
+        _block_seq += 1
+        return n
+
+    async def _flush_text_block() -> None:
+        """Persiste le bloc texte tampon courant s'il contient du texte."""
+        nonlocal _text_block
+        if _text_block is not None and _text_block.get("text"):
+            await _push_blocks(database, message_id, [_text_block])
+        _text_block = None
+
+    def _append_text(text: str) -> None:
+        """Ajoute un delta au bloc texte tampon (coalescence des deltas)."""
+        nonlocal _text_block
+        if not text:
+            return
+        if _text_block is None:
+            _text_block = {"type": "text", "seq": _next_seq(), "text": ""}
+        _text_block["text"] += text
+
     try:
         async for ev in stream_ai_response(
             history=history,
@@ -6241,6 +6353,9 @@ async def _run_generation(
                     message_id = assist_doc["id"]
                 channel.publish(ev)
             elif ev["type"] == "delta":
+                if assist_doc is None:
+                    assist_doc = await _ensure_assistant_doc(database, conversation_id)
+                    message_id = assist_doc["id"]
                 chunks.append(ev["text"])
                 # Un texte apres des outils = nouveau groupe : on cloture
                 # l'etape precedente (deja persistee) et on en ouvre une autre.
@@ -6251,6 +6366,8 @@ async def _run_generation(
                     await _finalize_step()
                     _start_step()
                 current["intention"] = (current.get("intention") or "") + ev["text"]
+                # Etape 4 : alimente le bloc texte ordonne (coalescence).
+                _append_text(ev["text"])
                 channel.publish(ev)
             elif ev["type"] == "tool":
                 if assist_doc is None:
@@ -6267,6 +6384,13 @@ async def _run_generation(
                 # suivra appartiendra a l'etape SUIVANTE (scellement).
                 if current.get("intention"):
                     current["_sealed"] = True
+                # Etape 4 : le texte precedant cet outil est fige comme un
+                # bloc, puis on pousse les blocs ordonnes tool_call+tool_output.
+                await _flush_text_block()
+                _tool_blocks = _make_tool_blocks(
+                    _next_seq(), _next_seq(), ev["step"], current["index"]
+                )
+                await _push_blocks(database, message_id, _tool_blocks)
                 tool_steps.append(_truncate_step_logs(
                     {"tools": [ev["step"]]}
                 )["tools"][0])
@@ -6281,6 +6405,9 @@ async def _run_generation(
             elif ev["type"] == "done":
                 meta = ev
 
+        # Etape 4 : fige le dernier bloc texte en attente (dernier segment
+        # du streaming), garant de l'invariant content == sum(blocks.text).
+        await _flush_text_block()
         # Fin de flux : on cloture et persiste l'etape en cours.
         await _finalize_step("done")
 
@@ -6324,6 +6451,9 @@ async def _run_generation(
             # vide ou erreur) pour ne pas perdre le tour.
             assist_doc = await _ensure_assistant_doc(database, conversation_id)
             message_id = assist_doc["id"]
+        # Filet : si un bloc texte restait en tampon (ex. assist_doc cree tard),
+        # on le pousse maintenant que message_id est garanti.
+        await _flush_text_block()
 
         final_meta = meta or {
             "provider": provider,
@@ -6353,6 +6483,10 @@ async def _run_generation(
         channel.publish({"type": "done", "doc": ai_doc})
         channel.finish("error" if stopped else "done", doc=ai_doc)
     except asyncio.CancelledError:  # pragma: no cover
+        try:
+            await _flush_text_block()
+        except Exception:  # noqa: BLE001
+            pass
         if current is not None:
             try:
                 await _finalize_step("done")
@@ -6368,6 +6502,10 @@ async def _run_generation(
         raise
     except Exception:  # noqa: BLE001
         logger.exception("Generation en tache de fond interrompue")
+        try:
+            await _flush_text_block()
+        except Exception:  # noqa: BLE001
+            pass
         if current is not None:
             try:
                 await _finalize_step("done")
