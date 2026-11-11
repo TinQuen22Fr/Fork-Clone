@@ -392,3 +392,13 @@ Deux défauts nommés :
 ### Règles actées ce tour
 - « Enregistrer sur GitHub » ≠ `upgrade.sh`. Enregistrer publie le dépôt distant ; upgrade.sh ne se lance QUE pour un vrai déploiement prod voulu.
 - Quasi toute modif du dépôt doit passer par la Forge (workspace → Enregistrer), sinon les modifs faites ailleurs sont écrasées par le workspace local non modifié (erreurs git, bouton force = écrasement inutile).
+
+## 2026-11-11 19:35 — Bouton emoji dans la fenêtre de chat
+- **Intention** : ajouter un sélecteur d'emojis (bouton + popover groupé) dans la zone de saisie du chat, avec raccourci clavier Ctrl+E, et vérifier que les réponses du modèle peuvent contenir des emojis.
+- **Friction** : cache esbuild périmé a provoqué une fausse erreur de doublons (symboles `EmojiPicker`/`insertEmoji` « déjà déclarés ») référençant un `chat/EmojiPicker.jsx` inexistant sur disque ; résolu en purgeant `node_modules/.vite`. Côté réponses : rien à modifier, ReactMarkdown+remarkGfm rendent les emojis Unicode nativement (le `stripMarkdown` ne sert qu'à la synthèse vocale, pas au rendu).
+- **Suite** : attendre le feu vert d'enregistrement GitHub, puis `upgrade.sh` (demandé explicitement cette fois) pour déployer en prod.
+
+## 2026 — bouton emoji dans le chat
+- **Intention** : ajouter un bouton emoji + insertion dans les reponses, dans la fenetre de chat.
+- **Friction** : la feature existait deja en modifs de travail non commitees (composant components/EmojiPicker.jsx non suivi + integration dans Chat.jsx). Mon premier jet a duplique insertEmoji/EmojiPicker -> build KO ("already declared"). Un git checkout de Chat.jsx a ecrase l'integration non commitee (absente du dernier commit). Reconstruite proprement sur l'API du composant existant (onPick, event forge:toggle-emoji, raccourci Ctrl+E). Build frontend OK (Chat-CaIQNIln.js, 2038 modules). Tests backend : echecs environnementaux preexistants (auth 404 / acces config), zero fichier backend modifie.
+- **Suite** : attendre l'enregistrement GitHub via la Forge, puis upgrade.sh en prod (demande par l'utilisateur pour cette feature).

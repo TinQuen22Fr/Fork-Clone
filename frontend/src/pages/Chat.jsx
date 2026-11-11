@@ -72,6 +72,7 @@ import EmptyChat from "@/components/chat/EmptyChat";
 import MessagesSkeleton from "@/components/chat/MessagesSkeleton";
 import Sidebar from "@/components/chat/Sidebar"
 import ChatHeader from "@/components/chat/ChatHeader";
+import EmojiPicker from "@/components/EmojiPicker";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -1279,10 +1280,40 @@ export default function Chat() {
 
   // Saisie multi-lignes : Entree insere un retour a la ligne (PAS d'envoi).
   // L'envoi se fait via le bouton, ou via la touche de commande + Entree.
+  // Insere un emoji a la position du curseur dans la zone de saisie.
+  const insertEmoji = (emoji) => {
+    const el = textareaRef.current;
+    if (!el) {
+      setText((prev) => (prev ?? "") + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    setText((prev) => {
+      const base = prev ?? "";
+      return base.slice(0, start) + emoji + base.slice(end);
+    });
+    requestAnimationFrame(() => {
+      const pos = start + emoji.length;
+      el.focus();
+      try {
+        el.setSelectionRange(pos, pos);
+      } catch (_) {
+        // selection range non supportee : on ignore
+      }
+    });
+  };
+
   const onKeyDown = (e) => {
     if (e.key === "Enter" && (e.getModifierState?.("Control") || e.getModifierState?.("Meta"))) {
       e.preventDefault();
       sendMessage();
+      return;
+    }
+    // Ctrl+E (ou Cmd+E) : ouvre/ferme le selecteur d'emojis.
+    if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("forge:toggle-emoji"));
     }
   };
 
@@ -1860,6 +1891,7 @@ export default function Chat() {
                     )}
                   </button>
                   <VoicePicker />
+                  <EmojiPicker onPick={insertEmoji} disabled={sending} />
                 </div>
                 <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0 justify-center sm:justify-end">
                   <div
