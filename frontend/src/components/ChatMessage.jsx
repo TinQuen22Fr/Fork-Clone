@@ -23,6 +23,70 @@ dayjs.locale("fr");
 
 const AI_AVATAR = "/logo-64.png";
 
+// Miroir front de backend._make_tool_blocks : limite de troncature des sorties.
+const STEP_LOG_TRUNC = 1200;
+
+/**
+ * Reconstruit une liste de blocs ordonnes (type="text" / "tool_call" / "tool_output")
+ * pour les anciens messages persistes AVANT l'etape 4 (donc sans champ `blocks[]`).
+ *
+ * Contrat identique a `MessageBlocks` : chaque bloc porte `type`, `seq` (monotone),
+ * et pour les outils `tool`, `input`/`output`, `step_index`, `exit_code?`, `truncated?`.
+ * Invariant : le texte global vient en premier (seq 0), puis les paires d'outils.
+ *
+ * @param {{content?: string}} message
+ * @param {Array<{tool?: string, input?: object, output?: string}>} toolSteps
+ * @returns {Array<object>}
+ */
+export function buildSyntheticBlocks(message, toolSteps) {
+  const blocks = [];
+  let seq = 0;
+
+  const content = message?.content || "";
+  if (content) {
+    blocks.push({ type: "text", seq: seq++, text: content });
+  }
+
+  const steps = Array.isArray(toolSteps) ? toolSteps : [];
+  steps.forEach((s, i) => {
+    const rawOut = s?.output || "";
+    const truncated = rawOut.length > STEP_LOG_TRUNC;
+    const out = truncated
+      ? rawOut.slice(0, STEP_LOG_TRUNC) +
+        `\n... [sortie tronquee : ${rawOut.length} caracteres au total]`
+      : rawOut;
+
+    blocks.push({
+      type: "tool_call",
+      seq: seq++,
+      tool: s?.tool,
+      input: s?.input || {},
+      step_index: i,
+    });
+
+    const outBlock = {
+      type: "tool_output",
+      seq: seq++,
+      tool: s?.tool,
+      output: out,
+      truncated,
+      step_index: i,
+    };
+    const ec = blockExitCode(rawOut);
+    if (ec != null) outBlock.exit_code = ec;
+    blocks.push(outBlock);
+  });
+
+  return blocks;
+}
+
+// Miroir front de backend._block_exit_code : extrait un code de sortie type `exit N`.
+function blockExitCode(output) {
+  if (!output) return null;
+  const m = String(output).match(/(?:^|\n)\s*exit[ _]?code\s*[:=]?\s*(\d{1,3})\b/i);
+  return m ? Number(m[1]) : null;
+}
+
 function stripMarkdown(md) {
   return (md || "")
     .replace(/```[\s\S]*?```/g, " (bloc de code) ")
@@ -534,11 +598,19 @@ function ChatMessage({
           </details>
         )}
 
-        {/* Etape 7 : messages recents -> rendu par blocs ordonnes ; anciens
-            (sans blocks) -> rendu global historique (fallback retrocompatible). */}
+        {/* Etape 7 : messages recents -> rendu par blocs ordonnes.
+            Anciens messages (sans `blocks[]`) mais avec des outils -> blocs
+            synthetiques reconstruits (fallback retrocompatible, etape 6.5).
+            Message texte seul -> rendu markdown direct. */}
         {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
           <MessageBlocks
             message={message}
+            detailData={detailData}
+            streaming={message.streaming}
+          />
+        ) : Array.isArray(toolSteps) && toolSteps.length > 0 ? (
+          <MessageBlocks
+            message={{ ...message, blocks: buildSyntheticBlocks(message, toolSteps) }}
             detailData={detailData}
             streaming={message.streaming}
           />
