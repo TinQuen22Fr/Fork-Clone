@@ -8,7 +8,7 @@
  * Voir le fichier LICENSE ou <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import api from "@/lib/api";
 import { speak, stopSpeech } from "@/lib/tts";
 import MarkdownBody from "@/components/MarkdownBody";
@@ -183,6 +183,28 @@ function ChatMessage({
     }
   }, [message.id, detailData, detailLoading]);
 
+  // Rendu par blocs ordonnes (style Emergent) : le listing retire `blocks[]`
+  // du payload (il ne garde que `blocks_count`). Si le message possede de vrais
+  // blocs persistes, on charge le detail complet des le rendu pour afficher le
+  // bon ordre texte/outil ET les sorties, sans attendre l'ouverture d'un
+  // accordeon. Les messages en cours de streaming portent deja `blocks` en
+  // memoire : on ne refetch pas.
+  useEffect(() => {
+    const hasRealBlocks =
+      (Array.isArray(message.blocks) && message.blocks.length > 0) ||
+      (message.blocks_count ?? 0) > 0;
+    if (hasRealBlocks && !message.streaming && !detailData && !detailLoading) {
+      fetchDetails();
+    }
+  }, [
+    message.blocks,
+    message.blocks_count,
+    message.streaming,
+    detailData,
+    detailLoading,
+    fetchDetails,
+  ]);
+
   // Merge : si les details sont charges, on utilise leurs tool_steps/steps
   // (avec output complet) ; sinon on garde ceux du listing (output=null).
   const toolSteps = detailData?.tool_steps ?? message.tool_steps;
@@ -356,6 +378,16 @@ function ChatMessage({
     }
   };
 
+  // Un message servi par le rendu par blocs ordonnes (style Emergent) ne doit
+  // PAS reafficher les anciens accordeons "etapes" / "outils utilises" : ses
+  // outils sont deja intercales dans les blocs. On masque donc ces accordeons
+  // des qu'on sait que le message porte de vrais blocs (en memoire, charges, ou
+  // signales par blocks_count cote listing).
+  const usesOrderedBlocks =
+    (Array.isArray(message.blocks) && message.blocks.length > 0) ||
+    (Array.isArray(detailData?.blocks) && detailData.blocks.length > 0) ||
+    (message.blocks_count ?? 0) > 0;
+
   const feedback = message.feedback || null;
   const ts = message.created_at ? dayjs(message.created_at).fromNow() : "";
 
@@ -396,7 +428,7 @@ function ChatMessage({
           )}
         </div>
 
-        {(steps.length > 0 || message.steps_count > 0) && (
+        {!usesOrderedBlocks && (steps.length > 0 || message.steps_count > 0) && (
           <div
             className="mb-3 space-y-2"
             data-testid={`steps-${message.id}`}
@@ -525,7 +557,7 @@ function ChatMessage({
           </div>
         )}
 
-        {(toolSteps.length > 0 || message.tool_steps_count > 0) && (
+        {!usesOrderedBlocks && (toolSteps.length > 0 || message.tool_steps_count > 0) && (
           <details
             className="mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
             data-testid={`tool-steps-${message.id}`}
@@ -602,7 +634,9 @@ function ChatMessage({
             Anciens messages (sans `blocks[]`) mais avec des outils -> blocs
             synthetiques reconstruits (fallback retrocompatible, etape 6.5).
             Message texte seul -> rendu markdown direct. */}
-        {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
+        {(Array.isArray(message.blocks) && message.blocks.length > 0) ||
+        (Array.isArray(detailData?.blocks) && detailData.blocks.length > 0) ||
+        ((message.blocks_count ?? 0) > 0 && detailLoading) ? (
           <MessageBlocks
             message={message}
             detailData={detailData}
@@ -727,6 +761,7 @@ export default React.memo(ChatMessage, (a, b) =>
   a.message.id === b.message.id &&
   a.message.content === b.message.content &&
   a.message.blocks === b.message.blocks &&
+  a.message.blocks_count === b.message.blocks_count &&
   a.message.tool_steps === b.message.tool_steps &&
   a.message.steps === b.message.steps &&
   a.isLast === b.isLast &&
