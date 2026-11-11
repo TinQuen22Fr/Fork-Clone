@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T17:38:26.808327+00:00
+# Dernière mise à jour : 2026-11-11T17:51:09.036478+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 54c2312 chore(projets-améliorations): réorganise le suivi des chantiers + cadre l'étape 3 (Phase B).
+- Git : branche claude-ai, dernier commit 9fd43e9 chore(projets-améliorations): absorbe "Taches finalisées entièrement" dans Finis/.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -21,9 +21,8 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   PROJETS_AMELIORATIONS/En cours/
   PROJETS_AMELIORATIONS/En cours/rendu-blocs-style-emergent/
   PROJETS_AMELIORATIONS/Finis/
+  PROJETS_AMELIORATIONS/Finis/forge-core/
   PROJETS_AMELIORATIONS/Finis/.gitkeep
-  Taches finalisées entièrement/
-  Taches finalisées entièrement/forge-core.md
   agents/
   agents/vibe-coder.md
   agents/vibe-planner.md
@@ -66,6 +65,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   deploy/docker/daemon.json
   deploy/docker/forge-docker-modules.conf
   deploy/docker/forge-preview
+  deploy/docker/forge-preview.sudoers
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
@@ -87,6 +87,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] il faut corriger car sur le dépôt github ca s'affiche pas bien regarde : En cours s'affiche En cours/rendu-blocs-style-emergent.
   [regle] Et tout ce qui est fait concernant ce travail en cour doit aller et être mis dans le répertoires adéquat et ne pas rester sous PROJETS_AMELIORATIONS
   [regle] Que la preview ne fonctionne pas est NORMALE et en rien que le code modifier n'est pas mis en place en prod en faisant les manipulations citer ci dessus...
   [regle] ça à déjà était consigner ça aussi je te rappel...
@@ -104,5 +105,4 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] c'est usant tu corrige soit disant telle ou telle chose mais au final rien ça continue d'etre lent, ne pas fonctionner convenablement...
   [regle] d'ailleurs je m'étonne que pour éviter un fichier genre server.py tu écrit toujours dedans sans par exemple écrire un nouveau .py pour ensuite coder dans server.py comme quoi sur telle passage pour telle outils, fonctionnalités etc...
   [regle] il faut que telle ou telle fichier .py s’exécute...
-  [regle] même si X ou Y outils et que la réponse est toujours en court ça doit serte continuer même avec une interruption mais afficher le dernier retour connu avant l'actualisation et surtout compléter en allant à la suite de ce qui à était fait...
-  [regle] Ecoute fais le nécessaire de toutes façon je suppose que même si ça télécharge que
+  [regle] même si X ou Y outils et que la réponse est toujours en court ça doit serte continuer même avec une interruption mais afficher le dernier retour connu avant l'actualisation et surtout compléter en allant

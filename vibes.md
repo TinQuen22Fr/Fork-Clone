@@ -378,3 +378,8 @@ Deux défauts nommés :
 - **Intention** : ranger le chantier `forge-core.md` (ex-"Taches finalisées entièrement/") comme chantier terminé dans `PROJETS_AMELIORATIONS/Finis/forge-core/` et supprimer le dossier obsolète.
 - **Friction** : warnings `Permission denied` sur `~/.config/git/*` (config git globale hors projet) — sans impact, `git mv` et `rmdir` réussis.
 - **Suite** : feu vert attendu pour Phase B — étape 4 (alimentation backend de `blocks[]`).
+
+## 2025-11-11 — Fix repliement GitHub dossier "En cours"
+- **Intention** : empêcher GitHub d'afficher `En cours/rendu-blocs-style-emergent` replié sur une seule ligne.
+- **Friction** : GitHub replie tout dossier n'ayant qu'un unique enfant-dossier ; `En cours/` ne contenait que `rendu-blocs-style-emergent/`.
+- **Suite** : ajout de `PROJETS_AMELIORATIONS/En cours/.gitkeep` → `En cours/` a 2 enfants directs, s'affiche seul ; se cliquera pour révéler les chantiers en cours (actuels et futurs). À enregistrer sur GitHub puis upgrade.sh.
