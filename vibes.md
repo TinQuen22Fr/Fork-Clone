@@ -17,3 +17,8 @@
 - **Intention** : figer `MessageBlocks` comme rendu de relecture ; ajouter prop `streaming` + caret sur le dernier bloc texte (préparation 6.4).
 - **Friction** : `read_file` échouait sur un cache de chemin → relecture via `cat`. Parité visuelle réelle non vérifiable au build (preview requise).
 - **Suite** : 6.3 — construire `blocks[]` live dans `streamStore` (miroir backend étape 4).
+
+## 2026-11-11 23:02 — 6.3 construire blocks[] live (streamStore)
+- **Intention** : reconstruire cote client la meme sequence ordonnee que le backend (deltas coalesces en bloc text, outil -> paire tool_call/tool_output, seq monotone, step_index).
+- **Friction** : pas d'infra de test front (ni script test, ni vitest) -> test autonome Node pur (streamStore.test.mjs), 19 assertions. Parite visuelle reelle non verifiable au build (reportee 6.5/preview).
+- **Suite** : 6.4 exposer blocks + streaming via useStreamingMessage.

@@ -24,7 +24,7 @@ import LiveMessage from "@/components/LiveMessage";
 import { STREAMING_SLOT_KEY } from "@/hooks/useStreamingMessage";
 import {
   resetStream,
-  setStreamText,
+  appendStreamText,
   setStreamInfo,
   addStreamTool,
   startStreamStep,
@@ -949,7 +949,6 @@ export default function Chat() {
         form.append("reasoning_effort", reasoningEffort);
       if (agent) form.append("agent", agent);
 
-      let acc = "";
       await postSSE("/chat/stream", form, {
         signal: controller.signal,
         onEvent: ({ event, data }) => {
@@ -959,8 +958,7 @@ export default function Chat() {
             );
             optimisticUser.id = data.id;
           } else if (event === "delta") {
-            acc += data.text;
-            setStreamText(acc);
+            appendStreamText(data.text);
           } else if (event === "start") {
             setStreamInfo({ provider: data.provider, model: data.model });
           } else if (event === "tool") {
