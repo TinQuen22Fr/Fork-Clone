@@ -228,6 +228,8 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
             rows={3}
             placeholder="Décris la tâche : « Crée un scraper météo avec alertes SMS »…"
             className="w-full resize-none bg-black/50 border-2 border-white/20 focus:border-[#ff2a6d] outline-none px-4 py-3 text-sm placeholder:text-gray-600"
+            id="hub-prompt"
+            name="prompt"
             data-testid="hub-prompt-input"
           />
           <div className="flex flex-wrap items-center gap-2">
@@ -235,7 +237,9 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
               value={project}
               onChange={(e) => setProject(e.target.value)}
               className="bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
-              data-testid="hub-project-select"
+              id="hub-project"
+            name="project"
+            data-testid="hub-project-select"
             >
               <option value="">— sans projet —</option>
               {projects.map((p) => (
@@ -250,7 +254,9 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="nouveau-projet"
                 className="w-40 bg-black/50 border-2 border-white/20 focus:border-[#ffd700] outline-none px-3 py-2 font-mono text-xs"
-                data-testid="hub-new-project-input"
+                id="hub-new-project"
+            name="new-project"
+            data-testid="hub-new-project-input"
               />
               <input
                 ref={fileInputRef}
@@ -258,7 +264,9 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                 accept=".zip,application/zip"
                 onChange={handleImportFile}
                 className="hidden"
-                data-testid="hub-import-file-input"
+                id="hub-import-file"
+            name="import-file"
+            data-testid="hub-import-file-input"
               />
               <button
                 type="button"

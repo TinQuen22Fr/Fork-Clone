@@ -110,6 +110,8 @@ export const VoicePicker = () => {
               </div>
             ) : (
               <select
+                id="voice-select"
+                name="voice"
                 value={voice}
                 onChange={(e) => pick(e.target.value)}
                 className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-2 py-2 font-mono text-xs"

@@ -109,6 +109,7 @@ export default function Login() {
                 </label>
                 <input
                   id="register-name-input"
+                  name="name"
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -124,6 +125,7 @@ export default function Login() {
               </label>
               <input
                 id="auth-email-input"
+                name="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -139,6 +141,7 @@ export default function Login() {
               </label>
               <input
                 id="auth-password-input"
+                name="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

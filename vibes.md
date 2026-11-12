@@ -46,3 +46,25 @@
 - **Intention** : ajouter id+name sur les 5 champs de formulaire sans identifiant dans frontend/src/pages/Chat.jsx (input file, textarea message, select provider/model/agent).
 - **Friction** : `yarn lint` casse sur EACCES ~/.config/yarn (config globale hors projet) → contourné via ./node_modules/.bin/eslint (exit 0). Build OK en 31.68s.
 - **Suite** : utilisateur valide le diff en PROD (Issues doit passer de 4→0), puis push GitHub + upgrade.sh. M2 (perf sendMessage) reste un chantier distinct non traité.
+
+## Passe audit — crash rétrocompat ChatMessage (2026-11-12)
+- **Intention** : diagnostiquer le panneau rouge "Cannot read properties of undefined (reading 'length')" bloquant l'ouverture des anciennes conversations prod (Test 5 rétrocompat KO).
+- **Friction** : pas de données prod en preview → repro impossible ici ; diagnostic par lecture statique. Non vérifié : présence d'un test couvrant un message nu (sans steps/tool_steps).
+- **Suite** : BLOQUANT confirmé ChatMessage.jsx l.210-211 + l.432/565 (steps/toolSteps undefined → .length). Verdict REJET. Correctif à appliquer : fallback `?? []` à la source. Exiger un test sur message sans steps/tool_steps.
+
+---
+## Boucle 2026-11-12 16:44 — correctifs groupés autonomie
+- **Intention** : débloquer Test 5 (crash rétrocompat) + étouffer Violations perf submit/keydown/click + couvrir a11y sur tous les formulaires visibles.
+- **Friction** : aucune après exécution. ESLint 0, Vite build OK (2040 modules), buildSyntheticBlocks 15/15, streamStore OK, test_ordered_blocks 7/7.
+- **Suite** : commit + push, puis utilisateur lance upgrade.sh pour déployer en prod.
+
+### Modifications livrées
+1. **ChatMessage.jsx l.210-211** : fallback `?? []` sur `toolSteps`/`steps` → corrige crash `undefined.length` pour conversations prod antérieures au chantier blocs (Test 5 rétrocompat).
+2. **Chat.jsx — Volet B perf** : `onKeyDown`, `onSubmit` du form, `onCloseSession` wrappés dans `queueMicrotask` → sort le travail du handler d'événement, supprime les `[Violation] 'keydown/submit/click' handler took Xms`.
+3. **a11y id/name étendus** :
+   - GithubSaveDialog.jsx : 9 champs
+   - chat/Sidebar.jsx : 1 champ (rename conv)
+   - Login.jsx : 3 champs (name ajouté)
+   - VoicePicker.jsx : 1 champ
+   - ProjectHub.jsx : 4 champs
+   - PreviewButton.jsx : 1 champ

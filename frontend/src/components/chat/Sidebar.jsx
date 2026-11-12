@@ -124,6 +124,8 @@ export default function Sidebar({
               >
                 <input
                   autoFocus
+                  id={`rename-conv-${c.id}`}
+                  name="conversation-title"
                   onClick={(e) => e.stopPropagation()}
                   value={editingTitle}
                     onChange={(e) => onEditingTitleChange(e.target.value)}

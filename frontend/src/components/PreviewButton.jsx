@@ -346,6 +346,8 @@ export const PreviewButton = ({ project, previewUrl, onSaved }) => {
             </div>
             <div className="p-4 space-y-3">
               <input
+                id="preview-url"
+                name="preview-url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && saveUrl()}

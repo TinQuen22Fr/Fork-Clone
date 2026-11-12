@@ -1281,7 +1281,8 @@ export default function Chat() {
   const onKeyDown = (e) => {
     if (e.key === "Enter" && (e.getModifierState?.("Control") || e.getModifierState?.("Meta"))) {
       e.preventDefault();
-      sendMessage();
+      // Défère hors du handler clavier pour ne pas bloquer le thread (Violation keydown).
+      queueMicrotask(() => sendMessage());
       return;
     }
     // Ctrl+E (ou Cmd+E) : ouvre/ferme le selecteur d'emojis.
@@ -1413,7 +1414,7 @@ export default function Chat() {
             else setSidebarOpen(true);
           }}
           activeId={activeId}
-          onCloseSession={() => setActiveId(null)}
+          onCloseSession={() => { queueMicrotask(() => setActiveId(null)); }}
           onAbortRequest={abortRequest}
           activeConv={activeConv}
           projectUrls={projectUrls}
@@ -1759,7 +1760,11 @@ export default function Chat() {
               </svg>
             </button>
             <form
-              onSubmit={sendMessage}
+              onSubmit={(e) => {
+                e.preventDefault();
+                // Défère hors du handler submit pour ne pas bloquer le thread (Violation submit).
+                queueMicrotask(() => sendMessage());
+              }}
               className="chat-dock flex flex-col"
               data-testid="chat-input-form"
             >

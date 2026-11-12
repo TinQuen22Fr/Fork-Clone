@@ -207,8 +207,8 @@ function ChatMessage({
 
   // Merge : si les details sont charges, on utilise leurs tool_steps/steps
   // (avec output complet) ; sinon on garde ceux du listing (output=null).
-  const toolSteps = detailData?.tool_steps ?? message.tool_steps;
-  const steps = detailData?.steps ?? message.steps;
+  const toolSteps = detailData?.tool_steps ?? message.tool_steps ?? [];
+  const steps = detailData?.steps ?? message.steps ?? [];
 
   const copyUser = async () => {
     try {

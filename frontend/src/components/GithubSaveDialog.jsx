@@ -239,7 +239,9 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   loadStatus(e.target.value);
                 }}
                 className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
-                data-testid="github-project-select"
+                id="github-project"
+                  name="github-project"
+                  data-testid="github-project-select"
               >
                 <option value="">— choisir le dossier projet —</option>
                 {projects.map((p) => (
@@ -267,6 +269,8 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   onChange={(e) => setToken(e.target.value)}
                   placeholder="ghp_..."
                   className="flex-1 bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
+                  id="github-token"
+                  name="github-token"
                   data-testid="github-token-input"
                 />
                 <button
@@ -291,6 +295,8 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   value={creatingRepo ? "__new__" : repo}
                   onChange={(e) => pickRepo(e.target.value)}
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs"
+                  id="github-repo"
+                  name="github-repo"
                   data-testid="github-repo-select"
                 >
                   <option value="">— choisir —</option>
@@ -315,7 +321,9 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                       onChange={(e) => setNewRepoName(e.target.value)}
                       placeholder={project || "mon-projet"}
                       className="w-full bg-black/50 border-2 border-white/20 focus:border-[#ffd700] outline-none px-3 py-2 font-mono text-xs"
-                      data-testid="github-new-repo-input"
+                      id="github-new-repo"
+                  name="github-new-repo"
+                  data-testid="github-new-repo-input"
                     />
                     <span className="block text-[10px] text-gray-500 font-mono">
                       Nom seul → créé sur {status?.login || "ton compte"}. Sinon
@@ -328,7 +336,9 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                       checked={privateRepo}
                       onChange={(e) => setPrivateRepo(e.target.checked)}
                       className="accent-[#ff2a6d] w-4 h-4"
-                      data-testid="github-private-checkbox"
+                      id="github-private"
+                  name="github-private"
+                  data-testid="github-private-checkbox"
                     />
                     Dépôt privé
                   </label>
@@ -344,6 +354,8 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   onChange={(e) => setBranch(e.target.value)}
                   disabled={!branches.length || creatingRepo}
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs disabled:opacity-40"
+                  id="github-branch"
+                  name="github-branch"
                   data-testid="github-branch-select"
                 >
                   {creatingRepo && <option value="main">main</option>}
@@ -364,6 +376,8 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   onChange={(e) => setNewBranch(e.target.value)}
                   placeholder="ex. forge-2026-09-21"
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#ffd700] outline-none px-3 py-2 font-mono text-xs"
+                  id="github-new-branch"
+                  name="github-new-branch"
                   data-testid="github-new-branch-input"
                 />
               </label>
@@ -396,6 +410,7 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   placeholder={"Sauvegarde depuis la Forge\n\nLigne vide puis corps du message sur plusieurs lignes si besoin."}
                   rows={5}
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs resize-y leading-relaxed whitespace-pre-wrap"
+                  name="github-commit"
                   data-testid="github-commit-message"
                 />
               </div>
@@ -421,7 +436,9 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                 checked={force}
                 onChange={(e) => setForce(e.target.checked)}
                 className="mt-0.5 accent-[#ffd700]"
-                data-testid="github-force-checkbox"
+                id="github-force"
+                  name="github-force"
+                  data-testid="github-force-checkbox"
               />
               <span>
                 <b>Forcer l&apos;enregistrement</b> (push --force-with-lease) : ecrase
