@@ -3,7 +3,7 @@
 // cache mal invalide servirait un vieux bundle (piege deja rencontre en prod).
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
-self.addEventListener("fetch", (event) => {
+self.addEventListener("fetch", () => {
   // Réseau uniquement. En cas de coupure, on laisse le navigateur afficher son
   // erreur native plutôt que de servir une page périmée.
   return;

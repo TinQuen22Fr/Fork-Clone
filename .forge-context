@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-11T23:48:05.096512+00:00
+# Dernière mise à jour : 2026-11-12T12:10:09.704413+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 6659bbf feat(stream): rendu par blocs ordonnés style Emergent — étape 6 (Phase B) complète.
+- Git : branche claude-ai, dernier commit 369a570 fix(blocks): ordre réel + sorties au rechargement, outils repliables style Emergent — étape 6 (test 3).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -91,6 +91,11 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] bon bah exceptionnellement je vais me déconnecter et reconnecter (en espérant que ça fonctionne toujours...
+  [regle] ok corrige Chat.jsx et fait ce qu'il faut.
+  [regle] après ne pas oublier la config du server qui n'est pas non plus un cheval de course serte mais qui suffit pour mon usage...
+  [regle] ne crois pas non plus que c'est un serveur avec gros processeur (ne pas oublier que c'est un processeur de dedibox gamme "Start" avec DD Sata c'est pas du VPS...
+  [regle] Bonne nouvelle les 2 premiers tests sont toujours OK ✅ Le test 3 passe lui aussi OK ✅ après le correctif Je vois la suite des test après la réponse au moins le test 4
   [regle] si il faut que tu modifie des choses et que ça sous entend modifier d'autre étapes sous étapes tu le feras pour arriver à du fonctionnel (c'est le principe aussi de la forge, corriger tout ce qui est à corriger pour que ça fonctionne et pas juste un fichier ou commit précisément...
   [regle] - **Niveau B (structurel, avec migration BDD)** : persister une **liste de blocs typés ordonnés** (texte / réflexion / appel outil / sortie) pour intercaler texte et actions comme Emergent. Impact schéma messages + fallback rétrocompatible obligatoire.
   [regle] par contre Ctrl+E ne fonctionne pas actuellement avant le déploiement de la chose en prod (en tout cas dans brave-broswer)
@@ -102,8 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] ça à déjà était consigner ça aussi je te rappel...
   [regle] autre chose il faut que quand les preview sont lancer que tu sache lire et trouver le l'url.
   [regle] il faut que tu adapte upgrade.sh pour qu'il détecte Playwright en prod et le laisse même en faisant l'upgrade.
-  [regle] c'est logique au bout de 5mn environs la preview dans le docker stop et il faut la relancer.
-  [regle] Recommence pas à ne pas savoir que la forge est une API dogfooding
-  [regle] pour l'url voyons : https://fork-clone.preview.quentin-astro.fr/ (hallucinant d'ailleurs vue que le systeme de preview à pourtant était revu totalement par toi...) et oui c'esrt en contener docker pour ne pas surcharger le server et "sanctuarisé" la chose.
-  [regle] ça me parait mieux même pour l'avenir.
-  [regle] au risque de vexer, désoler ça ne fonctionne pas : j'ai crer une erreur (capture) mais "journalctl -u forge-backend --since "$(systemctl show forge-backend -p ActiveEnterTimest

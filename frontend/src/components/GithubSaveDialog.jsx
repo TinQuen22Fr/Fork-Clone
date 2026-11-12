@@ -368,11 +368,11 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                 />
               </label>
 
-              <label className="block space-y-1">
+              <div className="block space-y-1">
                 <span className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+                  <label htmlFor="github-commit-textarea" className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
                     Message de commit
-                  </span>
+                  </label>
                   <button
                     type="button"
                     onClick={generateMessage}
@@ -390,6 +390,7 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   </button>
                 </span>
                 <textarea
+                  id="github-commit-textarea"
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder={"Sauvegarde depuis la Forge\n\nLigne vide puis corps du message sur plusieurs lignes si besoin."}
@@ -397,7 +398,7 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                   className="w-full bg-black/50 border-2 border-white/20 focus:border-[#05d9e8] outline-none px-3 py-2 font-mono text-xs resize-y leading-relaxed whitespace-pre-wrap"
                   data-testid="github-commit-message"
                 />
-              </label>
+              </div>
             </>
           )}
 
@@ -423,7 +424,7 @@ export const GithubSaveDialog = ({ onClose, conversationId }) => {
                 data-testid="github-force-checkbox"
               />
               <span>
-                <b>Forcer l'enregistrement</b> (push --force-with-lease) : ecrase
+                <b>Forcer l&apos;enregistrement</b> (push --force-with-lease) : ecrase
                 la branche distante avec le contenu local. Les commits distants
                 absents en local seront perdus. A utiliser seulement si tu es sur
                 de ce que tu fais.

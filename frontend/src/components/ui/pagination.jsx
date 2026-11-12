@@ -24,7 +24,9 @@ const PaginationLink = ({
   isActive,
   size = "icon",
   ...props
-}) => <a aria-current={isActive ? "page" : undefined} className={cn(buttonVariants({
+}) =>
+  // eslint-disable-next-line jsx-a11y/anchor-has-content
+  <a aria-current={isActive ? "page" : undefined} className={cn(buttonVariants({
   variant: isActive ? "outline" : "ghost",
   size
 }), className)} {...props} />;

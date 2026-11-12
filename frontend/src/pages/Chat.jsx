@@ -38,25 +38,16 @@ import {
   Paperclip,
   FileText,
   Square,
-  Trash2,
-  LogOut,
   X,
-  MessageSquare,
-  Menu,
-  Pencil,
   Check,
   Cpu,
-  Gauge,
   Star,
   Mic,
   MicOff,
   Loader2,
   Github,
   GitFork,
-  ExternalLink,
   ShieldCheck,
-  Sun,
-  Moon,
   FileDown,
   Brain,
   Activity,
@@ -65,9 +56,6 @@ import GithubSaveDialog from "@/components/GithubSaveDialog";
 import VoicePicker from "@/components/VoicePicker";
 import { useTheme } from "@/hooks/useTheme";
 import ProjectHub from "@/components/ProjectHub";
-import PreviewButton from "@/components/PreviewButton";
-import ThemeToggle from "@/components/chat/ThemeToggle";
-import UsageBadge from "@/components/chat/UsageBadge";
 import EmptyChat from "@/components/chat/EmptyChat";
 import MessagesSkeleton from "@/components/chat/MessagesSkeleton";
 import Sidebar from "@/components/chat/Sidebar"
@@ -330,7 +318,7 @@ export default function Chat() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // Load messages when active conv changes
@@ -339,6 +327,8 @@ export default function Chat() {
     setHasMore(false);
     if (activeId) loadMessages(activeId);
     else setMessages([]);
+    // Rechargement voulu uniquement au changement de conversation active.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   // Mode autonome : on resynchronise avec le serveur UNIQUEMENT lors d'un
@@ -434,20 +424,6 @@ export default function Chat() {
       setShowScrollBottom(false);
     }
   }, [activeId]);
-
-  // redirect if logged out
-  if (user === false) return <Navigate to="/login" replace />;
-  if (user === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)]">
-        <div className="typing-dots">
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-      </div>
-    );
-  }
 
   const fetchProjectUrls = async () => {
     try {
@@ -819,7 +795,7 @@ export default function Chat() {
     }
   };
 
-  const handleRollbackStep = async (messageId) => {
+  const handleRollbackStep = async (_messageId) => {
     const project = activeConv?.project;
     if (!project) {
       setError("Aucun projet actif pour le rollback.");
@@ -1345,6 +1321,20 @@ export default function Chat() {
   const lastAssistantId = lastMsg && lastMsg.role === "assistant" ? lastMsg.id : null;
   const activeModel = models.find((m) => m.id === provider);
   const catalog = Array.isArray(activeModel?.models) ? activeModel.models : [];
+  // redirect if logged out
+  if (user === false) return <Navigate to="/login" replace />;
+  if (user === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)]">
+        <div className="typing-dots">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full w-full flex bg-[var(--bg-main)] text-white overflow-hidden">
       {/* Sidebar (extrait -> components/chat/Sidebar.jsx) */}
@@ -1402,7 +1392,13 @@ export default function Chat() {
       {sidebarOpen && (
         <div
           className="lg:hidden fixed inset-0 z-20 bg-black/70"
+          role="button"
+          tabIndex={-1}
+          aria-label="Fermer le menu latéral"
           onClick={() => setSidebarOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" || e.key === "Enter") setSidebarOpen(false);
+          }}
           data-testid="sidebar-backdrop"
         />
       )}
@@ -1817,7 +1813,13 @@ export default function Chat() {
                       <>
                         <div
                           className="fixed inset-0 z-30"
+                          role="button"
+                          tabIndex={-1}
+                          aria-label="Fermer le menu"
                           onClick={() => setPlusOpen(false)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape" || e.key === "Enter") setPlusOpen(false);
+                          }}
                           data-testid="plus-menu-backdrop"
                         />
                         <div

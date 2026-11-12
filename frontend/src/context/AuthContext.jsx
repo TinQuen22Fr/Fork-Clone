@@ -12,7 +12,7 @@ export function AuthProvider({ children }) {
       try {
         const { data } = await api.get("/auth/me");
         setUser(data);
-      } catch (e) {
+      } catch {
         setUser(false);
       }
     })();
@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     try {
       await api.post("/auth/logout");
-    } catch (e) {
+    } catch {
       // ignore
     }
     localStorage.removeItem(AUTH_TOKEN_KEY);

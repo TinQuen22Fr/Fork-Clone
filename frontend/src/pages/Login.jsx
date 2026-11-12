@@ -19,7 +19,7 @@ const LOGIN_BG =
 export default function Login() {
   const { user, error, setError, login, register } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState("login"); // "login" | "register"
+  const [mode, _setMode] = useState("login"); // "login" | "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -104,10 +104,11 @@ export default function Login() {
           <form onSubmit={onSubmit} className="space-y-5">
             {mode === "register" && (
               <div>
-                <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
+                <label htmlFor="register-name-input" className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
                   Handle
                 </label>
                 <input
+                  id="register-name-input"
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -118,10 +119,11 @@ export default function Login() {
               </div>
             )}
             <div>
-              <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
+              <label htmlFor="auth-email-input" className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
                 Email
               </label>
               <input
+                id="auth-email-input"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -132,10 +134,11 @@ export default function Login() {
               />
             </div>
             <div>
-              <label className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
+              <label htmlFor="auth-password-input" className="block text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-2">
                 Password
               </label>
               <input
+                id="auth-password-input"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -171,7 +174,7 @@ export default function Login() {
           </form>
 
           <div className="mt-8 text-center text-xs uppercase tracking-[0.2em] text-gray-600 font-mono">
-            // access restricted — admin only
+            {"// access restricted — admin only"}
           </div>
         </div>
       </div>

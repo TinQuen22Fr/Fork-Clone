@@ -45,11 +45,11 @@ export default class ErrorBoundary extends React.Component {
         <div className="max-w-lg w-full border border-[#ff2a6d]/40 rounded-sm bg-white/[0.02] p-5 font-mono text-xs">
           <div className="flex items-center gap-2 text-[#ff2a6d] mb-3">
             <AlertTriangle className="w-4 h-4" />
-            <span className="uppercase tracking-wide">Erreur d'interface</span>
+            <span className="uppercase tracking-wide">Erreur d&apos;interface</span>
           </div>
           <p className="text-gray-400 mb-3 leading-relaxed">
             Un composant a échoué au rendu. Le détail technique est masqué à
-            l'écran mais disponible dans la console du navigateur.
+            l&apos;écran mais disponible dans la console du navigateur.
           </p>
           <pre className="text-[11px] text-gray-500 bg-black/40 border border-white/5 rounded-sm p-2 overflow-auto max-h-40 whitespace-pre-wrap break-words">
             {msg}

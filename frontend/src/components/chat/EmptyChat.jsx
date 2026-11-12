@@ -11,7 +11,7 @@ export default function EmptyChat() {
     <div className="py-12">
       <div className="text-center mb-10">
         <div className="text-xs uppercase tracking-[0.3em] text-[#ffd700] font-bold mb-2">
-          // session initialized
+          {"// session initialized"}
         </div>
         <h2 className="font-heading text-3xl md:text-4xl font-black tracking-tighter">
           WHAT DO WE <span className="text-[#ff2a6d]">FORGE</span> TODAY?

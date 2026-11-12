@@ -176,7 +176,7 @@ function ChatMessage({
     try {
       const { data } = await api.get(`/messages/${message.id}/details`);
       setDetailData(data);
-    } catch (_) {
+    } catch {
       // En cas d'echec, on laisse les output a null (texte « Chargement… » reste)
     } finally {
       setDetailLoading(false);
@@ -215,7 +215,7 @@ function ChatMessage({
       await navigator.clipboard.writeText(message.content || "");
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (_) {
+    } catch {
       // ignore
     }
   };
@@ -295,7 +295,7 @@ function ChatMessage({
       await navigator.clipboard.writeText(message.content || "");
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (_) {
+    } catch {
       // ignore
     }
   };
@@ -310,7 +310,7 @@ function ChatMessage({
       await navigator.clipboard.writeText(formatStep(s));
       setCopiedStep(i);
       setTimeout(() => setCopiedStep(null), 1500);
-    } catch (_) {
+    } catch {
       // ignore
     }
   };
@@ -329,7 +329,7 @@ function ChatMessage({
       await navigator.clipboard.writeText(formatStepGroup(st));
       setCopiedStepGroup(i);
       setTimeout(() => setCopiedStepGroup(null), 1500);
-    } catch (_) {
+    } catch {
       // ignore
     }
   };
@@ -341,7 +341,7 @@ function ChatMessage({
       );
       setCopiedTools(true);
       setTimeout(() => setCopiedTools(false), 1500);
-    } catch (_) {
+    } catch {
       // ignore
     }
   };
@@ -404,7 +404,8 @@ function ChatMessage({
       <div className="flex-1 max-w-[88%] sm:max-w-[80%] min-w-0">
         <div className="text-xs uppercase tracking-[0.2em] text-[#05d9e8] font-bold mb-2 flex items-center gap-2 flex-wrap">
           <span data-testid={`msg-provider-${message.id}`}>
-            // {(message.provider || "claude").toUpperCase().replace("_", " ")}
+            {"// "}
+            {(message.provider || "claude").toUpperCase().replace("_", " ")}
             {message.model ? ` · ${message.model}` : ""}
           </span>
           {message.fallback_used && (
@@ -442,7 +443,7 @@ function ChatMessage({
               return (
                 <details
                   key={st.index ?? i}
-                  className="group border-2 border-[#05d9e8]/50 bg-[#05d9e8]/5"
+                  className="group relative border-2 border-[#05d9e8]/50 bg-[#05d9e8]/5"
                   data-testid={`step-${message.id}-${st.index ?? i}`}
                   onToggle={(e) => {
                     const k = st.index ?? i;
@@ -451,7 +452,7 @@ function ChatMessage({
                     if (o) fetchDetails();
                   }}
                 >
-                  <summary className="px-3 py-1.5 flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
+                  <summary className="px-3 py-1.5 pr-2 flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
                     <span className="font-mono text-[11px] uppercase tracking-wider text-[#05d9e8] transition-transform group-open:rotate-90">
                       {"\u25b6"}
                     </span>
@@ -465,14 +466,18 @@ function ChatMessage({
                     >
                       {isDone ? "terminee" : "en cours"}
                     </span>
-                    <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-gray-500">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
                       {toolCount} outil{toolCount > 1 ? "s" : ""}
                     </span>
-                    <span
-                      role="button"
-                      tabIndex={0}
+                  </summary>
+                  {/* Actions hors <summary> (eviter element interactif dans summary :
+                      HTML invalide + recalc style/pointerover a chaque survol). */}
+                  <div className="absolute top-1.5 right-2 flex items-center gap-2">
+                    <button
+                      type="button"
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         copyStepGroup(st, st.index ?? i);
                       }}
                       className="flex items-center gap-1 border border-[#05d9e8]/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#05d9e8] hover:bg-[#05d9e8]/15 transition-colors"
@@ -481,15 +486,15 @@ function ChatMessage({
                     >
                       {copiedStepGroup === (st.index ?? i) ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                       {copiedStepGroup === (st.index ?? i) ? "Copie" : "Copier"}
-                    </span>
+                    </button>
                     {project && onRollbackStep && (
-                      <span
-                        role="button"
-                        tabIndex={0}
+                      <button
+                        type="button"
                         data-testid={`rollback-step-${message.id}-${st.index ?? i}`}
                         title="Annuler cette etape : restaure le workspace au snapshot precedent"
                         onClick={(e) => {
                           e.preventDefault();
+                          e.stopPropagation();
                           if (rollbackBusy) return;
                           const dest = st.index ?? i;
                           const nombre = dest + 1;
@@ -514,9 +519,9 @@ function ChatMessage({
                           className={`w-3 h-3 ${rollbackBusy ? "animate-spin" : ""}`}
                         />
                         {rollbackBusy ? "Restauration..." : "Annuler cette etape"}
-                      </span>
+                      </button>
                     )}
-                  </summary>
+                  </div>
                   {openSteps[st.index ?? i] && st.intention && (
                     <div className="px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap border-t border-[#05d9e8]/30 border-b border-[#05d9e8]/20">
                       {st.intention}
@@ -559,7 +564,7 @@ function ChatMessage({
 
         {!usesOrderedBlocks && (toolSteps.length > 0 || message.tool_steps_count > 0) && (
           <details
-            className="mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
+            className="relative mb-2 border-2 border-[#ffd700]/40 bg-[#ffd700]/5 text-sm"
             data-testid={`tool-steps-${message.id}`}
             onToggle={(e) => {
               const open = e.currentTarget.open;
@@ -567,34 +572,29 @@ function ChatMessage({
               if (open) fetchDetails();
             }}
           >
-            <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 text-[#ffd700] font-mono text-xs uppercase tracking-wider">
+            <summary className="cursor-pointer px-3 py-2 pr-2 flex items-center gap-2 text-[#ffd700] font-mono text-xs uppercase tracking-wider">
               <Terminal className="w-4 h-4" />
               {(toolSteps.length || message.tool_steps_count || 0)} outil(s) utilisé(s)
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.preventDefault();
-                  copyTools();
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    copyTools();
-                  }
-                }}
-                className="ml-auto flex items-center gap-1 border border-[#ffd700]/40 px-1.5 py-0.5 text-[10px] normal-case hover:bg-[#ffd700]/15 transition-colors"
-                title="Copier tous les blocs d'outils"
-                data-testid={`copy-tools-${message.id}`}
-              >
-                {copiedTools ? (
-                  <Check className="w-3 h-3" />
-                ) : (
-                  <Copy className="w-3 h-3" />
-                )}
-                {copiedTools ? "Copié" : "Copier"}
-              </span>
             </summary>
+            {/* Action hors <summary> (eviter element interactif dans summary). */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                copyTools();
+              }}
+              className="absolute top-2 right-2 flex items-center gap-1 border border-[#ffd700]/40 px-1.5 py-0.5 text-[10px] normal-case text-[#ffd700] hover:bg-[#ffd700]/15 transition-colors"
+              title="Copier tous les blocs d'outils"
+              data-testid={`copy-tools-${message.id}`}
+            >
+              {copiedTools ? (
+                <Check className="w-3 h-3" />
+              ) : (
+                <Copy className="w-3 h-3" />
+              )}
+              {copiedTools ? "Copié" : "Copier"}
+            </button>
             {toolsOpen && (
             <div className="px-3 pb-3 space-y-3">
               {!toolSteps.length && detailLoading && (

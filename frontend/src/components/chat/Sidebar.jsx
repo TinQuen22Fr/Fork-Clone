@@ -100,7 +100,15 @@ export default function Sidebar({
         {conversations.map((c) => (
           <div
             key={c.id}
+            role="button"
+            tabIndex={0}
             onClick={() => onSelectConversation(c.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelectConversation(c.id);
+              }
+            }}
             className={`group flex items-center gap-2 px-3 py-2.5 cursor-pointer border-2 mb-2 transition-all ${
               c.id === activeId
                 ? "border-[#ff2a6d] bg-[#ff2a6d]/10 shadow-[4px_4px_0_0_#ffd700]"
@@ -112,11 +120,11 @@ export default function Sidebar({
             {editingId === c.id ? (
               <form
                 onSubmit={(e) => onSubmitRename(c.id, e)}
-                onClick={(e) => e.stopPropagation()}
                 className="flex-1 flex items-center gap-1"
               >
                 <input
                   autoFocus
+                  onClick={(e) => e.stopPropagation()}
                   value={editingTitle}
                     onChange={(e) => onEditingTitleChange(e.target.value)}
                     onKeyDown={(e) => {

@@ -62,7 +62,7 @@ export const VoicePicker = () => {
     } catch (e) {
       setTesting(false);
       if (e?.name !== "CanceledError" && e?.code !== "ERR_CANCELED") {
-        // eslint-disable-next-line no-alert
+         
         window.alert(`Test de voix impossible : ${e?.ttsDetail || e?.message || "erreur inconnue"}`);
       }
     }
@@ -88,7 +88,13 @@ export const VoicePicker = () => {
         <>
           <div
             className="fixed inset-0 z-30"
+            role="button"
+            tabIndex={-1}
+            aria-label="Fermer le sélecteur de voix"
             onClick={() => setOpen(false)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" || e.key === "Enter") setOpen(false);
+            }}
             data-testid="voice-picker-backdrop"
           />
           <div

@@ -53,7 +53,7 @@ export default function ChatHeader({
                 </button>
               )}
               <div className="text-[10px] uppercase tracking-[0.3em] text-[#ffd700] font-bold">
-                // active session
+                {"// active session"}
               </div>
               <div className="font-heading font-black truncate text-base sm:text-lg">
                 {activeConv?.title || "No conversation selected"}

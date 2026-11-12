@@ -25,7 +25,9 @@ const AlertTitle = ({
   className,
   ref,
   ...props
-}) => <h5 ref={ref} className={cn("mb-1 font-medium leading-none tracking-tight", className)} {...props} />;
+}) =>
+  // eslint-disable-next-line jsx-a11y/heading-has-content
+  <h5 ref={ref} className={cn("mb-1 font-medium leading-none tracking-tight", className)} {...props} />;
 AlertTitle.displayName = "AlertTitle";
 const AlertDescription = ({
   className,

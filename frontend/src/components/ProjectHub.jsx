@@ -15,11 +15,9 @@ import {
   Square,
   Download,
   Upload,
-  X,
   MoreVertical,
   Trash2,
   RefreshCw,
-  Server,
 } from "lucide-react";
 
 /* Couleurs de teinte pour le fallback visuel (projets sans URL de preview). */
@@ -210,12 +208,12 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
       <div className="relative mx-auto w-full max-w-3xl px-6 sm:px-10 lg:px-16">
         <div className="hub-hero">
           <div className="text-[10px] font-mono uppercase tracking-[0.35em] text-gray-600">
-            // hub
+            {"// hub"}
           </div>
           <h1 className="mt-2 font-heading text-4xl sm:text-5xl font-black uppercase tracking-tighter leading-[0.95]">
-            Qu'est-ce qu'on
+            Qu&apos;est-ce qu&apos;on
             <br />
-            <span className="text-[#ff2a6d]">construit</span> aujourd'hui ?
+            <span className="text-[#ff2a6d]">construit</span> aujourd&apos;hui ?
           </h1>
         </div>
 
@@ -325,7 +323,7 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
             </div>
           ) : projects.length === 0 ? (
             <p className="mt-4 text-sm text-gray-500">
-              Aucun projet pour l'instant. Crée-en un ci-dessus, son dossier sera
+              Aucun projet pour l&apos;instant. Crée-en un ci-dessus, son dossier sera
               créé dans le workspace.
             </p>
           ) : (
@@ -415,7 +413,13 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
                           {/* voile pour fermer au clic exterieur */}
                           <div
                             className="fixed inset-0 z-30"
+                            role="button"
+                            tabIndex={-1}
+                            aria-label="Fermer le menu"
                             onClick={() => setOpenMenu(null)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape" || e.key === "Enter") setOpenMenu(null);
+                            }}
                           />
                           <div className="hub-pmenu" data-testid={`hub-menu-panel-${p.name}`}>
                             {p.preview_url && (
@@ -507,15 +511,23 @@ export const ProjectHub = ({ onStart, onOpenProject }) => {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4"
           data-testid="hub-delete-confirm-overlay"
+          role="button"
+          tabIndex={-1}
+          aria-label="Fermer la boîte de dialogue"
           onClick={() => !deleting && setConfirmDelete(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !deleting) setConfirmDelete(null);
+          }}
         >
           <div
             className="w-full max-w-sm border-2 border-[#ff2a6d]/60 bg-[var(--bg-dock)] p-5"
+            role="presentation"
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
             data-testid="hub-delete-confirm-dialog"
           >
             <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#ff2a6d]">
-              // suppression
+              {"// suppression"}
             </div>
             <h2 className="mt-2 font-heading text-lg font-black uppercase tracking-tight">
               Supprimer « {confirmDelete.name} » ?

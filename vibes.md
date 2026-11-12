@@ -1,3 +1,7 @@
+- **Intention** : Fusionner et résumer l'historique complet de la conversation sur l meurtre du test 4.
+- **Friction** : Aucune.
+- **Suite** : Livrer le compte rendu sous forme de puces concises sans préambule ni conclusion.
+
 - **Intention** : Résumer l'historique de conversation (anciens et nouveaux échanges) conformément au format strict demandé.
 - **Friction** : Aucune.
 - **Suite** : Restituer la synthèse sous forme de puces courtes en français sans intro ni outro.
@@ -27,3 +31,8 @@
 - **Intention** : exposer `blocks`+`streaming` via `useStreamingMessage`, câbler la bulle live sur `MessageBlocks` (parité composant live/relecture).
 - **Friction** : hook `useStreamingMessage` déjà complet (blocks dérivés + content dérivé + streaming:true). Seule lacune réelle : `ChatMessage` ne passait pas `streaming` à `MessageBlocks` → caret live (6.2) jamais affiché en flux par blocs. Corrigé. Parité visuelle non vérifiée (preview, reportée 6.5).
 - **Suite** : 6.5 — isoler étape 6/7 dans ChatMessage + parité, puis commit final + protocole test preview/prod.
+
+## 2025-11-12 — Correctif rules-of-hooks + finalisation lint
+- **Intention** : corriger les 8 `react-hooks/rules-of-hooks` de `src/pages/Chat.jsx` (early returns `user` avant les hooks) + finir `Login.jsx` (5 problèmes).
+- **Friction** : Chat.jsx fait 2123 lignes, 2 early returns (l.429-440) suivis de ~40 hooks → vrai bug latent (crash "Rendered fewer hooks" si user repasse null/false). Déplacement du bloc garde via script Python après le dernier hook, juste avant le `return (` principal. Login.jsx : 3 labels associés par htmlFor/id, 1 comment-textnode en string, setter `_setMode` préfixé.
+- **Suite** : lint global 0 problème + build OK vérifiés. Reste non testé en preview réelle (rendu Chat). Pour prod : Sauvegarder sur GitHub → upgrade.sh.

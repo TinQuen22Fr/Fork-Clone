@@ -68,17 +68,18 @@ export default function MarkdownBody({ children }) {
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        img: ({ node, ...props }) => (
+        img: ({ node: _node, ...props }) => (
           <a href={props.src} target="_blank" rel="noopener noreferrer" className="block my-3">
             <img
               {...props}
+              alt={props.alt || ""}
               className="max-w-full rounded border-2 border-[#05d9e8]/60 shadow-[3px_3px_0_0_#ff2a6d] hover:opacity-90 transition-opacity"
               loading="lazy"
             />
           </a>
         ),
         pre: MdCodeBlock,
-        table: ({ node, ...props }) => (
+        table: ({ node: _node, ...props }) => (
           <div className="md-table-wrap">
             <table {...props} />
           </div>
