@@ -36,3 +36,13 @@
 - **Intention** : corriger les 8 `react-hooks/rules-of-hooks` de `src/pages/Chat.jsx` (early returns `user` avant les hooks) + finir `Login.jsx` (5 problèmes).
 - **Friction** : Chat.jsx fait 2123 lignes, 2 early returns (l.429-440) suivis de ~40 hooks → vrai bug latent (crash "Rendered fewer hooks" si user repasse null/false). Déplacement du bloc garde via script Python après le dernier hook, juste avant le `return (` principal. Login.jsx : 3 labels associés par htmlFor/id, 1 comment-textnode en string, setter `_setMode` préfixé.
 - **Suite** : lint global 0 problème + build OK vérifiés. Reste non testé en preview réelle (rendu Chat). Pour prod : Sauvegarder sur GitHub → upgrade.sh.
+
+## 2025-11-12 12h14 — Audit console prod (dogfooding) : a11y form fields + perf submit
+- **Intention** : auditer les signalements console de la PROD (dogfooding, pas preview) au Send/Ctrl+Enter/`+` ; trancher erreur réelle vs bruit.
+- **Friction** : aucune erreur runtime (0 rouge, 0 warning orange) ; panneau Issues = 4 "Improvements" bleus « form field should have id/name ». Preuve code : `src/pages/Chat.jsx` l.1766 (input file), 1785 (textarea), 1902 (select provider), 1968 (select model), + 2051 (select agent, conditionnel → 5e si menu ouvert) — tous sans `id`/`name`, seulement `data-testid`. Non couvert par ESLint (règle navigateur). `[Violation] 'submit' handler ~2000ms` = perf de `sendMessage` (deep clone JSON.parse/stringify historique l.737-745 + re-render global l.757 + concat historyText l.727-733), pré-existant, non lié au correctif hooks.
+- **Suite** : MINEUR a11y → ajouter `id`+`name` sur les 5 champs de Chat.jsx (coder). Chantier perf distinct : optimiser `sendMessage` (supprimer deep clone, sortir historyText du chemin synchrone) sans régresser `React.memo` ChatMessage ni la zone streaming.
+
+## 2026-05-24 — M1 a11y Chat.jsx (vibe-coder)
+- **Intention** : ajouter id+name sur les 5 champs de formulaire sans identifiant dans frontend/src/pages/Chat.jsx (input file, textarea message, select provider/model/agent).
+- **Friction** : `yarn lint` casse sur EACCES ~/.config/yarn (config globale hors projet) → contourné via ./node_modules/.bin/eslint (exit 0). Build OK en 31.68s.
+- **Suite** : utilisateur valide le diff en PROD (Issues doit passer de 4→0), puis push GitHub + upgrade.sh. M2 (perf sendMessage) reste un chantier distinct non traité.

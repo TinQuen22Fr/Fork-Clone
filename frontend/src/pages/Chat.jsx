@@ -1769,6 +1769,8 @@ export default function Chat() {
                 ref={fileInputRef}
                 onChange={onPickFile}
                 className="hidden"
+                id="chat-file"
+                name="chat-file"
                 data-testid="image-file-input"
               />
               {/* Bandeau de statut discret */}
@@ -1790,6 +1792,8 @@ export default function Chat() {
                 rows={2}
                 placeholder="Forge a message... (Entree = nouvelle ligne)"
                 className="chat-textarea w-full outline-none resize-none px-3 sm:px-4"
+                id="chat-message"
+                name="message"
                 data-testid="chat-text-input"
               />
               {/* Barre d'outils : outils/dictée à gauche, providers au centre, envoi à droite */}
@@ -1903,6 +1907,8 @@ export default function Chat() {
                       value={provider}
                       onChange={handleProviderChange}
                       className="flex-1 min-w-0 bg-transparent text-[11px] uppercase tracking-wider font-mono text-gray-300 outline-none cursor-pointer"
+                      id="chat-provider"
+                      name="provider"
                       data-testid="provider-select"
                     >
                       <option value="auto" className="bg-[var(--bg-dock)] text-white">
@@ -1969,6 +1975,8 @@ export default function Chat() {
                         value={modelOverride}
                         onChange={handleModelChange}
                         className="flex-1 min-w-0 sm:max-w-[150px] bg-transparent text-[11px] font-mono text-gray-300 outline-none cursor-pointer"
+                        id="chat-model"
+                        name="model"
                         data-testid="model-select"
                       >
                         <option value="" className="bg-[var(--bg-dock)] text-white">
@@ -2053,6 +2061,8 @@ export default function Chat() {
                       onChange={(e) => handleAgentChange(e.target.value)}
                       title="Profil d'agent (règles injectées au system prompt)"
                       className="bg-black text-[#05d9e8] text-[10px] font-mono uppercase border border-white/20 px-1 py-0.5 mr-1"
+                      id="chat-agent"
+                      name="agent"
                       data-testid="agent-select"
                     >
                       {AGENT_OPTIONS.map((o) => (
