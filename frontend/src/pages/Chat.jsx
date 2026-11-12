@@ -410,19 +410,31 @@ export default function Chat() {
     setShowScrollBottom(false);
   };
 
+  // Throttle via rAF + skip setState si valeur inchangee : evite Violation 'scroll'
+  // et Forced reflow (lecture layout batchee a la frame suivante).
+  const scrollRafRef = useRef(0);
   const handleMessagesScroll = () => {
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    nearBottomRef.current = distanceFromBottom <= 120;
-    setShowScrollBottom(distanceFromBottom > 120);
+    if (scrollRafRef.current) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = 0;
+      const el = messagesContainerRef.current;
+      if (!el) return;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const near = distanceFromBottom <= 120;
+      nearBottomRef.current = near;
+      setShowScrollBottom((prev) => (prev === !near ? prev : !near));
+    });
   };
 
   useEffect(() => {
-    if (activeId) {
+    if (!activeId) return;
+    // Defere au prochain paint : evite un reflow synchrone au mount qui se
+    // cumule avec le scroll declenche par [messages] (Violation scroll+reflow).
+    const raf = requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
       setShowScrollBottom(false);
-    }
+    });
+    return () => cancelAnimationFrame(raf);
   }, [activeId]);
 
   const fetchProjectUrls = async () => {
@@ -835,16 +847,22 @@ export default function Chat() {
       if (incoming.length > room) {
         setError(`Maximum ${MAX_ATTACHMENTS} fichiers par message.`);
       }
-      // Vignettes pour les images, en tâche de fond.
-      kept.forEach((att) => {
-        if (!att.file.type.startsWith("image/")) return;
-        const reader = new FileReader();
-        reader.onload = (ev) =>
-          setAttachments((cur) =>
-            cur.map((a) => (a.id === att.id ? { ...a, preview: ev.target.result } : a))
-          );
-        reader.readAsDataURL(att.file);
-      });
+      // Vignettes pour les images : differees hors du handler onChange pour
+      // ne pas bloquer le thread (Violation 'change' ~270ms). readAsDataURL
+      // declenche une allocation + encodage base64 couteux au setup.
+      const toThumb = kept.filter((att) => att.file.type.startsWith("image/"));
+      if (toThumb.length) {
+        setTimeout(() => {
+          toThumb.forEach((att) => {
+            const reader = new FileReader();
+            reader.onload = (ev) =>
+              setAttachments((cur) =>
+                cur.map((a) => (a.id === att.id ? { ...a, preview: ev.target.result } : a))
+              );
+            reader.readAsDataURL(att.file);
+          });
+        }, 0);
+      }
       return [...prev, ...kept];
     });
   };

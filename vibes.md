@@ -68,3 +68,6 @@
    - VoicePicker.jsx : 1 champ
    - ProjectHub.jsx : 4 champs
    - PreviewButton.jsx : 1 champ
+- 2026-11-13 **Intention** : atténuer Violations scroll/change/reflow persistantes après Test 5 OK.
+- **Friction** : Violation 'message' vient du polyfill setImmediate d'axios (postMessage) — non éliminable sans réécrire axios ; c'est un symptôme, pas la cause. Le vrai coût reste dans les re-renders déclenchés en cascade.
+- **Suite** : 3 patchs Chat.jsx — rAF-throttle sur handleMessagesScroll, FileReader différé via setTimeout(0), scrollIntoView au mount différé via rAF. Build OK, tests OK. Commit à pousser.
