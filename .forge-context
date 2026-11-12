@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-12T15:40:20.745948+00:00
+# Dernière mise à jour : 2026-11-12T15:59:46.809433+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit c83975a fix(a11y): ajoute id/name aux 5 champs de formulaire de Chat.jsx.
+- Git : branche claude-ai, dernier commit 1b5b049 fix: débloque Test 5 (rétrocompat blocs) + perf handlers + a11y étendue.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -91,6 +91,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] t'as toujours pas capter que tu tourne en prod...
   [regle] a toi de faire ce qu'il faut pour que ça fonctionne maintenant.
   [regle] toujours le violation "[Violation] 'submit' handler took 225ms" à l'envoi du message (ctrl+return et clic send)
   [regle] bon bah exceptionnellement je vais me déconnecter et reconnecter (en espérant que ça fonctionne toujours...
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] il faut corriger car sur le dépôt github ca s'affiche pas bien regarde : En cours s'affiche En cours/rendu-blocs-style-emergent.
   [regle] Et tout ce qui est fait concernant ce travail en cour doit aller et être mis dans le répertoires adéquat et ne pas rester sous PROJETS_AMELIORATIONS
   [regle] Que la preview ne fonctionne pas est NORMALE et en rien que le code modifier n'est pas mis en place en prod en faisant les manipulations citer ci dessus...
-  [regle] ça à déjà était consigner ça aussi je te rappel...
