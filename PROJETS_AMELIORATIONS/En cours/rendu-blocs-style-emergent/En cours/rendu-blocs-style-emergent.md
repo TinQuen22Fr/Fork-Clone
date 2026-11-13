@@ -230,6 +230,7 @@ Phase A (`1 → 2 → 8`) réalisée. Phase B reste en attente d'une décision a
 **Critère de fin Phase A** : suite verte + build OK ✅. Reste la **vérification manuelle d'un tour complet en preview** — à faire **après déploiement prod** (la preview ne contient aucun workspace), par l'utilisateur.
 
 ### Statut Phase A : `1 → 2 → 8` terminée côté code et tests automatisés ✅
+- **Clôture documentaire : voir plus bas la section « Étape 8 — Non-régression globale (Phase B) »** pour l'exécution de la Phase B.
 - Validation visuelle finale déléguée à l'utilisateur après déploiement (GitHub → `sudo ./upgrade.sh` en prod).
 - Décision Phase B (structurelle, migration BDD) : **en attente** du retour utilisateur « A suffit-il ? ».
 
@@ -368,4 +369,44 @@ Clôture de l'étape 7 en trois phases successives, sur le modèle de l'étape 6
 
 ### Statut
 - Étape 7 close ✅. Les anciennes conversations (Test 5 déjà validé par l'utilisateur) **affichent désormais leurs outils AVEC leurs sorties** dès l'ouverture, sans action manuelle sur un accordéon.
-- **Chemin critique restant** : étape 8 (non-régression globale finale + validation manuelle en prod).
+- **Chemin critique restant** : clos — voir ci-dessous l'exécution formelle de l'étape 8 Phase B.
+
+---
+
+## Étape 8 — Non-régression globale (Phase B) : exécutée ✅
+
+> Daté : 2026-11-11 (clôture de la Phase B)
+
+**Vérifications lancées depuis la racine du projet (jamais `cd backend`).**
+
+- Backend — suite de non-régression complète :
+  ```
+  backend/.venv/bin/python -m pytest \
+    backend/tests/test_ordered_blocks.py \
+    backend/tests/test_tool_lifecycle.py \
+    backend/tests/test_action_chain.py \
+    backend/tests/test_sse_finish.py \
+    backend/tests/test_sse_replay.py
+  ```
+  **Résultat : 42 passed, 105 warnings in 3.74s** (0 failed). Note : warnings = deprecations tierces (`python_multipart`, `asyncio.iscoroutinefunction`) sans lien avec le chantier.
+
+- Frontend — tests unitaires ciblés :
+  ```
+  node frontend/src/components/buildSyntheticBlocks.test.mjs
+  node frontend/src/lib/streamStore.test.mjs
+  ```
+  **Résultat : 32 assertions OK / 0 KO** (buildSyntheticBlocks) ; **tous les cas passent** (streamStore).
+
+- Frontend — lint + build de production :
+  ```
+  (cd frontend && npx eslint src)
+  (cd frontend && npx vite build)
+  ```
+  **Résultat : ESLint 0 erreur / 0 warning ; build réussi en 37,72s**, chunk `Chat-Bf7Xnwe2.js` généré, aucune erreur.
+
+**Critère de fin Phase B** : suite backend verte + tests frontend verts + lint 0 + build OK ✅.
+Reste la **validation manuelle en prod réelle** par l'utilisateur après `sudo ./upgrade.sh`.
+
+### Statut Phase B : `3 → 4 → 5 → 6 → 7 → 8` terminée côté code et tests automatisés ✅
+- Toutes les étapes de la Phase B sont closes (3 à 8).
+- **Sujet `rendu-blocs-style-emergent` clos côté code et tests.** Validation visuelle finale en prod déléguée à l'utilisateur (GitHub → `sudo ./upgrade.sh`).
