@@ -71,3 +71,8 @@
 - 2026-11-13 **Intention** : atténuer Violations scroll/change/reflow persistantes après Test 5 OK.
 - **Friction** : Violation 'message' vient du polyfill setImmediate d'axios (postMessage) — non éliminable sans réécrire axios ; c'est un symptôme, pas la cause. Le vrai coût reste dans les re-renders déclenchés en cascade.
 - **Suite** : 3 patchs Chat.jsx — rAF-throttle sur handleMessagesScroll, FileReader différé via setTimeout(0), scrollIntoView au mount différé via rAF. Build OK, tests OK. Commit à pousser.
+
+## 2026-11-14 — Étape 7 (rendu-blocs-style-emergent)
+- **Intention** : clore l'étape 7 (fallback rétrocompatible) en 3 phases (7.1 autofetch étendu aux anciens messages porteurs d'outils, 7.2 durcissement des cas limites de l'arbre conditionnel, 7.3 tests dédiés `E7.*`).
+- **Friction** : l'ex-étape « 6.5 » réalisait déjà le rendu du fallback, mais l'auto-fetch des détails était restreint à `blocks_count > 0` → anciens messages avec outils affichaient leurs sorties vides tant qu'un accordéon n'était pas ouvert manuellement. Correction centrale de l'étape 7.
+- **Suite** : attendre validation manuelle utilisateur (ouvrir une vieille conversation en prod après déploiement) puis attaquer l'étape 8 (non-régression globale finale).

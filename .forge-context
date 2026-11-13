@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-12T23:04:30.240196+00:00
+# Dernière mise à jour : 2026-11-13T00:00:01.806756+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 5c441a9 fix(chat): débloque rétrocompat anciennes conversations + atténue Violations perf + a11y étendue.
+- Git : branche claude-ai, dernier commit 058a506 perf(chat): atténue Violations scroll/change/reflow persistantes.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -91,6 +91,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] 1302: // Défère hors du handler clavier pour ne pas bloquer le thread (Violation keydown).
   [regle] Bon le test 5 passe mais bon encore et toujours des violations...
   [regle] c'est pour ça que j'ai marquer "enregistrer sur GitHub c'est bien mais pour le faire faudrait t'il encore avoir tout pour le faire" en gros si tu ne me donne pas le bon message de commit je ne peux pas le faire.
   [regle] t'as toujours pas capter que tu tourne en prod...
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] par contre Ctrl+E ne fonctionne pas actuellement avant le déploiement de la chose en prod (en tout cas dans brave-broswer)
   [regle] 5 écarté et **pourquoi**, pour ne pas réouvrir dix fois le même débat.
   [regle] M-CM-)cartM-CM-) et **pourquoi**, pour ne pas rM-CM-)ouvrir dix fois le mM-CM-*me dM-CM-)bat.$
-  [regle] il faut corriger car sur le dépôt github ca s'affiche pas bien regarde : En cours s'affiche En cours/rendu-blocs-style-emergent.

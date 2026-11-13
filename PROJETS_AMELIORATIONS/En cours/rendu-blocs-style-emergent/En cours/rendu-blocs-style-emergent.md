@@ -311,3 +311,61 @@ Implémentation backend conforme au contrat [`etape-3-schema-blocs-ordonnes.md`]
   **Résultat : 42 passed in 2.68s**.
 
 **Prochaine étape** : **6** (rendu front des blocs ordonnés, avec mémoïsation — en attente de feu vert).
+
+
+---
+
+## Phase B — Étape 7 (fallback rétrocompatible pour anciens messages) : exécutée ✅
+
+> Daté : 2026-11-14
+
+Clôture de l'étape 7 en trois phases successives, sur le modèle de l'étape 6.
+
+### 7.1 — Étendre l'auto-fetch des détails aux anciens messages porteurs d'outils
+- **Fichier** : `frontend/src/components/ChatMessage.jsx` (`useEffect` auto-fetch).
+- **Problème adressé** : l'auto-fetch des détails ne se déclenchait que si `blocks_count > 0`. Les anciens messages persistés **avant** l'étape 4 n'ont pas de `blocks[]` mais peuvent porter des outils (`tool_steps_count` / `steps_count`). Résultat : `buildSyntheticBlocks` était appelé avec les `tool_steps` du listing — dont les `output` sont volontairement nullifiés par l'allègement payload — et le fallback affichait les outils **sans leur sortie** jusqu'à ouverture manuelle d'un accordéon.
+- **Correctif** : condition élargie
+  ```
+  const isLegacyWithTools = !hasRealBlocks && (
+    (message.tool_steps_count ?? 0) > 0 ||
+    (message.steps_count ?? 0) > 0 ||
+    (Array.isArray(message.tool_steps) && message.tool_steps.length > 0) ||
+    (Array.isArray(message.steps) && message.steps.length > 0)
+  );
+  const needsDetails = hasRealBlocks || isLegacyWithTools;
+  ```
+  + dépendances `useEffect` enrichies (`tool_steps`, `tool_steps_count`, `steps`, `steps_count`).
+- **Critère de fin** : un vieux message avec outils déclenche `GET /messages/{id}/details` au premier rendu → `buildSyntheticBlocks` reçoit des `tool_steps` avec `output` complet → fallback visuellement complet dès l'ouverture de la conversation.
+
+### 7.2 — Durcir les cas limites de l'arbre conditionnel
+- **Fichier** : `frontend/src/components/ChatMessage.jsx` (bloc de rendu, ex-commentaire « étape 6.5 »).
+- **Changements** :
+  - Commentaire ré-attribué à l'étape 7 et clarifié : 3 branches ordonnées documentées (vrais blocs / blocs synthétiques / markdown direct).
+  - Branche 3 (markdown direct) gardée par `(message.content || message.streaming)` au lieu d'être inconditionnelle : un message **totalement vide** (ni content, ni outils, ni blocs — ex. rollback ou état transitoire) ne rend plus un cadre markdown fantôme.
+  - Ajout d'une branche `: null` finale pour fermer proprement le ternaire JSX.
+- **Critère de fin** : aucun cadre vide rendu pour un message sans contenu utile, aucune régression sur les 3 chemins classiques.
+
+### 7.3 — Tests de non-régression ciblés étape 7
+- **Fichier** : `frontend/src/components/buildSyntheticBlocks.test.mjs`.
+- **Scénarios ajoutés (préfixe `E7.*`)** :
+  - `E7.1` — ancien message, `content` vide + outil `output: null` (listing non détaillé) → ordre `tool_call` + `tool_output`, `output == ""`, pas d'`exit_code` parasite.
+  - `E7.2` — mix listing/détail partiel : 2 outils dont l'un avec `output: undefined` → 5 blocs stables, `exit_code` du premier préservé.
+  - `E7.3` — message totalement vide (`content: null`, `toolSteps: null`) → `[]`. Idem pour `{}` / `undefined`, idem pour `message: null`.
+  - `E7.4` — défensif : `toolSteps` non-array → outils ignorés, texte conservé.
+  - `E7.5` — invariant `seq` strictement monotone sur mix complexe de 7 blocs, `step_index` correctement liés (0,1,2 pour `tool_call` comme pour `tool_output`), `exit_code` au milieu préservé.
+- **Résultat** : **32 assertions OK, 0 KO**.
+
+### Vérifications passées (depuis la racine du projet)
+- ESLint `src` : 0 erreur, 0 warning.
+- `node frontend/src/components/buildSyntheticBlocks.test.mjs` : **32 OK / 0 KO**.
+- `node frontend/src/lib/streamStore.test.mjs` : OK (tous les cas passent).
+- `(cd frontend && npx vite build)` : **2040 modules transformés, build en 32,12s**, aucun warning bloquant.
+- Backend non-régression :
+  ```
+  backend/.venv/bin/python -m pytest     backend/tests/test_ordered_blocks.py     backend/tests/test_tool_lifecycle.py     backend/tests/test_action_chain.py     backend/tests/test_sse_finish.py     backend/tests/test_sse_replay.py
+  ```
+  **Résultat : 42 passed in 4.23s**.
+
+### Statut
+- Étape 7 close ✅. Les anciennes conversations (Test 5 déjà validé par l'utilisateur) **affichent désormais leurs outils AVEC leurs sorties** dès l'ouverture, sans action manuelle sur un accordéon.
+- **Chemin critique restant** : étape 8 (non-régression globale finale + validation manuelle en prod).

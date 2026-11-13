@@ -189,16 +189,34 @@ function ChatMessage({
   // bon ordre texte/outil ET les sorties, sans attendre l'ouverture d'un
   // accordeon. Les messages en cours de streaming portent deja `blocks` en
   // memoire : on ne refetch pas.
+  //
+  // Etape 7 (fallback retrocompatible) : les anciens messages persistes AVANT
+  // l'etape 4 n'ont pas de `blocks[]`, mais peuvent porter des outils
+  // (`tool_steps_count` / `steps_count` > 0). Pour eux aussi, on charge les
+  // details au premier rendu, sinon `buildSyntheticBlocks` est appele avec des
+  // outputs vides (le listing met `output: null`) et le fallback affiche des
+  // outils sans leur sortie jusqu'a ouverture manuelle d'un accordeon.
   useEffect(() => {
     const hasRealBlocks =
       (Array.isArray(message.blocks) && message.blocks.length > 0) ||
       (message.blocks_count ?? 0) > 0;
-    if (hasRealBlocks && !message.streaming && !detailData && !detailLoading) {
+    const isLegacyWithTools =
+      !hasRealBlocks &&
+      ((message.tool_steps_count ?? 0) > 0 ||
+        (message.steps_count ?? 0) > 0 ||
+        (Array.isArray(message.tool_steps) && message.tool_steps.length > 0) ||
+        (Array.isArray(message.steps) && message.steps.length > 0));
+    const needsDetails = hasRealBlocks || isLegacyWithTools;
+    if (needsDetails && !message.streaming && !detailData && !detailLoading) {
       fetchDetails();
     }
   }, [
     message.blocks,
     message.blocks_count,
+    message.tool_steps,
+    message.tool_steps_count,
+    message.steps,
+    message.steps_count,
     message.streaming,
     detailData,
     detailLoading,
@@ -630,10 +648,15 @@ function ChatMessage({
           </details>
         )}
 
-        {/* Etape 7 : messages recents -> rendu par blocs ordonnes.
-            Anciens messages (sans `blocks[]`) mais avec des outils -> blocs
-            synthetiques reconstruits (fallback retrocompatible, etape 6.5).
-            Message texte seul -> rendu markdown direct. */}
+        {/* Etape 7 (fallback retrocompatible) : 3 branches ordonnees.
+            1. Message AVEC blocs ordonnes persistes (`blocks[]` non vide, ou
+               `blocks_count > 0` en cours de chargement) -> rendu natif
+               MessageBlocks.
+            2. Ancien message SANS `blocks[]` mais AVEC outils (tool_steps) ->
+               blocs synthetiques reconstruits via buildSyntheticBlocks, meme
+               composant MessageBlocks pour garantir la parite visuelle.
+            3. Message texte seul (ou en cours de streaming texte) -> rendu
+               markdown direct dans le cadre historique. */}
         {(Array.isArray(message.blocks) && message.blocks.length > 0) ||
         (Array.isArray(detailData?.blocks) && detailData.blocks.length > 0) ||
         ((message.blocks_count ?? 0) > 0 && detailLoading) ? (
@@ -648,7 +671,7 @@ function ChatMessage({
             detailData={detailData}
             streaming={message.streaming}
           />
-        ) : (
+        ) : (message.content || message.streaming) ? (
           <div className="bg-transparent text-white border-2 border-white/20 p-4 rounded-bl-none shadow-[4px_4px_0_0_rgba(5,217,232,0.4)]">
             <div className="md-body">
               <MarkdownBody>{message.content}</MarkdownBody>
@@ -660,7 +683,7 @@ function ChatMessage({
               )}
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Action bar */}
         {!message.streaming && (
