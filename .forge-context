@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-13T00:35:20.315778+00:00
+# Dernière mise à jour : 2026-11-16T23:57:34.270048+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit e78e278 docs(rendu-blocs): clôture étape 8 Phase B — non-régression globale.
+- Git : branche claude-ai, dernier commit 0c2b1a9 docs(rendu-blocs): clôture étape 8 Phase B — non-régression globale.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -19,6 +19,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   .emergent/system_deps.txt
   PROJETS_AMELIORATIONS/
   PROJETS_AMELIORATIONS/En cours/
+  PROJETS_AMELIORATIONS/En cours/integration-provider-9router/
   PROJETS_AMELIORATIONS/En cours/rendu-blocs-style-emergent/
   PROJETS_AMELIORATIONS/En cours/.gitkeep
   PROJETS_AMELIORATIONS/En prévision/
@@ -36,6 +37,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/tests/
   backend/tests/backend_test.py
   backend/tests/mock_openai_provider.py
+  backend/tests/test_9router_provider.py
   backend/tests/test_action_chain.py
   backend/tests/test_commit_message.py
   backend/tests/test_deps_regression.py
@@ -64,8 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/reset_password.py
   backend/server.py
   backend/test_rollback.txt
-  deploy/
-  deploy/docker/
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).

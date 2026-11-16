@@ -267,23 +267,27 @@ class Settings:
         # Aucune cle ni aucun modele en dur : tout vient du .env et de la
         # decouverte dynamique via GET {base_url}/models.
         self.free_providers: dict[str, dict] = {}
-        for pid, label, default_base in (
-            ("groq", "Groq", "https://api.groq.com/openai/v1"),
-            ("cerebras", "Cerebras", "https://api.cerebras.ai/v1"),
-            ("sambanova", "SambaNova", "https://api.sambanova.ai/v1"),
-            ("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
-            ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1"),
+        for pid, label, default_base, env_prefix in (
+            ("groq", "Groq", "https://api.groq.com/openai/v1", "GROQ"),
+            ("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS"),
+            ("sambanova", "SambaNova", "https://api.sambanova.ai/v1", "SAMBANOVA"),
+            ("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "NVIDIA"),
+            ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER"),
             # Provider proxy generique : n'importe quelle passerelle compatible
             # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
             # PROXY_API_KEY et PROXY_MODEL optionnels (decouverte /models sinon).
-            ("proxy", "Proxy (OpenAI)", ""),
+            ("proxy", "Proxy (OpenAI)", "", "PROXY"),
+            # 9Router : passerelle OpenAI-compatible locale (conteneur port 20128).
+            # Le pid commence par un chiffre, donc le prefixe d'env est ROUTER9_*
+            # (python-dotenv et le shell rejettent les cles commencant par un chiffre).
+            ("9router", "9Router", "http://localhost:20128", "ROUTER9"),
         ):
-            up = pid.upper()
+            up = env_prefix
             self.free_providers[pid] = {
                 "label": label,
                 "base_url": _normalize_base_url(
                     _env(f"{up}_BASE_URL", default_base),
-                    assume_v1=(pid == "proxy"),
+                    assume_v1=(pid in ("proxy", "9router")),
                 ),
                 "api_key": _env(f"{up}_API_KEY"),
                 # Vide = premier modele decouvert dynamiquement.
@@ -2386,7 +2390,7 @@ async def _generate_claude(
 _CATALOG_CACHE: dict[str, tuple[float, list[str]]] = {}
 _CATALOG_TTL = float(_env("MODEL_CATALOG_TTL", "3600"))
 
-FREE_PROVIDER_IDS = ("groq", "cerebras", "sambanova", "nvidia", "openrouter", "proxy")
+FREE_PROVIDER_IDS = ("groq", "cerebras", "sambanova", "nvidia", "openrouter", "proxy", "9router")
 
 PROVIDER_IDS = (
     "claude", "opencode", "gemini", "ollama_cloud",
@@ -2405,6 +2409,7 @@ PROVIDER_LABELS = {
     "nvidia": "NVIDIA NIM",
     "openrouter": "OpenRouter",
     "proxy": "Proxy (OpenAI)",
+    "9router": "9Router",
 }
 
 
