@@ -75,3 +75,19 @@
 
 ### Étape 6 — ⏳ À faire (prod, par l'utilisateur)
 ### Étape 7 — ⏳ À faire (prod, par l'utilisateur)
+
+### Etape 6 — Terminee (prod)
+- Controle contrat reseau : au demarrage de forge-backend.service, le backend appelle GET http://localhost:20128/v1/models -> HTTP 200 (confirme dans les logs systemd, 2026-11-17 01:24:03).
+- Variables prod : les 4 ROUTER9_* renseignees cote serveur, grep ^ROUTER9_ -> 4 lignes.
+- Service : forge-backend.service active (running), aucune erreur de parsing.
+
+### Etape 7 — Terminee (prod)
+- UI : provider 9Router present dans le selecteur, liste des modeles peuplee depuis /v1/models.
+- Filtrage modeles : comportement connu de 9Router (limite par defaut aux 8 derniers modeles du provider) -> resolu cote dashboard 9Router par edition de la base JSON/SQLite du combo. Aucune modification Forge (conforme au cadrage).
+
+### Etape 8 — Terminee (prod)
+- Streaming bout-en-bout : chat provider 9ROUTER + modele opus-4-8 (ajoute en base 9Router), prompt "dis bonjour en une phrase" -> reponse "Bonjour." recue.
+- Chaine validee : /api/chat/send -> POST /v1/chat/completions (SSE OpenAI-compatible). En-tete UI "9Router: opus-4-8 (choisi)" coherent.
+
+## Cloture
+- Les 8 etapes sont vertes. Integration 9router operationnelle en prod (decouverte catalogue + inference streaming). Aucune regression. Chantier clos.
