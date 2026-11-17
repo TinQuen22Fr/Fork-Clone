@@ -77,7 +77,7 @@ export default function TicketsBoard({ open, onOpenChange }) {
     >
       <SheetContent
         side="right"
-        className="w-full sm:max-w-5xl bg-[#0a0a0f] border-l-2 border-white/10 text-white overflow-y-auto"
+        className="w-full sm:max-w-5xl bg-[var(--bg-surface)] border-l-2 border-white/10 text-white overflow-y-auto"
         data-testid="tickets-board"
       >
         <SheetHeader>
@@ -125,7 +125,7 @@ export default function TicketsBoard({ open, onOpenChange }) {
                 {detail.error}
               </div>
             ) : (
-              <div className="md-body text-sm">
+              <div className="md-body text-sm text-white">
                 <MarkdownBody>{detail.content}</MarkdownBody>
               </div>
             )}
@@ -177,10 +177,10 @@ export default function TicketsBoard({ open, onOpenChange }) {
                           setOverCol(null);
                         }}
                         onClick={() => openTicket(t)}
-                        className="text-left border-2 border-white/10 hover:border-white/40 bg-white/[0.02] p-3 transition-colors"
+                        className="text-left border-2 border-white/10 hover:border-white/40 bg-white/5 p-3 transition-colors"
                         data-testid={`ticket-card-${t.slug}`}
                       >
-                        <div className="font-bold text-sm leading-snug">{t.titre}</div>
+                        <div className="font-bold text-sm leading-snug text-white">{t.titre}</div>
                         <div className="text-[10px] font-mono text-gray-500 mt-1 flex items-center gap-2">
                           <span className="truncate">{t.slug}</span>
                           {t.has_ameliorations && (
@@ -200,7 +200,7 @@ export default function TicketsBoard({ open, onOpenChange }) {
       </SheetContent>
 
       <AlertDialog open={!!pending} onOpenChange={(o) => !o && setPending(null)}>
-        <AlertDialogContent data-testid="ticket-move-confirm">
+        <AlertDialogContent className="bg-[var(--bg-surface)] border-2 border-white/10 text-white" data-testid="ticket-move-confirm">
           <AlertDialogHeader>
             <AlertDialogTitle>Déplacer ce chantier ?</AlertDialogTitle>
             <AlertDialogDescription className="font-mono text-xs">

@@ -169,3 +169,8 @@
 - **Intention** : consigner la seule procédure valide : bouton **Enregistrer sur GitHub**, puis sur le serveur `cd /var/www/forge` + `sudo ./upgrade.sh`. Le script fait git pull, deps, `npm run build`, contrôle `py_compile` de `server.py`, restart `forge-backend`. Aucune commande manuelle (pas de `systemctl restart` seul, pas de `npm run build` à la main).
 - **Friction** : mes comptes rendus précédents indiquaient `sudo systemctl restart forge-backend` + build manuel — faux, corrigé.
 - **Suite** : déploiement par l'utilisateur, puis contrôles visuels prod du board tickets.
+
+## 2026-11-17 — tickets: fond panneau lisible selon thème
+- **Intention** : Sheet + AlertDialog sur `var(--bg-surface)` (fond hardcodé #0a0a0f + `.text-white` forcé #111 en clair = noir sur noir).
+- **Friction** : rendu non vérifiable sans navigateur.
+- **Suite** : contrôle visuel prod clair/sombre après upgrade.sh.
