@@ -61,6 +61,7 @@ import MessagesSkeleton from "@/components/chat/MessagesSkeleton";
 import Sidebar from "@/components/chat/Sidebar"
 import ChatHeader from "@/components/chat/ChatHeader";
 import EmojiPicker from "@/components/EmojiPicker";
+import TicketsBoard from "@/components/TicketsBoard";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -105,6 +106,7 @@ export default function Chat() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [ticketsOpen, setTicketsOpen] = useState(false);
   // Repli de la barre laterale (desktop) - memorise entre les sessions
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -1383,6 +1385,8 @@ export default function Chat() {
       />
 
 
+      <TicketsBoard open={ticketsOpen} onOpenChange={setTicketsOpen} />
+
       {githubOpen && (
         <GithubSaveDialog
           conversationId={activeId}
@@ -1448,6 +1452,7 @@ export default function Chat() {
           runningTurns={runningTurns}
           statusTurns={statusTurns}
           onDismissAbsence={dismissStatusBanner}
+          onOpenTickets={() => setTicketsOpen(true)}
         />
 
         {/* Bandeau discret : mémoire de contexte (Fetcher) du projet actif */}

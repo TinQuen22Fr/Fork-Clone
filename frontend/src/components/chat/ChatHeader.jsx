@@ -1,4 +1,4 @@
-import { Menu, X } from "lucide-react";
+import { ClipboardList, Menu, X } from "lucide-react";
 import UsageBadge from "./UsageBadge";
 import PreviewButton from "@/components/PreviewButton";
 import AbsenceMenu from "./AbsenceMenu";
@@ -26,6 +26,7 @@ export default function ChatHeader({
   runningTurns = [],
   statusTurns = [],
   onDismissAbsence,
+  onOpenTickets,
 }) {
   return (
         <header className="border-b-2 border-white/10 px-3 sm:px-4 lg:px-8 py-3 sm:py-4 flex items-center justify-between gap-2">
@@ -61,6 +62,18 @@ export default function ChatHeader({
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0 min-w-0">
+            {onOpenTickets && (
+              <button
+                type="button"
+                className="btn-ghost flex-shrink-0"
+                onClick={onOpenTickets}
+                title="Chantiers (tickets)"
+                aria-label="Ouvrir le board des chantiers"
+                data-testid="open-tickets-btn"
+              >
+                <ClipboardList className="w-5 h-5" />
+              </button>
+            )}
             {activeConv?.project && (
               <PreviewButton
                 project={activeConv.project}

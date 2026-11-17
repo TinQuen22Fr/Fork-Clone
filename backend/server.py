@@ -9003,6 +9003,123 @@ async def tts_speak(
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Tickets chantiers : vue par-dessus PROJETS_AMELIORATIONS/ (etat = dossier).
+# ---------------------------------------------------------------------------
+_TICKETS_ROOT = ROOT_DIR.parent / "PROJETS_AMELIORATIONS"
+# Etat logique (API, sans accent) -> nom de dossier reel sur le FS.
+_TICKET_STATES = {
+    "prevision": "En prévision",
+    "en_cours": "En cours",
+    "finis": "Finis",
+}
+
+
+def _ticket_title(md_path: Path, fallback: str) -> str:
+    """Titre = 1re ligne '# ' du .md, sinon le slug."""
+    try:
+        with md_path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                s = line.strip()
+                if s.startswith("# "):
+                    return s[2:].strip() or fallback
+                if s:  # 1re ligne non vide non titre -> on garde le fallback
+                    break
+    except OSError:
+        pass
+    return fallback
+
+
+def _list_tickets_for_state(state: str, folder: str) -> list[dict]:
+    base = _TICKETS_ROOT / folder
+    out: list[dict] = []
+    if not base.is_dir():
+        return out
+    for entry in sorted(base.iterdir(), key=lambda p: p.name.lower()):
+        if entry.name.startswith("."):
+            continue
+        if entry.is_file() and entry.suffix == ".md":
+            slug = entry.stem
+            md = entry
+            has_ameliorations = False
+        elif entry.is_dir():
+            slug = entry.name
+            md = entry / f"{slug}.md"
+            if not md.is_file():  # repli : 1er .md du dossier
+                mds = sorted(entry.glob("*.md"))
+                md = mds[0] if mds else entry
+            has_ameliorations = (entry / "ameliorations-possibles").is_dir()
+        else:
+            continue
+        out.append({
+            "slug": slug,
+            "titre": _ticket_title(md, slug) if md.is_file() else slug,
+            "etat": state,
+            "is_dir": entry.is_dir(),
+            "has_ameliorations": has_ameliorations,
+        })
+    return out
+
+
+@api_router.get("/tickets")
+async def list_tickets(current_user: dict = Depends(get_current_user)):
+    """Arbo PROJETS_AMELIORATIONS/ regroupee par etat."""
+    return {state: _list_tickets_for_state(state, folder)
+            for state, folder in _TICKET_STATES.items()}
+
+@api_router.get("/tickets/{state}/{slug}/content")
+async def ticket_content(state: str, slug: str, current_user: dict = Depends(get_current_user)):
+    """Markdown brut du ticket. Confine sous _TICKETS_ROOT."""
+    folder = _TICKET_STATES.get(state)
+    if not folder or not re.fullmatch(r"[A-Za-z0-9._ -]+", slug) or slug.startswith("."):
+        raise HTTPException(status_code=400, detail="Ticket invalide")
+    base = (_TICKETS_ROOT / folder).resolve()
+    entry = (base / slug).resolve()
+    md = entry / f"{slug}.md" if entry.is_dir() else base / f"{slug}.md"
+    if entry.is_dir() and not md.is_file():
+        mds = sorted(entry.glob("*.md"))
+        md = mds[0] if mds else md
+    md = md.resolve()
+    if base not in md.parents or not md.is_file():
+        raise HTTPException(status_code=404, detail="Ticket introuvable")
+    return {"content": md.read_text(encoding="utf-8", errors="replace")}
+
+class TicketMoveRequest(BaseModel):
+    from_state: str
+    to_state: str
+
+@api_router.post("/tickets/{slug}/move")
+async def move_ticket(slug: str, req: TicketMoveRequest,
+                      current_user: dict = Depends(get_current_user)):
+    """Deplace un ticket (fichier .md ou dossier) entre etats. Move only, pas d'ecrasement."""
+    src_folder = _TICKET_STATES.get(req.from_state)
+    dst_folder = _TICKET_STATES.get(req.to_state)
+    if (not src_folder or not dst_folder
+            or not re.fullmatch(r"[A-Za-z0-9._ -]+", slug) or slug.startswith(".")):
+        raise HTTPException(status_code=400, detail="Ticket invalide")
+    if src_folder == dst_folder:
+        raise HTTPException(status_code=400, detail="Etat source = etat cible")
+    root = _TICKETS_ROOT.resolve()
+    src_base = (root / src_folder).resolve()
+    dst_base = (root / dst_folder).resolve()
+    src = src_base / slug
+    if not src.is_dir():
+        src = src_base / f"{slug}.md"
+    if src.is_symlink() or not src.exists() or src.resolve().parent != src_base:
+        raise HTTPException(status_code=404, detail="Ticket introuvable")
+    dst = dst_base / src.name
+    if dst.exists() or dst.is_symlink():
+        raise HTTPException(status_code=409, detail="Un ticket du meme nom existe deja dans la cible")
+    if root not in dst_base.parents:
+        raise HTTPException(status_code=400, detail="Cible invalide")
+    dst_base.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)  # atomique (meme FS)
+    logger.info("ticket move %s: %s -> %s (%s)", slug, req.from_state, req.to_state,
+                current_user.get("email") or current_user.get("id"))
+    return {state: _list_tickets_for_state(state, folder)
+            for state, folder in _TICKET_STATES.items()}
+
 @api_router.get("/")
 async def root():
     return {

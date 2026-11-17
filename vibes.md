@@ -144,3 +144,28 @@
 - **Intention** : creer dossier-chantier + plan complet dans En prevision/
 - **Friction** : aucune ; idee migree en idee-origine.md
 - **Suite** : GO Phase A etape 1 (GET /api/tickets) sur demande
+
+## 2025-01-27 — Phase A étape 1 (GET /api/tickets)
+- **Intention** : route lecture `GET /api/tickets` par-dessus `PROJETS_AMELIORATIONS/`, état = dossier.
+- **Friction** : `PROJETS_AMELIORATIONS/` à la racine repo (`ROOT_DIR.parent`), pas dans WORKSPACE_ROOT. Mapping états accentués (`En prévision`) via dict logique→FS (R1 paré). Non vérifié : route live sous Uvicorn (testé en isolation import, FS réel OK).
+- **Suite** : Phase A étape 3 — hook `useTickets.js`.
+
+## 2026-11-17 09:17 — Tickets Phase A étapes 3+4+5 (rattrapage)
+- **Intention** : constat sur disque — seul `GET /api/tickets` existait ; hook, board, endpoint contenu, câblage Header absents (livraisons précédentes non persistées / chemins faux). Création réelle : `GET /api/tickets/{state}/{slug}/content`, `frontend/src/hooks/useTickets.js`, `frontend/src/components/TicketsBoard.jsx`, bouton dans `components/chat/ChatHeader.jsx`, montage dans `pages/Chat.jsx`.
+- **Friction** : vérifié : ast backend, list+content contre FS réel, rejet `..` (400), bundle esbuild Chat.jsx OK, eslint OK. Non vérifié : HTTP live sous Uvicorn, `npm run build` vite complet, rendu visuel/R5 mobile.
+- **Suite** : contrôle visuel prod (bouton header mobile) puis Phase B étape 6 `POST /api/tickets/{slug}/move`.
+
+## 2026-11-17 — Tickets Phase B étape 6 (POST /api/tickets/{slug}/move)
+- **Intention** : route move dans backend/server.py (move only, rename atomique, 409 si collision) + moveTicket dans useTickets.js.
+- **Friction** : testé sur une copie temporaire du dossier (exec isolé), pas sous Uvicorn. Aucune UI ne l'appelle pour l'instant.
+- **Suite** : Phase B étape 7, drag & drop natif dans TicketsBoard avec confirmation avant le déplacement (R4).
+
+## 2026-06-09 — tickets étape 6 (drag & drop)
+- **Intention** : glisser-déposer natif HTML5 dans `TicketsBoard` + confirmation `AlertDialog` avant chaque move (R4).
+- **Friction** : `npm run build` complet non lançable (>30s) ; drag & drop non testable sans navigateur (pas de test auto) ; tactile mobile non couvert par l'API dragstart.
+- **Suite** : contrôle visuel prod (drag desktop + fallback mobile), puis validations visuelles restantes du chantier.
+
+## 2026-06-09 — procédure de déploiement (rappel utilisateur, à ne plus réécrire autrement)
+- **Intention** : consigner la seule procédure valide : bouton **Enregistrer sur GitHub**, puis sur le serveur `cd /var/www/forge` + `sudo ./upgrade.sh`. Le script fait git pull, deps, `npm run build`, contrôle `py_compile` de `server.py`, restart `forge-backend`. Aucune commande manuelle (pas de `systemctl restart` seul, pas de `npm run build` à la main).
+- **Friction** : mes comptes rendus précédents indiquaient `sudo systemctl restart forge-backend` + build manuel — faux, corrigé.
+- **Suite** : déploiement par l'utilisateur, puis contrôles visuels prod du board tickets.
