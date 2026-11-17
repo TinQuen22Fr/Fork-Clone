@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-17T05:29:20.294213+00:00
+# Dernière mise à jour : 2026-11-17T07:32:56.397087+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit c228c2e docs(9router): cloture chantier integration provider (etapes 6-8 validees prod).
+- Git : branche claude-ai, dernier commit 89eecff docs(rendu-blocs): cloture chantier + classement Finis (deploye prod).
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -19,7 +19,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   .emergent/system_deps.txt
   PROJETS_AMELIORATIONS/
   PROJETS_AMELIORATIONS/En cours/
-  PROJETS_AMELIORATIONS/En cours/rendu-blocs-style-emergent/
   PROJETS_AMELIORATIONS/En cours/.gitkeep
   PROJETS_AMELIORATIONS/En prévision/
   PROJETS_AMELIORATIONS/En prévision/.gitkeep
@@ -28,6 +27,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   PROJETS_AMELIORATIONS/Finis/
   PROJETS_AMELIORATIONS/Finis/forge-core/
   PROJETS_AMELIORATIONS/Finis/integration-provider-9router/
+  PROJETS_AMELIORATIONS/Finis/rendu-blocs-style-emergent/
   PROJETS_AMELIORATIONS/Finis/.gitkeep
   agents/
   agents/vibe-coder.md
@@ -91,6 +91,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] et l'écrit), pour ne pas dupliquer l'information.
   [regle] c'est juste qu'il faut editer la base json du combo c'est tout...
   [regle] écriture de code (consigne « pas d'écriture » respectée).
   [regle] dit moi et si il faut des corrections après avoir fait tout le reste des phase A et B
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] ne crois pas non plus que c'est un serveur avec gros processeur (ne pas oublier que c'est un processeur de dedibox gamme "Start" avec DD Sata c'est pas du VPS...
   [regle] Bonne nouvelle les 2 premiers tests sont toujours OK ✅ Le test 3 passe lui aussi OK ✅ après le correctif Je vois la suite des test après la réponse au moins le test 4
   [regle] si il faut que tu modifie des choses et que ça sous entend modifier d'autre étapes sous étapes tu le feras pour arriver à du fonctionnel (c'est le principe aussi de la forge, corriger tout ce qui est à corriger pour que ça fonctionne et pas juste un fichier ou commit précisément...
-  [regle] - **Niveau B (structurel, avec migration BDD)** : persister une **liste de blocs typés ordonnés** (texte / réflexion / appel outil / sortie) pour intercaler texte et actions comme Emergent. Impact schéma messages + fallback rétrocompatible obligatoire.

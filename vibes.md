@@ -134,3 +134,13 @@
 - **Intention** : créer `backend/tests/test_9router_provider.py` (5 assertions) et lancer la suite complète.
 - **Friction** : heredoc shell bloqué par le filtre secrets (contexte .env-like) → écriture via Python ; `cd backend && pytest tests/` échoue à la collection de 2 modules qui font `from backend import server` → relancé depuis la racine (contrat implicite du dépôt).
 - **Suite** : attendre le go utilisateur pour commit + push GitHub (étape 5.b), puis déploiement prod (étape 6).
+
+## Analyse — module-gestion-tickets-chantiers (planification)
+- **Intention** : établir rapport d'impact + plan de chantier pour transformer l'arbo `PROJETS_AMELIORATIONS/{En prévision,En cours,Finis}/` en module UI kanban piloté depuis le Header.
+- **Friction** : (1) source de vérité = FS avec dossiers à accents/espaces → risque d'encodage/validation chemins ; (2) écriture FS depuis l'UI = nouveau périmètre d'API à sécuriser (déplacement/renommage/création de dossiers) ; (3) auth multi-utilisateur : les routes `/api/workspace/*` existantes sont per-user, le module tickets est transverse au workspace, pas per-projet ; (4) non vérifiable en lecture seule : comportement réel du Header sous mobile et collision avec PreviewButton.
+- **Suite** : chantier à créer dans `En prévision/` avec plan 7 étapes (API lecture → API mutations → composant kanban → bouton Header → DnD → sous-tâches "améliorations" → tests). Affiner étape 2 (contrat mutations FS) avant code.
+
+## [2025-11-17] module-gestion-tickets-chantiers — plan
+- **Intention** : creer dossier-chantier + plan complet dans En prevision/
+- **Friction** : aucune ; idee migree en idee-origine.md
+- **Suite** : GO Phase A etape 1 (GET /api/tickets) sur demande
