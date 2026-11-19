@@ -1,10 +1,10 @@
 # Mémoire de contexte — généré automatiquement par The Forge
 # Ce fichier est un miroir lisible de la mémoire du Fetcher.
-# Dernière mise à jour : 2026-11-17T20:42:46.188267+00:00
+# Dernière mise à jour : 2026-11-18T14:23:55.523012+00:00
 
 MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
 - Ce bloc est fourni par le Fetcher de contexte de la Forge. Il resulte des captures automatiques faites a l'ouverture du projet et a chaque information importante. Fie-toi a lui au lieu de re-scanner.
-- Git : branche claude-ai, dernier commit 8a85e66 feat(tickets): board kanban chantiers avec déplacement drag & drop.
+- Git : branche claude-ai, dernier commit acb9815 fix(tickets): fond du board lisible en thème clair et sombre.
 - Arborescence (extrait) :
   .emergent/
   .emergent/cron/
@@ -21,6 +21,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   PROJETS_AMELIORATIONS/En cours/
   PROJETS_AMELIORATIONS/En cours/.gitkeep
   PROJETS_AMELIORATIONS/En prévision/
+  PROJETS_AMELIORATIONS/En prévision/migration-serveur-ovh/
   PROJETS_AMELIORATIONS/En prévision/module-gestion-tickets-chantiers/
   PROJETS_AMELIORATIONS/En prévision/.gitkeep
   PROJETS_AMELIORATIONS/En prévision/evolutions-futures-possibles.md
@@ -65,7 +66,6 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   backend/requirements.txt
   backend/reset_password.py
   backend/server.py
-  backend/test_rollback.txt
 - Faits memorises (les plus importants d'abord) :
   [regle] Accès aux fichiers de configuration sensibles/secrets interdit via bash.
   [regle] - **Ne pas** mélanger ce chantier avec le correctif du bug `timeout of 60000ms exceeded` (sujet distinct).
@@ -91,6 +91,7 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] La seule plage qui a diminué c'est la plage présentant le quota d'utilisation sous 5h qui est à mon sens normal puisque les 5h ont été dépassés mais celle d'à côté sur la fenêtre de quota sur la semaine au moment c'est toujours la même valeur alors à moins que j'ai activé le modèle qui ne consomme plus dessus pour le moment et à titre exceptionnel je suis assez étonné.
   [regle] texte compacte pour ne pas saturer la fenetre de contexte).
   [regle] 181: # OpenAI (proxies locaux, Freebuff, …). PROXY_BASE_URL est obligatoire,
+  [regle] ne pas oublier que le code OpenAI est du libre à l'origine et que sans ça la plupart des LLM n'existerait purement et simplement pas !
   [regle] et l'écrit), pour ne pas dupliquer l'information.
   [regle] c'est juste qu'il faut editer la base json du combo c'est tout...
   [regle] écriture de code (consigne « pas d'écriture » respectée).
@@ -106,4 +107,3 @@ MEMOIRE PERSISTANTE DU PROJET « Fork-Clone » :
   [regle] après ne pas oublier la config du server qui n'est pas non plus un cheval de course serte mais qui suffit pour mon usage...
   [regle] ne crois pas non plus que c'est un serveur avec gros processeur (ne pas oublier que c'est un processeur de dedibox gamme "Start" avec DD Sata c'est pas du VPS...
   [regle] Bonne nouvelle les 2 premiers tests sont toujours OK ✅ Le test 3 passe lui aussi OK ✅ après le correctif Je vois la suite des test après la réponse au moins le test 4
-  [regle] si il faut que tu modifie des choses et que ça sous entend modifier d'autre étapes sous étapes tu le feras pour arriver à du fonctionnel (c'est le principe aussi de la forge, corriger tout ce qui est à corriger pour que ça fonctionne et pas juste un fichier ou commit précisément...

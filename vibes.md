@@ -174,3 +174,28 @@
 - **Intention** : Sheet + AlertDialog sur `var(--bg-surface)` (fond hardcodé #0a0a0f + `.text-white` forcé #111 en clair = noir sur noir).
 - **Friction** : rendu non vérifiable sans navigateur.
 - **Suite** : contrôle visuel prod clair/sombre après upgrade.sh.
+
+## 2026-11-17 — plan de migration Dedibox vers OVH
+- **Intention** : rapport et procédure de migration (Forge + autres projets) vers OVH E-2274G / 32 Go / RAID 1 HDD / Ubuntu 26.04 Pro. Livré dans `PROJETS_AMELIORATIONS/En prévision/migration-serveur-ovh/`.
+- **Friction** : méthode d'installation de MongoDB, 9Router, Ollama et LiteLLM sur la source inconnue ; user `quentin` et chemin `/var/www/forge` en dur (service, sudoers, wrapper) ; HDD lent ; wildcard TLS en DNS manuel.
+- **Suite** : phase 0, inventaire de la Dedibox, sorties à rapporter pour affiner les phases 2, 5 et 8.
+
+## 2026-11-18 14:46 — migration OVH : affichage rapport
+- **Intention** : afficher le rapport migration-serveur-ovh.md, retirer le placeholder de la phase 4.
+- **Friction** : ordre d'exécution des verify-d10a..d14 déduit des noms de fichiers, non testé sur machine.
+- **Suite** : attendre la sortie de la phase 0 (inventaire Dedibox) pour affiner les phases 2, 5 et 8.
+
+## 2026-11-18 — migration OVH : montée de versions
+- **Intention** : rapport réorienté « dernières versions » (principe section 1, risque 4, phase 2, nouvelle phase 2bis, section 4bis, tableau matériel). Suppression des « même version » / « rien à faire ».
+- **Friction** : recherche web indisponible, aucune version précise de MongoDB/Node/Python pour 26.04 confirmée ; cibles formulées en « dernière stable ». Fichier rapport non commité (créé hors mode planner : contradiction signalée, pas d'écriture possible en planner).
+- **Suite** : résultat de la phase 0 Dedibox pour remplir la colonne « Dedibox » de 4bis.
+
+## Migration OVH : retrait des risques génériques
+- Intention : rapport limité aux faits du contexte utilisateur.
+- Friction : risques HDD/SSD, wildcard DNS manuel, tuning disque/RAID plaqués sans fondement, retirés.
+- Suite : attendre sortie phase 0 Dedibox.
+
+## Migration OVH : retrait user/droits/RAID/backup, scripts à reprogrammer
+- **Intention** : rapport adapté à une machine bare metal pro ; scripts du dépôt reconfigurés pour OVH au lieu d'adapter la machine aux scripts.
+- **Friction** : `quentin`, `/var/www/forge`, domaines figés dans service, sudoers, install.sh, upgrade.sh, deploy/*.sh.
+- **Suite** : phase 3bis (reprogrammation des scripts) dès que user/chemin/domaines OVH connus ; inventaire phase 0.
