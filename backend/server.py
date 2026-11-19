@@ -8695,6 +8695,30 @@ async def github_push(
             logger.error("git push echec (%s): %s", work_dir, err)
             raise HTTPException(status_code=502, detail="Echec du push vers GitHub.")
 
+        # Cible de deploiement : etat hors-git lu par upgrade.sh / setup-preview.sh.
+        # Ecrit a la racine du clone pousse (jamais commite : voir .gitignore).
+        # Permet a upgrade.sh de suivre dynamiquement la derniere branche poussee
+        # sans aucune constante figee. Best effort : un echec n'invalide pas le push.
+        # Double ecriture, zero chemin hardcode :
+        #  - work  : racine du clone pousse (ex. sandbox Fork-Clone)
+        #  - ROOT_DIR.parent : racine de l'instance Forge active (ex. /var/www/forge),
+        #    lue directement par son upgrade.sh local sans appel reseau.
+        _deploy_state = (
+            f"repo={repo}\n"
+            f"branch={branch}\n"
+            f"sha={commit_sha}\n"
+            f"pushed_at={now_iso()}\n"
+        )
+        for _target in {work, ROOT_DIR.parent}:
+            try:
+                (_target / ".forge-deploy-target").write_text(
+                    _deploy_state, encoding="utf-8"
+                )
+            except OSError as e:  # noqa: BLE001
+                logger.warning(
+                    "Ecriture .forge-deploy-target impossible (%s) : %s", _target, e
+                )
+
         return {
             "ok": True,
             "repo": repo,

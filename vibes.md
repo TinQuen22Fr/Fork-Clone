@@ -199,3 +199,8 @@
 - **Intention** : rapport adapté à une machine bare metal pro ; scripts du dépôt reconfigurés pour OVH au lieu d'adapter la machine aux scripts.
 - **Friction** : `quentin`, `/var/www/forge`, domaines figés dans service, sudoers, install.sh, upgrade.sh, deploy/*.sh.
 - **Suite** : phase 3bis (reprogrammation des scripts) dès que user/chemin/domaines OVH connus ; inventaire phase 0.
+
+## 2026-11-19 — Résumé et consolidation de la mémoire de conversation
+- **Intention** : Fusionner le résumé historique existant avec les derniers échanges sur la migration OVH (réécriture du rapport, suppression de la Phase 0, socle réel KS-LE-3).
+- **Friction** : Aucune.
+- **Suite** : Fournir le compte rendu consolidé sous forme de puces courtes sans préambule ni conclusion.

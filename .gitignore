@@ -96,3 +96,7 @@ backend/models/
 
 # Captures Playwright/Chromium — ne jamais commiter ni relancer depuis le backend prod
 .captures/
+
+# Etat de deploiement hors-git — ecrit par "Enregistrer sur GitHub",
+# lu par upgrade.sh / setup-preview.sh. Specifique a l'instance, jamais commite.
+.forge-deploy-target

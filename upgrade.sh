@@ -77,7 +77,29 @@ fi
 if [ "$DO_PULL" -eq 1 ] && [ -d .git ]; then
   c_step "Mise a jour du code"
   CUR_BRANCH="$(git -c safe.directory=* rev-parse --abbrev-ref HEAD)"
-  TARGET="${BRANCH:-$CUR_BRANCH}"
+  # Resolution dynamique de la branche cible, zero hardcode. Ordre de priorite :
+  #   1. --branch / variable BRANCH  (override explicite)
+  #   2. fichier d'etat hors-git .forge-deploy-target (ecrit par le bouton
+  #      "Enregistrer sur GitHub" ; absent sur un serveur neuf comme KS-LE-3)
+  #   3. branche la plus recemment poussee sur origin (git ls-remote, API Git)
+  #   4. HEAD courant en dernier recours
+  TARGET="$BRANCH"
+  if [ -z "$TARGET" ] && [ -f .forge-deploy-target ]; then
+    TARGET="$(grep -m1 '^branch=' .forge-deploy-target | cut -d= -f2- | tr -d '[:space:]')"
+    [ -n "$TARGET" ] && c_ok "cible lue dans .forge-deploy-target : $TARGET"
+  fi
+  if [ -z "$TARGET" ]; then
+    # Branche distante la plus recente (tri par date du dernier commit via refs).
+    REMOTE_BRANCH="$(
+      git -c safe.directory=* ls-remote --heads --sort=-committerdate origin 2>/dev/null \
+        | head -n1 | sed 's@.*refs/heads/@@'
+    )"
+    if [ -n "$REMOTE_BRANCH" ]; then
+      TARGET="$REMOTE_BRANCH"
+      c_ok "cible resolue via origin (plus recente) : $TARGET"
+    fi
+  fi
+  [ -n "$TARGET" ] || TARGET="$CUR_BRANCH"
   if [ -n "$(git -c safe.directory=* status --porcelain --untracked-files=no)" ]; then
     c_warn "modifications locales detectees, mises de cote (git stash)"
     # Pas de -u : workspace/ n'est pas suivi par git dans l'installation et

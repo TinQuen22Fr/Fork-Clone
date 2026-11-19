@@ -14,7 +14,7 @@
 #
 # Variables surchargeables :
 #   PREVIEW_DIR=/var/www/forge-dev   PREVIEW_PORT=8002
-#   PREVIEW_DB=forge_preview         PREVIEW_BRANCH=claude-ai
+#   PREVIEW_DB=forge_preview         PREVIEW_BRANCH=<auto si absent>
 #   PREVIEW_DOMAIN=preview-forge.quentin-astro.fr
 #   SERVICE_USER=<owner de la prod>  REPO_URL=<origin de la prod>
 #
@@ -24,7 +24,26 @@ PROD_DIR="${PROD_DIR:-/var/www/forge}"
 PREVIEW_DIR="${PREVIEW_DIR:-/var/www/forge-dev}"
 PREVIEW_PORT="${PREVIEW_PORT:-8002}"
 PREVIEW_DB="${PREVIEW_DB:-forge_preview}"
-PREVIEW_BRANCH="${PREVIEW_BRANCH:-claude-ai}"
+# Branche de preview : zero hardcode. Resolution dynamique si non fournie :
+#   1. .forge-deploy-target du PROD (ecrit par "Enregistrer sur GitHub")
+#   2. branche la plus recemment poussee sur origin (git ls-remote)
+#   3. HEAD courant du clone prod
+#   4. "main" en ultime recours
+if [ -z "${PREVIEW_BRANCH:-}" ]; then
+  if [ -f "$PROD_DIR/.forge-deploy-target" ]; then
+    PREVIEW_BRANCH="$(grep -m1 '^branch=' "$PROD_DIR/.forge-deploy-target" | cut -d= -f2- | tr -d '[:space:]')"
+  fi
+  if [ -z "${PREVIEW_BRANCH:-}" ]; then
+    PREVIEW_BRANCH="$(
+      git -C "$PROD_DIR" -c safe.directory=* ls-remote --heads --sort=-committerdate origin 2>/dev/null \
+        | head -n1 | sed 's@.*refs/heads/@@'
+    )"
+  fi
+  if [ -z "${PREVIEW_BRANCH:-}" ]; then
+    PREVIEW_BRANCH="$(git -C "$PROD_DIR" -c safe.directory=* rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  fi
+  [ -n "${PREVIEW_BRANCH:-}" ] || PREVIEW_BRANCH="main"
+fi
 PREVIEW_DOMAIN="${PREVIEW_DOMAIN:-preview-forge.quentin-astro.fr}"
 SERVICE_NAME="forge-backend-preview"
 SERVICE_USER="${SERVICE_USER:-$(stat -c %U "$PROD_DIR" 2>/dev/null || echo root)}"
